@@ -302,48 +302,81 @@ A4 纸样式：白底、圆角、投影、衬线字体（`Georgia` / `宋体` �
 | E2E | Playwright（`_electron`） | 唯一能真实验证 DOM 打字链路的方式 |
 | 打包 | electron-builder | — |
 
+### 11.1 锁定版本（2026-10-06 实测 npm registry）
+
+**「全部取最新」在本项目不可行**，实测到的冲突：`electron-vite@5.0.0` 的 peer 是 `vite: ^5 || ^6 || ^7`，**不支持 Vite 8**；而 `@vitejs/plugin-react@6.1.2` 的 peer 是 `vite: ^8`。两者最新版无法共存。
+
+因此锁定下面这套**互相兼容**的版本（Vite 固定在 7.x）：
+
+| 包 | 版本 | 版本约束依据 |
+|---|---|---|
+| electron | 44.5.1 | engines `node >= 22.12.0`，本机 Node 22.23.2 ✓ |
+| electron-vite | 5.0.0 | peer `vite ^5\|\|^6\|\|^7` → 必须配 Vite 7 |
+| vite | 7.3.7 | 满足 electron-vite 5 与 vitest 5 的 peer |
+| @vitejs/plugin-react | 5.2.0 | peer 覆盖 `^7`；6.x 只支持 Vite 8，不可用 |
+| vitest | 5.0.3 | peer `vite ^6.4\|\|^7\|\|^8` ✓ |
+| react / react-dom | 19.3.0 | — |
+| @testing-library/react | 16.3.3 | peer 支持 React 19 |
+| @testing-library/dom | 10.4.2 | RTL 16 的 peer |
+| jsdom | 30.1.2 | — |
+| @playwright/test | 1.63.0 | — |
+| electron-builder | 26.15.3 | — |
+| jschardet | 4.0.0 | **自带 `build/index.d.ts`**，不需要 `@types/jschardet`（该包在 registry 上不存在） |
+| iconv-lite | 0.7.3 | — |
+| typescript | 5.9.3 | 刻意不用 7.0.2（Go 移植版）：TS 在本项目只做 `tsc --noEmit` 类型检查，转译由 esbuild/oxc 负责，选生态验证最充分的 5.x 更稳 |
+| @types/node | ^22 | 与运行时 Node 22.23.2 对齐，不用 26.x |
+| @types/react / @types/react-dom | 19.3.0 | — |
+
+升级路径：等 electron-vite 支持 Vite 8 后，可整体升到 Vite 8 + plugin-react 6。
+
+### 11.2 依赖归属
+
+- `dependencies`：`iconv-lite`、`jschardet`、`react`、`react-dom`
+- `devDependencies`：其余全部
+
+主进程/preload 构建启用 electron-vite 的 `externalizeDepsPlugin()`，把 `iconv-lite` / `jschardet` 保留为运行时 `require`，由 electron-builder 打进 asar。渲染进程的 `react` / `react-dom` 由 Vite 正常打包。
+
 ## 12. 目标文件结构
+
+采用 **electron-vite 的约定式布局**（`src/main` / `src/preload` / `src/renderer`），而不是自造目录再改配置——约定式布局的配置面最小，出错机会最少。`src/core/` 作为三端共享的纯模块保留。
 
 ```
 WorkingTitle/
   package.json
-  tsconfig.json / tsconfig.node.json
-  vite.config.ts
+  tsconfig.json / tsconfig.node.json / tsconfig.web.json
+  electron.vite.config.ts
+  vitest.config.ts
+  playwright.config.ts
   electron-builder.yml
-  index.html
-  electron/
-    main.ts
-    preload.ts
-    ipc.ts
-    menu.ts
-    session.ts
   src/
-    core/
+    core/            ★ 纯 TypeScript，零 DOM / 零 Electron / 零 React
       types.ts
       decode.ts
       chapters.ts
       engine.ts
+    main/            主进程
+      index.ts       窗口、启动流程、命令行参数
+      ipc.ts         IPC 通道注册
+      menu.ts        原生菜单
+      session.ts     会话与缓存读写
+      loadNovel.ts   读文件 → 解码 → 切分（可单测）
+    preload/
+      index.ts       contextBridge 白名单
     renderer/
-      main.tsx
-      App.tsx
-      styles/          word.css, ribbon.css, page.css
-      components/
-        Ribbon.tsx
-        Toolbar.tsx
-        ChapterList.tsx
-        Page.tsx
-        StatusBar.tsx
-        Toast.tsx
-      input/
-        InputCapture.tsx
-        useTypingEngine.ts
-      state/
-        ToolbarContext.tsx
+      index.html
+      src/
+        main.tsx
+        App.tsx
+        styles/      word.css, ribbon.css, page.css
+        components/  Ribbon.tsx, Toolbar.tsx, ChapterList.tsx,
+                     Page.tsx, StatusBar.tsx, Toast.tsx
+        input/       InputCapture.tsx
+        state/       ToolbarContext.tsx, useTypingEngine.ts
   tests/
-    unit/              decode.test.ts, chapters.test.ts, engine.test.ts, ime.test.tsx（jsdom 环境）
-    e2e/               app.spec.ts
-    fixtures/          sample-utf8.txt, sample-gbk.txt, sample-nochapters.txt
-  docs/superpowers/specs/
+    unit/            decode.test.ts, chapters.test.ts, engine.test.ts, ime.test.tsx
+    e2e/             app.spec.ts
+    fixtures/        sample-utf8.txt, sample-gbk.txt, sample-nochapters.txt
+  docs/superpowers/
 ```
 
 ## 13. 未决 / 风险
