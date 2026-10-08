@@ -66,37 +66,37 @@ function scoreText(text: string): number {
  * 而 GB18030 会把任意字节对映射进该区，于是日文/韩文的正确解码（假名、谚文都不在该区）
  * 反而得分更低。
  *
- * 实测【注意】scoreText 是占比比值、随文本而变，下面的数字只是某一组样本的观测结果，
- * 不是编码的固有属性（换一段文本数字就变）：Shift_JIS 正确 400 / 乱码 1000；
- * EUC-KR 正确 0 / 乱码 737。所以不要在别处引用这些数字当定论。
+ * 【下面的数字只是样本观测，不是编码的固有属性】scoreText 是占比比值，换一段文本数字就变：
+ * 同一批样本上 Shift_JIS 正确 400 / 乱码 1000，EUC-KR 正确 0 / 乱码 737。
+ * 不要在别处引用它们当定论。
  *
  * 【本函数的边界，别当成保证】这是一个黑名单：只有列出的多字节 CJK / Unicode 编码才免于兜底。
- * 任何未列出的编码——尤其是 KOI8-R 这类遗留单字节集——仍然会追加 GB18030，而只要
- * 「正确解码里几乎没有 CJK 表意文字」，乱码就可能在占比上胜出（实测 KOI8-R 正确 0 /
- * 乱码 256，一样误选）。根因是 scoreText 在【跨文字系统】之间比较得分，靠增删名单救不干净。
+ * 任何未列出的编码——尤其是 KOI8-R 这类遗留单字节集——仍然会追加 GB18030；只要正确解码里
+ * 几乎没有 CJK 表意文字，乱码就可能在占比上胜出。根因是 scoreText 在【跨文字系统】之间
+ * 比较得分，靠增删名单救不干净（见设计文档 §13）。
  *
  * 【为什么不改成正向白名单】把 windows-125x / ISO-8859-* 也排除在兜底之外，会破坏
  * 「GBK 被误判成 windows-1252 时把它救回来」这个兜底存在的主要理由。本应用面向中文小说，
  * 黑名单偏向「救中文」是刻意的取舍，代价是非中文的遗留单字节编码仍可能被解错（见 §13）。
  *
- * 【名字必须先规范化再匹配，且必须用前缀】
+ * 【必须先自己归一化（大小写 + 分隔符）再匹配】
  * jschardet 4 只给裸名 `utf-16` / `utf-32` 做了 compat 改名；四个带端序的名字
  * （`utf-16-le` / `utf-16-be` / `utf-32-le` / `utf-32-be`）会**原样吐出 WHATWG 标签**
  * （见 jschardet/build/output_names.js 的 _COMPAT_NAMES），别名表里还有 `utf_16_le`
- * 这种下划线拼写。照 compat 表写正则会「看起来对、实际漏配」——这正是本函数最初的 bug：
- * `/i` 只解决大小写、不解决连字符，于是**无 BOM 的 UTF-16 被追加了 GB18030 并被解成乱码**
- * （实测无 BOM 韩文 UTF-16LE：正确解 0.0 / GB18030 乱码 44.8，乱码胜出）。
- * 所以先抹掉 `-` `_` 再匹配。
- * 用前缀而非整串锚定：jschardet 对同一族会给多种拼写（`Big5` / `Shift_JIS` / `utf-16-le`），
+ * 这种下划线拼写。只做大小写（`/i`）不解决连字符：`UTF-16-LE` 前缀匹配不上 `UTF16`，
+ * 这些编码就会被误加兜底、进而被解成乱码。所以先抹掉 `-` `_` 并统一大小写，
+ * 且由本函数自己做——它已导出，前提条件无法强制。
+ *
+ * 【用前缀而非整串锚定】jschardet 对同一族会给多种拼写（`Big5` / `Shift_JIS` / `utf-16-le`），
  * 前缀能一并覆盖，且规范化后 `SHIFT_JIS` 与 `SHIFTJIS` 等价。
  * 【名单里只放 jschardet 真会吐出的名字】`SJIS` / `EUCJIS` / `UCS-2` 这类「想当然的拼写」
  * 它一个都不产出（`shift_jis_2004` 由 SHIFTJIS 前缀覆盖，注册表里根本没有 UCS-2），属于
  * 永远不会命中的死条款，已删除。名单与词表的对应关系由 tests/unit/decode.test.ts 的
- * 词汇表测试逐条核对：改名单、或 jschardet 改名，都会让它失败。
+ * 词汇表测试逐条核对（核对的是实测快照；jschardet 升级则由该测试的版本断言发现）。
  * 前缀匹配在此安全：注册表里没有任何不属于上述家族的编码名以
  * BIG5 / CP93 / CP94 / SHIFT / EUC / JOHAB / UTF 开头（CP9xx 只有 932/949）。
  */
-export const CONFIDENT_MULTIBYTE_NAMES = [
+export const CONFIDENT_MULTIBYTE_NAMES: readonly string[] = Object.freeze([
   'BIG5',
   'CP932',
   'CP949',
@@ -106,14 +106,13 @@ export const CONFIDENT_MULTIBYTE_NAMES = [
   'JOHAB',
   'UTF16',
   'UTF32'
-]
+])
 
 const CONFIDENT_MULTIBYTE = new RegExp(`^(?:${CONFIDENT_MULTIBYTE_NAMES.join('|')})`)
 
 export function needsGbFallback(detected: string): boolean {
-  // 自己归一化：大小写 + 分隔符。**不要依赖调用方先大写**——传进小写原名会静默
-  // 返回 true（= 追加兜底），那正是本模块修了一整天的那个 bug，从忘记 .toUpperCase()
-  // 的地方再进来一次。参数名不是防线，而本函数已导出，前提条件对调用方可见却无法强制。
+  // 大小写与分隔符都在这里归一化，不依赖调用方。传进小写/带连字符的原名会静默返回
+  // true（= 追加兜底），所以归一化必须是本函数的责任：函数已导出，参数名不是防线。
   const normalized = detected.toUpperCase().replace(/[-_]/g, '')
   return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
 }

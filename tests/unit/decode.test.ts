@@ -112,18 +112,21 @@ const JSCHARDET_VERSION_MEASURED = '4.0.0'
 /**
  * jschardet@4.0.0 实际会吐出的编码名【实测快照】（86 个）。
  *
- * 为什么用快照而不是运行时去读 jschardet 的词表：它的 exports map 只暴露 "."，深路径
- * import 会 ERR_PACKAGE_PATH_NOT_EXPORTED，只能靠绝对路径动态 import 绕过——为一份
- * 「本应稳定」的测试引入这种真实脆弱性不值得。快照同样能抓住本测试要抓的那类 bug：
- * 旧正则写 UTF-16LE 时，快照里的 utf-16-le 匹配不上，测试立刻失败。
+ * 为什么用快照而不是运行时去读 jschardet 的词表：它的 exports map 只暴露 "."，也没有
+ * 公开的枚举 API，唯一办法是绕过 exports map 去读包内私有的 build 产物——用
+ * `createRequire(import.meta.url).resolve('jschardet')` 拿到入口、再 `path.join` 取同目录的
+ * registry.js / output_names.js（可移植，不需要写死绝对路径）。但那会让一份「本应稳定」的
+ * 测试绑死在包内部的产物布局上，不值得。快照同样能抓住本测试要抓的那类 bug：
+ * 词表里的 `utf-16-le` 若前缀匹配不上，这里立刻失败。
  *
  * 【机制】同一个族会以两种拼写并存：`UTF-16` / `UTF-32` 是 compat 改名后的裸名，
  * 而 `utf-16-le` / `utf-16-be` / `utf-32-be` / `utf-32-le` 是原样吐出的 WHATWG 标签。
- * 照 compat 表写正则就会「看起来对、实际漏配」——这就是当初无 BOM UTF-16 被追加
- * GB18030 并解成乱码的完整机制，也是本测试存在的理由。
+ * 照 compat 表写正则就会「看起来对、实际漏配」，于是这些编码被误加 GB18030 兜底并被
+ * 解成乱码——这是本测试存在的理由。
  *
- * 【这份快照抓不到什么】jschardet 升级【新增】一个名字时，快照不会知道，测试仍然通过。
- * 需要重新测量并更新本表（属 Task 15 的 (b) 覆盖范围）。
+ * 【这份快照抓不到什么】它看不见「库自己变了」：jschardet 改名或新增名字都不会改动下面的
+ * 字面量。改名由本文件的版本断言兜住（升级即失败并要求重新测量）；而「新增了一个前缀匹配
+ * 不到的多字节 CJK 名」无人能看见，属 Task 15 的 (b) 覆盖范围。
  */
 const JSCHARDET_EMITTED_NAMES = [
   "ascii", "utf-8", "UTF-8-SIG", "UTF-16",
@@ -172,11 +175,25 @@ const MUST_BE_EXEMPT = [
 ]
 
 /**
- * 快照里另外三个「多字节 CJK 但不需豁免」的名字，【显式点名】列出而不是靠过滤条件默默排除：
- * 它们都是 7-bit 编码（每个字节 < 0x80），会先被严格 UTF-8 短路接管，根本走不到候选列表。
- * 见设计文档 §13。静默排除正是这类 bug 藏身之处，所以宁可写死在这里。
+ * 【文档性例外清单，不是被校验的性质】快照里 6 个「多字节 CJK / 中文体系、但本谓词不豁免」
+ * 的名字中，除 GB18030 之外的那 5 个。GB18030 不在此列是因为 candidateEncodings 会主动把
+ * GB* 系列映射成 GB18030，本就不该走这个名单。
+ *
+ * 显式点名列出，而不是靠过滤条件默默排除：它们都是 7-bit 编码（每个字节 < 0x80），会先被
+ * 严格 UTF-8 短路接管，根本走不到候选列表，所以豁免与否对它们没有意义。见设计文档 §13。
+ * 静默排除正是这类 bug 藏身之处，所以宁可写死在这里。
+ *
+ * 注意下面那条断言只检查这些名字确实在快照里（防名单打错字），**并不校验这个划分本身**：
+ * 划分来自对 86 个名字的实测，而静态快照看不见新增名字，所以这里不做（也不该做）一个
+ * 「自动推导例外集」的断言。
  */
-const SEVEN_BIT_BEYOND_REACH = ['ISO-2022-JP', 'ISO-2022-KR', 'HZ-GB-2312']
+const SEVEN_BIT_BEYOND_REACH = [
+  'HZ-GB-2312',
+  'ISO-2022-JP',
+  'iso2022_jp_2004',
+  'iso2022_jp_ext',
+  'ISO-2022-KR'
+]
 
 describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
   const norm = (s: string): string => s.toUpperCase().replace(/[-_]/g, '')
@@ -190,19 +207,29 @@ describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
       `快照 JSCHARDET_EMITTED_NAMES 是对 jschardet ${JSCHARDET_VERSION_MEASURED} 实测得到的，`
         + `当前安装的是 ${JSCHARDET_VERSION}。编码名表可能已变：请重新测量快照`
         + `（读 build/registry.js 与 build/output_names.js），并同时更新`
-        + ` JSCHARDET_EMITTED_NAMES、MUST_BE_EXEMPT 与 JSCHARDET_VERSION_MEASURED。`
+        + ` JSCHARDET_EMITTED_NAMES、MUST_BE_EXEMPT、SEVEN_BIT_BEYOND_REACH 与`
+        + ` JSCHARDET_VERSION_MEASURED。`
     ).toBe(JSCHARDET_VERSION_MEASURED)
   })
 
   it('快照自检：两张名单都确实取自快照', () => {
-    expect(JSCHARDET_EMITTED_NAMES).toHaveLength(86)
+    // 长度断言是唯一能盖住「快照里被删掉一个【不豁免】名字」的守卫——那种改动不触发
+    // 别的任何断言。所以失败信息要给下一步动作，而不只是 expected 86。
+    expect(
+      JSCHARDET_EMITTED_NAMES,
+      `快照是对 jschardet ${JSCHARDET_VERSION_MEASURED} 实测得到的 86 个名字，`
+        + `当前有 ${JSCHARDET_EMITTED_NAMES.length} 个。名字表可能被改错或漏抄：`
+        + `请重新测量（读 build/registry.js 与 build/output_names.js），并同时更新`
+        + ` JSCHARDET_EMITTED_NAMES、MUST_BE_EXEMPT、SEVEN_BIT_BEYOND_REACH 与`
+        + ` JSCHARDET_VERSION_MEASURED。`
+    ).toHaveLength(86)
     expect(MUST_BE_EXEMPT.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
     expect(SEVEN_BIT_BEYOND_REACH.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
   })
 
   it('谓词自带归一化：大小写与分隔符都由它自己处理', () => {
     // 回归守卫：调用方忘了 .toUpperCase() 时，不能再静默返回 true（= 追加兜底）。
-    // 这正是本模块修了一整天的那个 bug 可能的再入口。
+    // 这正是要防的 footgun：调用方漏了归一化，兜底就会静默生效。
     expect(needsGbFallback('utf-16-le')).toBe(false)
     expect(needsGbFallback('utf_16_le')).toBe(false)
     expect(needsGbFallback('shift_jis')).toBe(false)
