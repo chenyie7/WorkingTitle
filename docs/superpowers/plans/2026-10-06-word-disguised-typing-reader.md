@@ -748,13 +748,28 @@ describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
     expect(SEVEN_BIT_BEYOND_REACH.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
   })
 
+  it('谓词自带归一化：大小写与分隔符都由它自己处理', () => {
+    // 回归守卫：调用方忘了 .toUpperCase() 时，不能再静默返回 true（= 追加兜底）。
+    // 这正是本模块修了一整天的那个 bug 可能的再入口。
+    expect(needsGbFallback('utf-16-le')).toBe(false)
+    expect(needsGbFallback('utf_16_le')).toBe(false)
+    expect(needsGbFallback('shift_jis')).toBe(false)
+    expect(needsGbFallback('BIG5')).toBe(false)
+
+    // 反向：该兜底的仍然要兜底，别把归一化写成「一律不兜底」。
+    expect(needsGbFallback('windows-1252')).toBe(true)
+    expect(needsGbFallback('koi8-r')).toBe(true)
+    expect(needsGbFallback('')).toBe(true)
+  })
+
   it('多字节 CJK/Unicode 名全部免于 GB18030 兜底，且豁免集合不多不少', () => {
     // 这条就是当初能抓住 UTF-16LE 那个 bug 的断言：旧正则写 UTF-16LE，
     // 而 jschardet 吐的是 utf-16-le，于是这里会列出 utf-16-be/le、utf-32-be/le。
-    expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n.toUpperCase()))).toEqual([])
+    // 刻意传【原始名字】不做预处理——归一化是谓词自己的责任（见上一条用例）。
+    expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n))).toEqual([])
 
     // 反向：豁免集合必须与上面严格相等——多了（死条款）少了（漏配）都失败。
-    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n.toUpperCase())).sort()
+    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n)).sort()
     expect(exempt).toEqual([...MUST_BE_EXEMPT].sort())
   })
 
@@ -887,9 +902,11 @@ export const CONFIDENT_MULTIBYTE_NAMES = [
 
 const CONFIDENT_MULTIBYTE = new RegExp(`^(?:${CONFIDENT_MULTIBYTE_NAMES.join('|')})`)
 
-export function needsGbFallback(detectedUpper: string): boolean {
-  // 抹掉分隔符：jschardet 会吐出 utf-16-le / utf_16_le / UTF-16LE 三种拼写。
-  const normalized = detectedUpper.replace(/[-_]/g, '')
+export function needsGbFallback(detected: string): boolean {
+  // 自己归一化：大小写 + 分隔符。**不要依赖调用方先大写**——传进小写原名会静默
+  // 返回 true（= 追加兜底），那正是本模块修了一整天的那个 bug，从忘记 .toUpperCase()
+  // 的地方再进来一次。参数名不是防线，而本函数已导出，前提条件对调用方可见却无法强制。
+  const normalized = detected.toUpperCase().replace(/[-_]/g, '')
   return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
 }
 
@@ -898,6 +915,8 @@ function candidateEncodings(detected: string): string[] {
   const push = (n: string): void => {
     if (n && iconv.encodingExists(n) && !names.includes(n)) names.push(n)
   }
+  // upper 只服务于本函数自己的 GB* / ASCII 分支判断；needsGbFallback 不再依赖它，
+  // 传原始名字进去即可（它自己会归一化）。
   const upper = (detected || '').toUpperCase()
   if (upper === 'GB2312' || upper === 'GBK' || upper === 'GB18030') push('GB18030')
   else if (upper === 'ASCII') push('UTF-8')
@@ -907,7 +926,7 @@ function candidateEncodings(detected: string): string[] {
   // 不要为了「保险」无条件追加——那会让日文/韩文被解成乱码（见 needsGbFallback 的注释）。
   // 也不要改成「只按 U+FFFD 数量打分」来回避：GB18030 几乎把所有字节对都映射到某个字符，
   // 乱码里的替换字符数同样≈0，两边打平，救不了。
-  if (needsGbFallback(upper)) push('GB18030')
+  if (needsGbFallback(detected)) push('GB18030')
   return names
 }
 
@@ -950,7 +969,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（17 个用例）。
+Expected: 全部 PASS（18 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -966,7 +985,7 @@ Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest �
 本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
 
 Run: `git rm tests/smoke.test.ts`
-Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 17 个用例）。
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 18 个用例）。
 
 - [ ] **Step 7: Commit**
 

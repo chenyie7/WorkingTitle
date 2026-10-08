@@ -110,9 +110,11 @@ export const CONFIDENT_MULTIBYTE_NAMES = [
 
 const CONFIDENT_MULTIBYTE = new RegExp(`^(?:${CONFIDENT_MULTIBYTE_NAMES.join('|')})`)
 
-export function needsGbFallback(detectedUpper: string): boolean {
-  // 抹掉分隔符：jschardet 会吐出 utf-16-le / utf_16_le / UTF-16LE 三种拼写。
-  const normalized = detectedUpper.replace(/[-_]/g, '')
+export function needsGbFallback(detected: string): boolean {
+  // 自己归一化：大小写 + 分隔符。**不要依赖调用方先大写**——传进小写原名会静默
+  // 返回 true（= 追加兜底），那正是本模块修了一整天的那个 bug，从忘记 .toUpperCase()
+  // 的地方再进来一次。参数名不是防线，而本函数已导出，前提条件对调用方可见却无法强制。
+  const normalized = detected.toUpperCase().replace(/[-_]/g, '')
   return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
 }
 
@@ -121,6 +123,8 @@ function candidateEncodings(detected: string): string[] {
   const push = (n: string): void => {
     if (n && iconv.encodingExists(n) && !names.includes(n)) names.push(n)
   }
+  // upper 只服务于本函数自己的 GB* / ASCII 分支判断；needsGbFallback 不再依赖它，
+  // 传原始名字进去即可（它自己会归一化）。
   const upper = (detected || '').toUpperCase()
   if (upper === 'GB2312' || upper === 'GBK' || upper === 'GB18030') push('GB18030')
   else if (upper === 'ASCII') push('UTF-8')
@@ -130,7 +134,7 @@ function candidateEncodings(detected: string): string[] {
   // 不要为了「保险」无条件追加——那会让日文/韩文被解成乱码（见 needsGbFallback 的注释）。
   // 也不要改成「只按 U+FFFD 数量打分」来回避：GB18030 几乎把所有字节对都映射到某个字符，
   // 乱码里的替换字符数同样≈0，两边打平，救不了。
-  if (needsGbFallback(upper)) push('GB18030')
+  if (needsGbFallback(detected)) push('GB18030')
   return names
 }
 
