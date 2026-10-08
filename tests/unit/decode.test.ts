@@ -44,7 +44,7 @@ describe('decodeBuffer', () => {
     const r = decodeBuffer(buf)
     expect(r.encoding).not.toBe('UTF-8')
     expect(r.text).toBe(ZH)
-    expect(r.text).not.toContain('�')
+    expect(r.text).not.toContain('\uFFFD')
   })
 
   it('UTF-16LE（带 BOM）能正确还原', () => {
