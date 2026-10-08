@@ -2540,6 +2540,10 @@ describe('sessionStore 会话读写', () => {
     // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
     // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
     // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
+    //
+    // 【这条用例本身说明了这类缺陷怎么活过评审】它的注释一直把 .tmp 的理由解释得很仔细，
+    // 读者于是顺理成章地以为旁边那两条缓存断言同样刻意——**细致的注释替空洞的断言打了掩护**。
+    // 判据只能是「断言的操作数从哪来」，不是「注释写得多诚恳」。
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
     // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
@@ -2868,7 +2872,14 @@ function isPersistedSession(v: unknown): v is PersistedSession {
   return sessionProblem(v) === null
 }
 
-/** NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。 */
+/**
+ * NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。
+ *
+ * 【为什么要逐个元素查】`Array.isArray(v.chapters)` 单看像是够了，但它对元素一无所知：
+ * 一个 `['第一章']` 这样的数组能过那道检查，随后下游读 `chapters[i].start` 得到 undefined，
+ * 偏移就成了 NaN——章节目录与游标一起悄悄失效，而类型断言 `as NovelCacheMeta` 不会拦。
+ * 数组的形状与元素的形状是两件事，这道检查就是往下多走的那一层。
+ */
 function chapterProblem(v: unknown, i: number): string | null {
   if (typeof v !== 'object' || v === null) return `chapters[${i}] 不是对象`
   const c = v as Record<string, unknown>

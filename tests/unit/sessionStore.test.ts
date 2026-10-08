@@ -175,6 +175,10 @@ describe('sessionStore 会话读写', () => {
     // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
     // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
     // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
+    //
+    // 【这条用例本身说明了这类缺陷怎么活过评审】它的注释一直把 .tmp 的理由解释得很仔细，
+    // 读者于是顺理成章地以为旁边那两条缓存断言同样刻意——**细致的注释替空洞的断言打了掩护**。
+    // 判据只能是「断言的操作数从哪来」，不是「注释写得多诚恳」。
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
     // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
