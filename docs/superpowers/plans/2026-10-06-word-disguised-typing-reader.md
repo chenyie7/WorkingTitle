@@ -1868,6 +1868,35 @@ describe('持久化往返', () => {
     expect(TypingEngine.fromSession(n, oddMode).getSnapshot().mode).toBe('ime')
   })
 
+  it('陈旧会话（章节目录已被改过）恢复后：不变量成立，且跳到该章落在游标处', () => {
+    // 4 章 / 48 字。会话里的 chapterPos 描述的是**另一份章节目录**——用户在同路径上改过小说，
+    // 而 Task 12 只按 sourcePath 匹配会话，所以这是正常使用能到达的状态，不是手改文件。
+    const n = makeNovel('第一章 甲\nAAAAA\n第二章 乙\nBBBBB\n第三章 丙\nCCCCC\n第四章 丁\nDDDDD\n')
+    expect(n.chapters).toHaveLength(4) // 前提自检：夹具几何就是本条用例声称的那个
+    expect(n.flatText).toHaveLength(48)
+    const stale: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 10,
+      mode: 'ime',
+      cursor: 999999,
+      revealStart: 0,
+      chapterPos: [999999, -3],
+      activeChapter: 0,
+      startedAt: null
+    }
+
+    const restored = TypingEngine.fromSession(n, stale)
+    const s = restored.getSnapshot()
+    // 恢复当场满足不变量。修复前这里读到 0，而 cursor - start = 12。
+    expect(s.chapterPos[s.activeChapter]).toBe(s.cursor - n.chapters[s.activeChapter].start)
+    // 用户可见后果：跳到当前章必须落在游标处。修复前落在 36（第 4 章开头），而游标在 48（章末）
+    // ——侧栏显示这一章 0% 而实际已读完，且点它一下反而把进度退回章首。
+    restored.jumpToChapter(s.activeChapter)
+    expect(restored.getSnapshot().cursor).toBe(s.cursor)
+    expect(restored.getSnapshot().cursor).toBe(n.chapters[3].end)
+  })
+
   it('重启后高亮跟随游标——「点了已读完的章」那次点击不会被回存', () => {
     const n = makeNovel()
     const e = new TypingEngine(n, { ratio: 1 })
