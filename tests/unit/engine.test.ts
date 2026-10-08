@@ -288,5 +288,11 @@ describe('持久化往返', () => {
     expect(s.chapterPos.every((p) => p >= 0)).toBe(true)
     expect(s.activeChapter).toBeGreaterThanOrEqual(0)
     expect(s.activeChapter).toBeLessThan(n.chapters.length)
+
+    // 恢复出来的引擎必须【当场】满足自己的不变量：activeChapter 那一章的 chapterPos
+    // 就等于 cursor 减去该章起点。畸形会话里 activeChapter 由 cursor 反推得出，
+    // 而 chapterPos 是从会话里读来的——两者不同源时，这一条会红。
+    // 实测（修复前）：这里读到 0，真值是 12。
+    expect(s.chapterPos[s.activeChapter]).toBe(s.cursor - n.chapters[s.activeChapter].start)
   })
 })

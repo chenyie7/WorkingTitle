@@ -75,12 +75,19 @@ interface EngineState {
 | `jumpToChapter(i)` | `cursor = chapters[i].start + chapterPos[i]`；`revealStart = chapters[i].start` |
 | `setRatio(n)` | 只改 `ratio`，不动游标 |
 
-**统一收尾规则**：任何一次游标变化之后，统一执行
+**统一收尾规则**：`pump` 与 `backspace` 的每一次游标变化之后，统一执行
 
 ```
 activeChapter            = cursor 所在章（cursor === flatText.length 时取最后一章）
 chapterPos[activeChapter] = cursor - chapters[activeChapter].start
 ```
+
+**唯一的例外是 `jumpToChapter`**：它只执行第二条，`activeChapter` 直接取被点击的章号 `i`。
+理由是点击的语义——「点了哪章就高亮哪章」。若照上式从 `cursor` 反推，当目标章已经整章读完时
+`chapterPos[i] === charCount`、游标正好落在**下一章**的开头，左侧列表就会高亮用户没有点的那一章。
+下一次打字会由上式自动纠正回 `cursor` 所在章，那是打字推进的语义，不是这次点击的语义。
+（把 `jumpToChapter` 改成照上式反推，Task 4 的用例全绿——两种语义都没有被测试钉住，
+这条例外只由本段与 `engine.ts` 里 `jumpToChapter` 的注释守着。）
 
 于是 `chapterPos[c]` 恒等于「上次离开第 c 章时，光标停在该章内的偏移」。这条规则同时覆盖了正向打字、退格、以及跨章打字的情况，不需要为每种操作单独规定 `chapterPos` 怎么变。
 
