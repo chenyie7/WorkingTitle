@@ -458,7 +458,7 @@ git commit -m "chore: 项目脚手架（electron-vite + React 19 + Vitest + Play
 - Consumes: Task 1 的工程配置
 - Produces:
   - `types.ts`: `Chapter`, `Novel`, `InputMode`, `PersistedSession`, `NovelCacheMeta`，常量 `DEFAULT_RATIO=10` `MIN_RATIO=1` `MAX_RATIO=500` `RENDER_WINDOW_LIMIT=30000`
-  - `decode.ts`: `decodeBuffer(buf: Buffer): DecodeResult`、`normalizeNewlines(s: string): string`、`detectBom(buf: Buffer): { encoding: string; length: number } | null`
+  - `decode.ts`: `decodeBuffer(buf: Buffer): DecodeResult`、`normalizeNewlines(s: string): string`、`detectBom(buf: Buffer): { encoding: string; length: number } | null`、`needsGbFallback(detectedUpper: string): boolean`、`CONFIDENT_MULTIBYTE_NAMES: string[]`（后两个只为词汇表测试而导出）
   - `DecodeResult = { text: string; encoding: string; hadBom: boolean }`
 
 - [ ] **Step 1: 写 `src/core/types.ts`**

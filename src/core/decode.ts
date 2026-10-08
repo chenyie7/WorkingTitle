@@ -87,14 +87,30 @@ function scoreText(text: string): number {
  * `/i` 只解决大小写、不解决连字符，于是**无 BOM 的 UTF-16 被追加了 GB18030 并被解成乱码**
  * （实测无 BOM 韩文 UTF-16LE：正确解 0.0 / GB18030 乱码 44.8，乱码胜出）。
  * 所以先抹掉 `-` `_` 再匹配。
- * 用前缀而非整串锚定，是为了一并覆盖同族拼写（Big5HKSCS、EUC-JIS-2004、shift_jis_2004）。
- * 前缀匹配在此安全：jschardet 的注册表里没有任何不属于上述家族的编码名以
- * BIG5 / CP93 / CP94 / SHIFT / SJIS / EUC / JOHAB / UTF / UCS 开头（CP9xx 只有 932/949）。
+ * 用前缀而非整串锚定：jschardet 对同一族会给多种拼写（`Big5` / `Shift_JIS` / `utf-16-le`），
+ * 前缀能一并覆盖，且规范化后 `SHIFT_JIS` 与 `SHIFTJIS` 等价。
+ * 【名单里只放 jschardet 真会吐出的名字】`SJIS` / `EUCJIS` / `UCS-2` 这类「想当然的拼写」
+ * 它一个都不产出（`shift_jis_2004` 由 SHIFTJIS 前缀覆盖，注册表里根本没有 UCS-2），属于
+ * 永远不会命中的死条款，已删除。名单与词表的对应关系由 tests/unit/decode.test.ts 的
+ * 词汇表测试逐条核对：改名单、或 jschardet 改名，都会让它失败。
+ * 前缀匹配在此安全：注册表里没有任何不属于上述家族的编码名以
+ * BIG5 / CP93 / CP94 / SHIFT / EUC / JOHAB / UTF 开头（CP9xx 只有 932/949）。
  */
-const CONFIDENT_MULTIBYTE =
-  /^(?:BIG5|CP932|CP949|SHIFTJIS|SJIS|EUCJP|EUCJIS|EUCKR|JOHAB|UTF16|UTF32|UCS2)/
+export const CONFIDENT_MULTIBYTE_NAMES = [
+  'BIG5',
+  'CP932',
+  'CP949',
+  'SHIFTJIS',
+  'EUCJP',
+  'EUCKR',
+  'JOHAB',
+  'UTF16',
+  'UTF32'
+]
 
-function needsGbFallback(detectedUpper: string): boolean {
+const CONFIDENT_MULTIBYTE = new RegExp(`^(?:${CONFIDENT_MULTIBYTE_NAMES.join('|')})`)
+
+export function needsGbFallback(detectedUpper: string): boolean {
   // 抹掉分隔符：jschardet 会吐出 utf-16-le / utf_16_le / UTF-16LE 三种拼写。
   const normalized = detectedUpper.replace(/[-_]/g, '')
   return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
