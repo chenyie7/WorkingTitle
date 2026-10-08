@@ -32,6 +32,11 @@ import type { Novel } from '../core/types'
 export function loadNovelFromFile(filePath: string): Novel {
   const buf = readFileSync(filePath)
   const { text, encoding, hadBom } = decodeBuffer(buf)
+  // `|| '未命名'` 是防御性兜底，对本函数【能读到的】路径不可达：主干为空只可能出现在以 '/'
+  // 结尾的路径上（basename('/') === ''），而那类路径在上一行的 readFileSync 就抛
+  // EISDIR/ENOTDIR，轮不到这里。点文件也不是空主干——实测 path.extname('.txt') 返回 ''
+  // （点文件没有扩展名），于是 basename('.txt', '') 得到 '.txt' 本身，标题就是 '.txt'。
+  // 所以没有用例钉它：不是漏了，是没有可构造的输入。
   const title = basename(filePath, extname(filePath)) || '未命名'
   const { flatText, chapters } = splitChapters(text, title)
   return { title, sourcePath: filePath, encoding, hadBom, flatText, chapters }

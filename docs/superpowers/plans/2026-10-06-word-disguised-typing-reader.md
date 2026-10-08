@@ -2461,16 +2461,75 @@ describe('sessionStore 会话读写', () => {
     expect(store.readSession()).toBeNull()
   })
 
-  // 与上一条走的是不同代码路径：那一份连 JSON.parse 都过不去，这一份是【合法 JSON】
-  // 但字段残缺——只挡解析错误的实现会把它当成一份会话交给 TypingEngine.fromSession
-  // （实测不抛错，只会伪装成一次「进度回到开头」的恢复）。
-  it('readSession 对结构不合法的合法 JSON 返回 null', () => {
+  // 与上一条（`{ 这不是 JSON`，连 JSON.parse 都过不去）走的是不同代码路径：这一组是
+  // 【合法 JSON】但字段不合规——只挡解析错误的实现会把它当成一份会话交给
+  // TypingEngine.fromSession（实测不抛错，只会伪装成一次「进度回到开头」的恢复）。
+  //
+  // 【为什么是一张表而不是一份残缺记录】原先只有一条「只留 novelTitle/sourcePath」的用例，
+  // 它只能证明「有校验」，证明不了任何**单条**字段检查在不在：实测把七条检查里任意一条删掉，
+  // 整套 16 条仍全绿。现在一个字段一份残缺记录、各占一条用例，并且每条都断言警告里
+  // **点出了那个字段**——于是「校验存在」被拆成「每条腿都在，而且报得出名字」。
+  // 多字段缺失那种情形被「mode 缺失」这条覆盖（前面几条都会先通过，最后卡在 mode 上）。
+  const CRIPPLED: Array<{
+    name: string
+    token: string
+    build: (s: PersistedSession) => unknown
+  }> = [
+    { name: 'novelTitle 不是字符串', token: 'novelTitle 不是字符串', build: (s) => ({ ...s, novelTitle: 42 }) },
+    { name: 'sourcePath 不是字符串', token: 'sourcePath 不是字符串', build: (s) => ({ ...s, sourcePath: null }) },
+    { name: 'mode 不是 ime/key', token: 'mode 既不是 ime 也不是 key', build: (s) => ({ ...s, mode: 'garbage' }) },
+    {
+      name: 'mode 整个缺失',
+      token: 'mode',
+      build: (s) => {
+        const copy: Record<string, unknown> = { ...s }
+        delete copy.mode
+        return copy
+      }
+    },
+    { name: 'chapterPos 不是数组', token: 'chapterPos 不是数组', build: (s) => ({ ...s, chapterPos: '0,1' }) },
+    {
+      name: 'chapterPos 含非数字项',
+      token: 'chapterPos 含非数字项',
+      build: (s) => ({ ...s, chapterPos: [1, '2'] })
+    },
+    {
+      name: 'startedAt 既不是 null 也不是数字',
+      token: 'startedAt 既不是 null 也不是数字',
+      build: (s) => ({ ...s, startedAt: 'now' })
+    },
+    { name: 'ratio 不是数字', token: 'ratio 不是有限数字', build: (s) => ({ ...s, ratio: '10' }) },
+    { name: 'cursor 不是数字', token: 'cursor 不是有限数字', build: (s) => ({ ...s, cursor: null }) },
+    { name: 'revealStart 不是数字', token: 'revealStart 不是有限数字', build: (s) => ({ ...s, revealStart: {} }) },
+    {
+      name: 'activeChapter 不是数字',
+      token: 'activeChapter 不是有限数字',
+      build: (s) => ({ ...s, activeChapter: '0' })
+    },
+    // 注意不能拿数组当这一条的输入：`typeof [] === 'object'`，数组会通过「是不是对象」
+    // 那一关、最后卡在 novelTitle 上（实测：断言 token 会红）。JSON 的 null 与裸数字才
+    // 真的走到那条 return。
+    { name: '记录是 null', token: '不是一个对象', build: () => null },
+    { name: '记录是裸数字', token: '不是一个对象', build: () => 42 }
+  ]
+
+  it.each(CRIPPLED)('$name → 按无记录处理，且警告点出该字段', ({ build, token }) => {
     const store = createSessionStore(dir)
-    const partial = { novelTitle: '测试书', sourcePath: '/tmp/测试书.txt' }
-    writeFileSync(join(dir, 'session.json'), JSON.stringify(partial), 'utf8')
-    // 前提：这份内容确实是合法 JSON，否则本用例只是在重复上一条
+    const crippled = build(makeSession())
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(crippled), 'utf8')
+    // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏时返回 null」那一条
     expect(() => JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).not.toThrow()
-    expect(store.readSession()).toBeNull()
+    // 前提二：这份记录与一份完好的记录确实不同——否则它什么都没坏，用例是空跑
+    expect(JSON.stringify(crippled)).not.toBe(JSON.stringify(makeSession()))
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSession()).toBeNull()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('clearAll 删除会话与缓存', () => {
@@ -2594,6 +2653,96 @@ describe('sessionStore 小说缓存', () => {
   // sourcePath/mtimeMs/size/textBytes 时返回的对象里 chapters/title/encoding/hadBom
   // 全是 undefined，而 flatText 是对的，于是 Task 6 的 `if (cached) return cached`
   // 会把它当小说交给渲染进程，chapters.length 当场抛错。
+  // 与 readSession 那张表同源：isNovelCacheMeta 的每一条字段检查原先也【各自不可见】——
+  // 删掉任意一条，整套仍是全绿（这一条是补完会话那张表之后发现的：新写的校验器落进了
+  // 同一个形状）。一个字段一份残缺 meta，各占一条用例，并断言警告点出该字段。
+  function validMeta(src: string, text: string): Record<string, unknown> {
+    const st = statSync(src)
+    return {
+      sourcePath: src,
+      mtimeMs: st.mtimeMs,
+      size: st.size,
+      encoding: 'UTF-8',
+      hadBom: false,
+      title: 'src',
+      chapters: [{ index: 0, title: '第一章 甲', start: 0, end: 10, charCount: 10 }],
+      textBytes: Buffer.byteLength(text, 'utf8')
+    }
+  }
+
+  const BAD_METAS: Array<{ name: string; token: string; mangle: (m: Record<string, unknown>) => unknown }> =
+    [
+      { name: 'sourcePath 不是字符串', token: 'sourcePath 不是字符串', mangle: (m) => ({ ...m, sourcePath: 7 }) },
+      { name: 'title 不是字符串', token: 'title 不是字符串', mangle: (m) => ({ ...m, title: null }) },
+      { name: 'encoding 不是字符串', token: 'encoding 不是字符串', mangle: (m) => ({ ...m, encoding: 9 }) },
+      { name: 'hadBom 不是布尔值', token: 'hadBom 不是布尔值', mangle: (m) => ({ ...m, hadBom: 'no' }) },
+      { name: 'mtimeMs 不是数字', token: 'mtimeMs 不是有限数字', mangle: (m) => ({ ...m, mtimeMs: '1' }) },
+      { name: 'size 不是数字', token: 'size 不是有限数字', mangle: (m) => ({ ...m, size: null }) },
+      { name: 'textBytes 不是数字', token: 'textBytes 不是有限数字', mangle: (m) => ({ ...m, textBytes: {} }) },
+      { name: 'chapters 不是数组', token: 'chapters 不是数组', mangle: (m) => ({ ...m, chapters: 'none' }) },
+      {
+        name: 'chapters[0] 不是对象',
+        token: 'chapters[0] 不是对象',
+        mangle: (m) => ({ ...m, chapters: ['第一章'] })
+      },
+      {
+        name: 'chapters[0].title 不是字符串',
+        token: 'chapters[0].title',
+        mangle: (m) => ({ ...m, chapters: [{ ...(m.chapters as object[])[0], title: 1 }] })
+      },
+      {
+        name: 'chapters[0].index 不是数字',
+        token: 'chapters[0].index',
+        mangle: (m) => ({ ...m, chapters: [{ ...(m.chapters as object[])[0], index: '0' }] })
+      },
+      {
+        name: 'chapters[0].start 不是数字',
+        token: 'chapters[0].start',
+        mangle: (m) => ({ ...m, chapters: [{ ...(m.chapters as object[])[0], start: '0' }] })
+      },
+      {
+        name: 'chapters[0].end 不是数字',
+        token: 'chapters[0].end',
+        mangle: (m) => ({ ...m, chapters: [{ ...(m.chapters as object[])[0], end: null }] })
+      },
+      {
+        name: 'chapters[0].charCount 不是数字',
+        token: 'chapters[0].charCount',
+        mangle: (m) => ({ ...m, chapters: [{ ...(m.chapters as object[])[0], charCount: {} }] })
+      }
+    ]
+
+  it.each(BAD_METAS)('meta 的 $name → 按未命中处理，且警告点出该字段', ({ mangle, token }) => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'src.txt')
+    const text = '第一章 甲\n正文。\n'
+    writeFileSync(src, text, 'utf8')
+    writeFileSync(join(dir, 'novel-cache.txt'), text, 'utf8')
+    const good = validMeta(src, text)
+    const bad = mangle(good)
+    writeFileSync(join(dir, 'novel-cache.json'), JSON.stringify(bad), 'utf8')
+
+    // 前提一：写下去的确实是合法 JSON（否则只是在重复「元数据缺失/损坏」那几条）
+    expect(() => JSON.parse(readFileSync(join(dir, 'novel-cache.json'), 'utf8'))).not.toThrow()
+    // 前提二：完好的那份 meta 在【其余三道门】上确实自洽——把 good 写进去必须命中。
+    // 少了这一步，这条用例证明不了「是被改坏的那个键拦下的」，也可能是这对文件本来就不算数。
+    writeFileSync(join(dir, 'novel-cache.json'), JSON.stringify(good), 'utf8')
+    expect(store.readNovelCache(src)).not.toBeNull()
+    // 前提三：坏的那份与好的只差一个键（键数相同 ⇒ 是改坏而非删掉）
+    expect(JSON.stringify(bad)).not.toBe(JSON.stringify(good))
+    expect(Object.keys(bad as object).length).toBe(Object.keys(good).length)
+    writeFileSync(join(dir, 'novel-cache.json'), JSON.stringify(bad), 'utf8')
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readNovelCache(src)).toBeNull()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('meta 是合法 JSON 但形状不对时按未命中处理', () => {
     const store = createSessionStore(dir)
     const src = join(dir, 'src.txt')
@@ -2692,32 +2841,45 @@ export interface SessionStore {
  *     cursor 缺失一律落 0，而 chapters[0].start 按构造恒为 0，所以第 0 章那一项也是 0。
  * 于是畸形数据不会崩溃，而是伪装成一次成功的恢复（比例、模式、计时都还在，进度却回到
  * 开头）。校验失败一律当作「没有记录」，由调用方走空状态。
+ *
+ * 【返回字段名而不是 true/false】这条警告原先只说「结构不合法」，读日志的人无法知道是哪个
+ * 字段——而这正是「进度莫名其妙没了」时要查的东西。改成返回第一个不合格字段的描述，
+ * isPersistedSession 只是它的布尔外壳（`=== null`），两条路径不会各写一套而漂移。
  */
-function isPersistedSession(v: unknown): v is PersistedSession {
-  if (typeof v !== 'object' || v === null) return false
+function sessionProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
   const s = v as Record<string, unknown>
-  if (typeof s.novelTitle !== 'string' || typeof s.sourcePath !== 'string') return false
-  if (s.mode !== 'ime' && s.mode !== 'key') return false
-  if (!Array.isArray(s.chapterPos)) return false
-  if (!s.chapterPos.every((n) => typeof n === 'number')) return false
-  if (s.startedAt !== null && typeof s.startedAt !== 'number') return false
+  if (typeof s.novelTitle !== 'string') return 'novelTitle 不是字符串'
+  if (typeof s.sourcePath !== 'string') return 'sourcePath 不是字符串'
+  if (s.mode !== 'ime' && s.mode !== 'key') return 'mode 既不是 ime 也不是 key'
+  if (!Array.isArray(s.chapterPos)) return 'chapterPos 不是数组'
+  if (!s.chapterPos.every((n) => typeof n === 'number')) return 'chapterPos 含非数字项'
+  if (s.startedAt !== null && typeof s.startedAt !== 'number') {
+    return 'startedAt 既不是 null 也不是数字'
+  }
   for (const k of ['ratio', 'cursor', 'revealStart', 'activeChapter']) {
     const n = s[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) return `${k} 不是有限数字`
   }
-  return true
+  return null
 }
 
-/** NovelCacheMeta.chapters 里每个元素的必填字段。 */
-function isChapter(v: unknown): boolean {
-  if (typeof v !== 'object' || v === null) return false
+function isPersistedSession(v: unknown): v is PersistedSession {
+  return sessionProblem(v) === null
+}
+
+/** NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。 */
+function chapterProblem(v: unknown, i: number): string | null {
+  if (typeof v !== 'object' || v === null) return `chapters[${i}] 不是对象`
   const c = v as Record<string, unknown>
-  if (typeof c.title !== 'string') return false
+  if (typeof c.title !== 'string') return `chapters[${i}].title 不是字符串`
   for (const k of ['index', 'start', 'end', 'charCount']) {
     const n = c[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
+      return `chapters[${i}].${k} 不是有限数字`
+    }
   }
-  return true
+  return null
 }
 
 /**
@@ -2734,17 +2896,41 @@ function isChapter(v: unknown): boolean {
  * 【为什么是必填字段校验而不是精确形状校验】与 isPersistedSession 同样的取舍：将来版本
  * 若在 meta 里多写几个键，旧记录仍应有效。所以这里只问「我需要的字段在不在、类型对不对」，
  * 不问「有没有多余的键」。
+ *
+ * 【丢弃这份缓存不会丢任何东西——这是 return null 而不是「尽力而为」的理由】缓存里没有
+ * 不可再生的信息：title ← 文件名、encoding/hadBom ← 检测、chapters ← 切分、flatText ← 解码，
+ * 而全应用唯一不可再生的状态是阅读进度，它在 session.json 里（另一个文件、另一套校验），
+ * 本路径不碰。所有 null 都落回 loadNovelFromFile(meta.sourcePath)，源文件是同一个路径；
+ * 源文件若也没了，现有代码本来就会返回 null（statSync 抛）。所以这里只是把一种情况挪到
+ * 一条【已经由四处未命中走过】的路径上，不引入新的行为类别。
+ *
+ * 【顺带约束了 Task 12：两次恢复不必互相同步】实测 fromSession 按【重建出来的】
+ * chapters 长度建 chapterPos、用 s.chapterPos?.[i] 取值、缺失项落 0，且 cursor 被夹到新的
+ * flatText 长度内——章数比记录多、少、或正文更短，它都是逐章降级而不是抛错。所以
+ * 「缓存被判无效」最坏也就是首次启动慢一点（重读源文件 + 重新解码切分），
+ * 不会让已存的阅读位置丢失或损坏。Task 12 的会话恢复因此无需与缓存有效性协调。
  */
-function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
-  if (typeof v !== 'object' || v === null) return false
+function cacheMetaProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
   const m = v as Record<string, unknown>
-  if (typeof m.sourcePath !== 'string' || typeof m.title !== 'string') return false
-  if (typeof m.encoding !== 'string' || typeof m.hadBom !== 'boolean') return false
+  if (typeof m.sourcePath !== 'string') return 'sourcePath 不是字符串'
+  if (typeof m.title !== 'string') return 'title 不是字符串'
+  if (typeof m.encoding !== 'string') return 'encoding 不是字符串'
+  if (typeof m.hadBom !== 'boolean') return 'hadBom 不是布尔值'
   for (const k of ['mtimeMs', 'size', 'textBytes']) {
     const n = m[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) return `${k} 不是有限数字`
   }
-  return Array.isArray(m.chapters) && m.chapters.every(isChapter)
+  if (!Array.isArray(m.chapters)) return 'chapters 不是数组'
+  for (let i = 0; i < m.chapters.length; i++) {
+    const problem = chapterProblem(m.chapters[i], i)
+    if (problem !== null) return problem
+  }
+  return null
+}
+
+function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
+  return cacheMetaProblem(v) === null
 }
 
 export function createSessionStore(baseDir: string): SessionStore {
@@ -2763,8 +2949,12 @@ export function createSessionStore(baseDir: string): SessionStore {
         if (!existsSync(sessionPath)) return null
         const parsed: unknown = JSON.parse(readFileSync(sessionPath, 'utf8'))
         if (!isPersistedSession(parsed)) {
-          // 结构不合法的记录同样要说出来：静默丢弃就是「进度莫名其妙没了」的成因。
-          console.warn('[wt] 会话文件结构不合法，按无记录处理：', sessionPath)
+          // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
+          // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
+          console.warn(
+            `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
+            sessionPath
+          )
           return null
         }
         return parsed
@@ -2796,7 +2986,10 @@ export function createSessionStore(baseDir: string): SessionStore {
       // 临时文件也要删：崩溃可能正好把 .tmp 留在磁盘上，「清除阅读记录」应当清干净。
       for (const p of [sessionPath, sessionTmpPath, cacheMetaPath, cacheTextPath]) {
         try {
-          if (existsSync(p)) rmSync(p)
+          // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
+          // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
+          // 告警更糟：它教会看日志的人忽略这一行。
+          rmSync(p, { force: true })
         } catch (err) {
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
@@ -2840,7 +3033,10 @@ export function createSessionStore(baseDir: string): SessionStore {
         if (!isNovelCacheMeta(parsed)) {
           // 形状不对同样是「未命中」，不是「命中但字段是 undefined」——后者会一路
           // 送到渲染进程（Task 6 的 openNovel 是 `if (cached) return cached`）。
-          console.warn('[wt] 缓存元数据结构不合法，按未命中处理：', cacheMetaPath)
+          console.warn(
+            `[wt] 缓存元数据结构不合法（${cacheMetaProblem(parsed) ?? '未知'}），按未命中处理：`,
+            cacheMetaPath
+          )
           return null
         }
         const meta = parsed
@@ -3143,6 +3339,11 @@ import type { Novel } from '../core/types'
 export function loadNovelFromFile(filePath: string): Novel {
   const buf = readFileSync(filePath)
   const { text, encoding, hadBom } = decodeBuffer(buf)
+  // `|| '未命名'` 是防御性兜底，对本函数【能读到的】路径不可达：主干为空只可能出现在以 '/'
+  // 结尾的路径上（basename('/') === ''），而那类路径在上一行的 readFileSync 就抛
+  // EISDIR/ENOTDIR，轮不到这里。点文件也不是空主干——实测 path.extname('.txt') 返回 ''
+  // （点文件没有扩展名），于是 basename('.txt', '') 得到 '.txt' 本身，标题就是 '.txt'。
+  // 所以没有用例钉它：不是漏了，是没有可构造的输入。
   const title = basename(filePath, extname(filePath)) || '未命名'
   const { flatText, chapters } = splitChapters(text, title)
   return { title, sourcePath: filePath, encoding, hadBom, flatText, chapters }
