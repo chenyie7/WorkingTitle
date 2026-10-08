@@ -23,6 +23,7 @@
 - **绝不无条件 `preventDefault()` 所有 keydown** —— 那会彻底禁用中文输入法。见 Task 11。
 - **显示内容恒等于 `flatText.slice(revealStart, cursor)`**，除此之外阅读区不显示任何小说文字。
 - **每个 Task 结束必须 commit。** 任何「通过」声明必须附实际命令与输出。
+- **`git add -A` 只在独占一棵工作树时安全。** 各任务的提交步骤写的都是 `git add -A`，但实际执行时树上可能有**不属于本任务的在途改动**（另一个 agent 刚写的注释、上一任务未及提交的收尾、编辑器里未保存的临时文件）。**开工前先 `git status` 看一眼**；若发现不属于自己的改动，**改用显式路径提交**，并把那段改动交回它的归属者处理，**不要扫进自己的提交**——否则历史里看不出是谁写的。本项目已出现两次（Task 2、Task 6），两次都是实施者自己发现并改用了显式路径。
 - 包管理器统一用 `pnpm`。npm 的全局 cache 在本机有 root 权限残留问题（`EPERM`），不要用 npm 安装。
 - **React 组件一律不写返回类型注解。** `@types/react@19.3.0` 是 `export = React` + `export as namespace React`，在模块文件里写 `React.JSX.Element` 而不 import React 会报「refers to a UMD global」错误。让 TS 推断返回类型，事件类型用具名导入（如 `import type { KeyboardEvent as ReactKeyboardEvent } from 'react'`）。
 - 模块导入风格已按各包实际声明验证，不要改：`iconv-lite` 用默认导入（`export = iconv`），`jschardet` 用**具名导入** `{ detect }`（dual ESM/CJS，默认导入依赖打包器 interop，不稳）。
@@ -3844,7 +3845,9 @@ contextBridge.exposeInMainWorld('api', api)
 export type WtApi = typeof api
 ```
 
-注意：preload import 了 `../main/ipc`，而 `ipc.ts` 顶层 import 了 `electron` 的 `dialog` / `ipcMain`。在 sandboxed preload 里 `ipcMain` 不可用，会导致运行时错误。**因此 `CH` 与 `MENU_COMMANDS` 必须放在一个不 import electron 的独立模块里。**
+注意：preload import 了 `../main/ipc`，而 `ipc.ts` 会**传递地**拉到 `session.ts` → `sessionStore.ts`（`node:fs`）与 `loadNovel.ts`（`iconv-lite`）。**沙箱化的 preload 可以 `require('electron')`，但加载不了 Node 内建模块。** 实测（Task 6）：`Unable to load preload script` / `Error: module not found: node:fs`，`window.api === undefined`（而页面本身照常渲染）。**因此 `CH` 与 `MENU_COMMANDS` 必须放在一个零依赖的独立模块里**——`channels.ts` 实测 `imports: []`，拆出后 preload 只需 `electron`。
+
+> 此前这里写的是「在 sandboxed preload 里 `ipcMain` 不可用，会导致运行时错误」——**约束对、机制错**。`ipcMain` 只是从 `require('electron')` 上读的一个属性，**读一个 undefined 属性不会抛**；真正在加载期抛的是 Node 内建模块。**照错误的机制去防，人会去防 `ipcMain` 而漏掉 `node:fs`**，所以这条必须按实测写。
 
 - [ ] **Step 7: 拆出 `src/main/channels.ts`，修正上面的隐患**
 
@@ -3872,8 +3875,11 @@ export type MenuCommand = (typeof MENU_COMMANDS)[number]
 
 `src/main/ipc.ts` 改为从 `./channels` 重新导出，并删掉本地的 `CH` / `MENU_COMMANDS` 定义：
 ```ts
+import { CH } from './channels'
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 ```
+
+**两行都要有，只写第二行会挂。** `export … from` **不会在当前模块作用域绑定该名字**，而下面的 `registerIpc` 用了六次 `CH.*`；只写重新导出会得到 `TS2304: Cannot find name 'CH'`（外加五条同类错误），**而 `pnpm test` 仍然全绿**——因为 `ipcContract.test.ts` 只 import 那两个常量、从不执行 `registerIpc`。**这是一个「测试绿、typecheck 红」的形状**：那六处 `CH.*` 对测试不可见、只对 `tsc` 可见。（Task 6 实测。）
 
 测试 `tests/unit/ipcContract.test.ts` 仍然 import `../../src/main/ipc`，接口不变，无需改动。
 
