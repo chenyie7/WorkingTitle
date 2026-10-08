@@ -1138,6 +1138,14 @@ describe('splitChapters', () => {
     expect(chapters[1].title).toBe('第二章 云涌')
     expect(chapters[2].title).toBe('第三章 雷动')
     expectContiguous(flatText, chapters)
+    // 这条断言必须落在【真实 fixture】上，它是全项目唯一守住「有章节的拼接路径」保真的地方。
+    // expectContiguous 只校验 (flatText, chapters) 这一对【自洽】：区间连续、下标、charCount。
+    // 它对 flatText 是否等于源文件一言不发——去掉拼接时的章间 \n，它照样全绿（实测）。
+    // 上面「无标题 → 单章节」那条虽然也断言了 flatText === text，但走的是提前返回分支
+    // （titleIdx 为空直接 return { flatText: text }），那个断言恒真，碰不到拼接逻辑。
+    // 而这条用例走的是三章拼接：只有 flatText 与源文件逐字相等，Task 4 那些指向 flatText
+    // 的 cursor/revealStart/chapterPos 偏移，才对得上用户真正导入的那个文件。
+    expect(flatText).toBe(text)
   })
 
   it('章节正文包含标题行本身', () => {
@@ -1164,7 +1172,12 @@ describe('splitChapters', () => {
     expect(chapters[0].title).toBe('第一章 风起')
   })
 
-  it('相邻标题之间的空章节被丢弃，但留下的区间仍然连续', () => {
+  it('相邻标题之间无正文：区间仍连续，且两个标题都不被丢弃（flatText === 原文）', () => {
+    // 【本用例不覆盖 kept 过滤器】原名字里的「空章节被丢弃」描述的是一个【不可达】的情况。
+    // 每个章节切片都从它自己的标题行开始，而标题行 trim() 后必非空，所以真章节永远不可能为空；
+    // 那个过滤器唯一能丢掉的只有「全空白的前言」，由「标题前只有空白时不产生前言章节」覆盖。
+    // 两条用例职责不同：删过滤器只应让【那条前言用例】变红，本用例不该红（下面两个标题都不是空章）。
+    // 因此改过滤器时请去改那条前言用例，**别把本用例当作它的守卫，也别以为删了它过滤器还有覆盖**。
     const text = '第一章 甲\n\n第二章 乙\n正文乙。\n'
     const { flatText, chapters } = splitChapters(text, 'x')
     expect(chapters).toHaveLength(2)
@@ -1271,10 +1284,26 @@ export function splitChapters(text: string, fallbackTitle: string): SplitResult 
     title: s.title,
     body: lines.slice(s.from, s.to).join('\n')
   }))
+  // 【这个过滤器只能丢掉「全空白的前言」，它不是通用的空章节清理】
+  // 每个章节切片都从它自己的标题行开始（from = titleIdx[i]），而 isChapterTitle 要求
+  // 该行 trim() 后非空，所以真章节的 body 必然包含自己的标题行，body.trim() 永不为 ''。
+  // 也就是说「相邻标题之间的空章节」根本不可能存在——没有可丢的空章节。
+  // 唯一会被丢掉的，是文件开头到第一个标题之间那段全空白区域（例如文件以若干空行开头）。
   const kept = bodies.filter((b) => b.body.trim() !== '')
 
-  // 除最后一章外，每章正文末尾补一个 \n 作为章间分隔并计入该章，
-  // 这样各章区间才能严格首尾相接（end === 下一章 start）。
+  // 除最后一章外，每章正文末尾补一个 \n，计入该章。
+  //
+  // 【这个 \n 不负责区间连续】end === 下一章 start 是【构造性】成立的：start 取自
+  // 追加前的 flatText.length，追加之后再取一次作为 end。把这段 \n 去掉，各章区间
+  // 照样首尾相接——连续性只来自 start/end 的取值方式，与这里补不补字符无关。
+  //
+  // 【它唯一的用途是还原原文】lines.slice(from, to).join('\n') 丢掉了第 to-1 行之后
+  // 本应存在的那个换行；补回来，flatText 才与源文件逐字相等。末章之后原文没有换行，
+  // 故末章不补——这正是下面那个三元判断存在的原因。
+  //
+  // 逐字相等是刚需而非洁癖：Task 4 的 cursor / revealStart / chapterPos 全是 flatText
+  // 的下标，Task 5 又会把它们持久化。只有 flatText === 原文，这些偏移才对得上用户
+  // 真正导入的那个文件。
   let flatText = ''
   const chapters: Chapter[] = []
   kept.forEach((b, i) => {
