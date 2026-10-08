@@ -2401,6 +2401,25 @@ function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSessio
   }
 }
 
+// 这两个辅助函数放在模块级而不是第二个 describe 里：clearAll 那条用例也要用它们
+// （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
+function writeSource(content: string): string {
+  const p = join(dir, 'src.txt')
+  writeFileSync(p, content, 'utf8')
+  return p
+}
+
+function makeNovel(sourcePath: string): Novel {
+  return {
+    title: 'src',
+    sourcePath,
+    encoding: 'UTF-8',
+    hadBom: false,
+    flatText: '第一章 甲\n正文。\n',
+    chapters: [{ index: 0, title: '第一章 甲', start: 0, end: 10, charCount: 10 }]
+  }
+}
+
 describe('sessionStore 会话读写', () => {
   it('未写过时 readSession 返回 null', () => {
     const store = createSessionStore(dir)
@@ -2457,6 +2476,13 @@ describe('sessionStore 会话读写', () => {
   it('clearAll 删除会话与缓存', () => {
     const store = createSessionStore(dir)
     store.writeSession(makeSession())
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
+    // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
+    // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
+    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
     // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
     writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
@@ -2474,23 +2500,6 @@ describe('sessionStore 会话读写', () => {
 })
 
 describe('sessionStore 小说缓存', () => {
-  function writeSource(content: string): string {
-    const p = join(dir, 'src.txt')
-    writeFileSync(p, content, 'utf8')
-    return p
-  }
-
-  function makeNovel(sourcePath: string): Novel {
-    return {
-      title: 'src',
-      sourcePath,
-      encoding: 'UTF-8',
-      hadBom: false,
-      flatText: '第一章 甲\n正文。\n',
-      chapters: [{ index: 0, title: '第一章 甲', start: 0, end: 10, charCount: 10 }]
-    }
-  }
-
   it('写缓存后能读回等价的 Novel', () => {
     const store = createSessionStore(dir)
     const src = writeSource('第一章 甲\n正文。\n')
@@ -2580,6 +2589,38 @@ describe('sessionStore 小说缓存', () => {
     expect(store.readNovelCache(src)).toBeNull()
   })
 
+  // 与 readSession 的字段校验同源：合法 JSON、但形状不对的 meta 原先会被断言成
+  // NovelCacheMeta 并当作【命中】返回。这不是理论问题——实测在修复前，meta 只写
+  // sourcePath/mtimeMs/size/textBytes 时返回的对象里 chapters/title/encoding/hadBom
+  // 全是 undefined，而 flatText 是对的，于是 Task 6 的 `if (cached) return cached`
+  // 会把它当小说交给渲染进程，chapters.length 当场抛错。
+  it('meta 是合法 JSON 但形状不对时按未命中处理', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'src.txt')
+    const text = '第一章 甲\n正文。\n'
+    writeFileSync(src, text, 'utf8')
+    const st = statSync(src)
+    writeFileSync(join(dir, 'novel-cache.txt'), text, 'utf8')
+
+    const partial = {
+      sourcePath: src,
+      mtimeMs: st.mtimeMs,
+      size: st.size,
+      textBytes: Buffer.byteLength(text, 'utf8')
+    }
+    writeFileSync(join(dir, 'novel-cache.json'), JSON.stringify(partial), 'utf8')
+
+    // 前提：这一对在【其余三道门】上完全自洽——路径、源文件 stat、提交点全部通过，
+    // 所以唯一能拦下它的就是形状校验；否则本用例会退化成「它因别的原因被拒」。
+    expect(partial.sourcePath).toBe(src)
+    expect(statSync(src).mtimeMs).toBe(partial.mtimeMs)
+    expect(statSync(src).size).toBe(partial.size)
+    expect(statSync(join(dir, 'novel-cache.txt')).size).toBe(partial.textBytes)
+    expect(() => JSON.parse(readFileSync(join(dir, 'novel-cache.json'), 'utf8'))).not.toThrow()
+
+    expect(store.readNovelCache(src)).toBeNull()
+  })
+
   // 崩溃残留：进程死在「写完 novel-cache.txt、还没写 novel-cache.json」之间。
   // 磁盘上留下的是 A 书的 meta 配另一本书的正文，而 meta 记的
   // sourcePath / mtimeMs / size 全都是 A 书自己的、三项自洽，所以只有让 meta
@@ -2665,6 +2706,45 @@ function isPersistedSession(v: unknown): v is PersistedSession {
     if (typeof n !== 'number' || !Number.isFinite(n)) return false
   }
   return true
+}
+
+/** NovelCacheMeta.chapters 里每个元素的必填字段。 */
+function isChapter(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  if (typeof c.title !== 'string') return false
+  for (const k of ['index', 'start', 'end', 'charCount']) {
+    const n = c[k]
+    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+  }
+  return true
+}
+
+/**
+ * 校验读回来的 JSON 是不是一份完整的 NovelCacheMeta。
+ *
+ * 【与 isPersistedSession 是同一套姿势，理由也相同】这里原先是 `JSON.parse(...) as
+ * NovelCacheMeta`——一个合法 JSON 就通过了断言。而**一份形状不对的 meta 会被当成【命中】
+ * 返回**，不是未命中：路径、源文件 stat、提交点这三道门依赖的只是 meta 里那几个存在的
+ * 字段，缺了 title/encoding/hadBom/chapters 照样自洽。实测：meta 只写
+ * sourcePath/mtimeMs/size/textBytes 时，readNovelCache 返回一个 chapters、title、encoding、
+ * hadBom 全为 undefined 的对象，而 flatText 是对的——于是 Task 6 的 `if (cached) return cached`
+ * 会把这样一个「小说」交给渲染进程，chapters.length 当场抛错。
+ *
+ * 【为什么是必填字段校验而不是精确形状校验】与 isPersistedSession 同样的取舍：将来版本
+ * 若在 meta 里多写几个键，旧记录仍应有效。所以这里只问「我需要的字段在不在、类型对不对」，
+ * 不问「有没有多余的键」。
+ */
+function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  if (typeof m.sourcePath !== 'string' || typeof m.title !== 'string') return false
+  if (typeof m.encoding !== 'string' || typeof m.hadBom !== 'boolean') return false
+  for (const k of ['mtimeMs', 'size', 'textBytes']) {
+    const n = m[k]
+    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+  }
+  return Array.isArray(m.chapters) && m.chapters.every(isChapter)
 }
 
 export function createSessionStore(baseDir: string): SessionStore {
@@ -2756,7 +2836,14 @@ export function createSessionStore(baseDir: string): SessionStore {
     readNovelCache(filePath: string): Novel | null {
       try {
         if (!existsSync(cacheMetaPath) || !existsSync(cacheTextPath)) return null
-        const meta = JSON.parse(readFileSync(cacheMetaPath, 'utf8')) as NovelCacheMeta
+        const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
+        if (!isNovelCacheMeta(parsed)) {
+          // 形状不对同样是「未命中」，不是「命中但字段是 undefined」——后者会一路
+          // 送到渲染进程（Task 6 的 openNovel 是 `if (cached) return cached`）。
+          console.warn('[wt] 缓存元数据结构不合法，按未命中处理：', cacheMetaPath)
+          return null
+        }
+        const meta = parsed
         if (meta.sourcePath !== filePath) return null
         const st = statSync(filePath)
         if (st.mtimeMs !== meta.mtimeMs || st.size !== meta.size) return null
@@ -3172,7 +3259,7 @@ describe('writeSession 的原子替换', () => {
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
@@ -3197,20 +3284,23 @@ function makeSession(cursor: number): PersistedSession {
 // 文件的 inode，而 writeFileSync 对已存在的路径是原地截断、inode 不变。读文件【内容】
 // 看不出这个差别——这正是原子性没有被任何内容级断言覆盖住的原因。
 //
-// 【为什么两条都要：实测的变异矩阵】同一批回退各跑一次，红/绿都是实测值——
-//   把 temp+rename 换成直接写目标文件   → A 红（旧会话没活下来）B 红（inode 没换）
-//   renameSync 换成 copyFileSync        → A **绿**　　　　　　 B 红（inode 没换）
-//   先把目标截断、再走 temp+rename       → A 红（旧会话没活下来）B **绿**
+// 【为什么两条都要：实测的变异矩阵】同一批回退各跑一次，红/绿与「红在哪条断言上」
+// 都是实测值——
+//   把 temp+rename 换成直接写目标文件   → A 红（旧会话没活下来）  B 红（inode 没换）
+//   renameSync 换成 copyFileSync        → A **绿**　　　　　　　 B 红（临时文件没被消费）
+//   先把目标截断、再走 temp+rename       → A 红（旧会话没活下来）  B **绿**
+//   只写临时文件、忘了改名               → A 红（第一次保存就读不回来）B 红（临时文件没被消费）
 // 红在哪条【断言】上比行号可靠：行号会随注释本身改动而漂移（写这一条时就踩过一次——
 // 引用的 61 在补完这段注释后变成了 71）。
-// 第一行是两条的重叠（同一个回退的两个角度）。**后两行才是理由，而且两个方向各有一条**：
-// copyFileSync 保持了目标的 inode，所以 B 看得见；但「旧会话会不会在写入半途而死时被毁」
-// 它看不见，那是 A 的事。反过来「先截断目标」把旧会话毁在原子步骤【之前】，A 立刻红，
-// 而 B 因为文件确实被整份换掉而全绿。各自都漏得掉一个回退，所以两条都留。
+// 第一行是两条的重叠（同一个回退的两个角度）。**第二、三行才是理由，而且两个方向各有一条**：
+// copyFileSync 保留了目标的 inode、也不消费临时文件，所以 B 看得见；但「旧会话会不会在写入
+// 半途而死时被毁」它看不见，那是 A 的事。反过来「先截断目标」把旧会话毁在原子步骤【之前】，
+// A 立刻红，而 B 因为文件确实被整份换掉而全绿。各自都漏得掉一个回退，所以两条都留。
 //
 // 各自已知的盲区（同样实测得出）：A 的注入点固定在 writeFileSync 上，只覆盖「在那一行崩掉」，
-// 所以 copyFileSync 自身的不原子（先截断目标、再拷贝）它看不见；B 只看目标的 inode 变没变，
-// 所以「旧内容被毁、但文件确实被整份换掉」它看不见。**另一个守卫覆盖的正是对方的盲区。**
+// 所以 copyFileSync 自身的不原子（先截断目标、再拷贝）它看不见；B 只问「inode 换没换、
+// 临时文件被没被消费」，所以「旧内容被毁、但文件确实被整份换掉」它看不见。
+// **另一个守卫覆盖的正是对方的盲区。**
 //
 // B 的额外价值是不用 mock、在 jsdom 下原样可跑；A 的代价只是一个文件级 pragma（不是全局
 // 配置）。将来实现若改用第三方的原子写工具，B 未必还观测得到有意义的东西，而 A 仍在测那件事。
@@ -3233,10 +3323,20 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
       const dir = mkdtempSync(join(tmpdir(), 'wt-ino-'))
       try {
         const store = createSessionStore(dir)
-        store.writeSession(makeSession(1))
         const sessionPath = join(dir, 'session.json')
+        const tmpPath = join(dir, 'session.json.tmp')
+
+        store.writeSession(makeSession(1))
+        // 一次成功的保存不该留下临时文件：rename 会把 .tmp 消费掉。
+        // 这一条就是矩阵 row B 的探测器：copyFileSync 保留了目标的 inode（所以 inode 断言
+        // 也看得见它），但它【不消费】临时文件，于是 .tmp 留在磁盘上；「写了临时文件却忘了
+        // 改名」同样被它抓住。放在 statSync 与 inode 断言【之前】，是为了让这两种回退红在
+        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让 session.json 根本不存在，
+        // 于是 statSync 先抛 ENOENT，红得看不出所以然（实测踩到过）。
+        expect(existsSync(tmpPath)).toBe(false)
         const first = statSync(sessionPath).ino
         store.writeSession(makeSession(2))
+        expect(existsSync(tmpPath)).toBe(false)
         const second = statSync(sessionPath).ino
 
         // 前提自检：这个文件系统确实给出有意义的 inode。报 0 时跳过而不是断言——

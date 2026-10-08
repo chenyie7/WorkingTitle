@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
@@ -24,20 +24,23 @@ function makeSession(cursor: number): PersistedSession {
 // 文件的 inode，而 writeFileSync 对已存在的路径是原地截断、inode 不变。读文件【内容】
 // 看不出这个差别——这正是原子性没有被任何内容级断言覆盖住的原因。
 //
-// 【为什么两条都要：实测的变异矩阵】同一批回退各跑一次，红/绿都是实测值——
-//   把 temp+rename 换成直接写目标文件   → A 红（旧会话没活下来）B 红（inode 没换）
-//   renameSync 换成 copyFileSync        → A **绿**　　　　　　 B 红（inode 没换）
-//   先把目标截断、再走 temp+rename       → A 红（旧会话没活下来）B **绿**
+// 【为什么两条都要：实测的变异矩阵】同一批回退各跑一次，红/绿与「红在哪条断言上」
+// 都是实测值——
+//   把 temp+rename 换成直接写目标文件   → A 红（旧会话没活下来）  B 红（inode 没换）
+//   renameSync 换成 copyFileSync        → A **绿**　　　　　　　 B 红（临时文件没被消费）
+//   先把目标截断、再走 temp+rename       → A 红（旧会话没活下来）  B **绿**
+//   只写临时文件、忘了改名               → A 红（第一次保存就读不回来）B 红（临时文件没被消费）
 // 红在哪条【断言】上比行号可靠：行号会随注释本身改动而漂移（写这一条时就踩过一次——
 // 引用的 61 在补完这段注释后变成了 71）。
-// 第一行是两条的重叠（同一个回退的两个角度）。**后两行才是理由，而且两个方向各有一条**：
-// copyFileSync 保持了目标的 inode，所以 B 看得见；但「旧会话会不会在写入半途而死时被毁」
-// 它看不见，那是 A 的事。反过来「先截断目标」把旧会话毁在原子步骤【之前】，A 立刻红，
-// 而 B 因为文件确实被整份换掉而全绿。各自都漏得掉一个回退，所以两条都留。
+// 第一行是两条的重叠（同一个回退的两个角度）。**第二、三行才是理由，而且两个方向各有一条**：
+// copyFileSync 保留了目标的 inode、也不消费临时文件，所以 B 看得见；但「旧会话会不会在写入
+// 半途而死时被毁」它看不见，那是 A 的事。反过来「先截断目标」把旧会话毁在原子步骤【之前】，
+// A 立刻红，而 B 因为文件确实被整份换掉而全绿。各自都漏得掉一个回退，所以两条都留。
 //
 // 各自已知的盲区（同样实测得出）：A 的注入点固定在 writeFileSync 上，只覆盖「在那一行崩掉」，
-// 所以 copyFileSync 自身的不原子（先截断目标、再拷贝）它看不见；B 只看目标的 inode 变没变，
-// 所以「旧内容被毁、但文件确实被整份换掉」它看不见。**另一个守卫覆盖的正是对方的盲区。**
+// 所以 copyFileSync 自身的不原子（先截断目标、再拷贝）它看不见；B 只问「inode 换没换、
+// 临时文件被没被消费」，所以「旧内容被毁、但文件确实被整份换掉」它看不见。
+// **另一个守卫覆盖的正是对方的盲区。**
 //
 // B 的额外价值是不用 mock、在 jsdom 下原样可跑；A 的代价只是一个文件级 pragma（不是全局
 // 配置）。将来实现若改用第三方的原子写工具，B 未必还观测得到有意义的东西，而 A 仍在测那件事。
@@ -60,10 +63,20 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
       const dir = mkdtempSync(join(tmpdir(), 'wt-ino-'))
       try {
         const store = createSessionStore(dir)
-        store.writeSession(makeSession(1))
         const sessionPath = join(dir, 'session.json')
+        const tmpPath = join(dir, 'session.json.tmp')
+
+        store.writeSession(makeSession(1))
+        // 一次成功的保存不该留下临时文件：rename 会把 .tmp 消费掉。
+        // 这一条就是矩阵 row B 的探测器：copyFileSync 保留了目标的 inode（所以 inode 断言
+        // 也看得见它），但它【不消费】临时文件，于是 .tmp 留在磁盘上；「写了临时文件却忘了
+        // 改名」同样被它抓住。放在 statSync 与 inode 断言【之前】，是为了让这两种回退红在
+        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让 session.json 根本不存在，
+        // 于是 statSync 先抛 ENOENT，红得看不出所以然（实测踩到过）。
+        expect(existsSync(tmpPath)).toBe(false)
         const first = statSync(sessionPath).ino
         store.writeSession(makeSession(2))
+        expect(existsSync(tmpPath)).toBe(false)
         const second = statSync(sessionPath).ino
 
         // 前提自检：这个文件系统确实给出有意义的 inode。报 0 时跳过而不是断言——
