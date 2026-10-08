@@ -22,8 +22,14 @@ function createWindow(): BrowserWindow {
 
   w.on('ready-to-show', () => w.show())
   w.on('closed', () => {
-    // 置空，避免 activate 分支拿到已销毁的窗口引用。
-    // 副作用（正面）：这让 `win = createWindow()` 的赋值变成「被读取」，构建时不会被摇掉。
+    // 置空，保证 activate 分支与 IPC 的 getWindow() 拿不到已销毁的窗口引用。
+    //
+    // 注意：不要以为「读了 win 就能阻止摇树」——实测不成立。只要读取不可观察
+    // （模块内、未导出、且无副作用），Rollup 会把整个变量连同这个 handler 一起摇掉：
+    // 产物里只剩下 `createWindow();` 和 `w.on("closed", () => {})`（空函数）。
+    // 直到 registerIpc({ getWindow: () => win }) 把 win 作为参数传出本模块，
+    // 那个赋值与这个 handler 才会一并变活。
+    // 也就是说：此结构是为 Task 6 预备的，在此之前它是无害的空转，不必试图「修好」它。
     if (win === w) win = null
   })
 
