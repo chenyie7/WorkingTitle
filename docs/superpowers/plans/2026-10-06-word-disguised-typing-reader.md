@@ -1449,10 +1449,10 @@ git commit -m "feat(core): 章节切分（标题正则 + 前言伪章节 + 区�
 **Interfaces:**
 - Consumes: `Novel`, `Chapter`, `InputMode`, `PersistedSession`, `DEFAULT_RATIO`, `MIN_RATIO`, `MAX_RATIO` from `types.ts`
 - Produces:
-  - `EngineState = { cursor: number; revealStart: number; chapterPos: number[]; activeChapter: number; ratio: number; mode: InputMode; startedAt: number | null }`
+  - `EngineState = { cursor: number; revealStart: number; chapterPos: readonly number[]; activeChapter: number; ratio: number; mode: InputMode; startedAt: number | null }`
   - `class TypingEngine`：
     - `constructor(novel: Novel, init?: { ratio?: number; mode?: InputMode })`
-    - `getSnapshot(): EngineState`（同一状态返回同一引用，供 `useSyncExternalStore`）
+    - `getSnapshot(): EngineState`（同一状态返回同一引用，供 `useSyncExternalStore`；因此**不得**做防御性拷贝，只能靠冻结保证交出去的状态不可改）
     - `get novel(): Novel`
     - `get visibleText(): string` ＝ `flatText.slice(revealStart, cursor)`
     - `pump(k: number, now?: number): void`
@@ -1784,8 +1784,17 @@ export interface EngineState {
   cursor: number
   /** 当前显示窗口的起点 */
   revealStart: number
-  /** 每章「上次停留位置」（章内相对偏移） */
-  chapterPos: number[]
+  /**
+   * 每章「上次停留位置」（章内相对偏移）。
+   *
+   * 刻意是 `readonly`：`getSnapshot()` 直接把内部状态交出去（`useSyncExternalStore`
+   * 要求同一状态返回同一引用，不能每次渲染新建副本），于是这个数组同时也是
+   * `commit` 要改的那个数组。`readonly` 让 Task 9/10/12 的消费者在**编译期**就
+   * 无法把 `snap.chapterPos[i]` 写坏——那是唯一能无声破坏本项目核心不变量
+   * （阅读区恒等于 `flatText.slice(revealStart, cursor)`）却既无类型错误、
+   * 也无测试发现的路径。运行时由 `Object.freeze` 兜住（见 `freezeState`）。
+   */
+  chapterPos: readonly number[]
   activeChapter: number
   ratio: number
   mode: InputMode
@@ -1797,14 +1806,34 @@ export function clampRatio(n: number): number {
   return Math.max(MIN_RATIO, Math.min(MAX_RATIO, Math.round(n)))
 }
 
+/**
+ * 冻结状态对象**和**它的 `chapterPos` 数组——两个都要冻，只冻外层等于没冻
+ * （`state.chapterPos[0] = x` 照样写得进去）。
+ *
+ * 就地冻结并返回同一个引用，不复制：调用点全都在构造新对象，没有共享可变数组。
+ *
+ * 三个必须写下来的注意点：
+ * 1. **浅冻结**。只冻这一层；将来若给 `EngineState` 加嵌套对象或数组字段，
+ *    那个字段得自己冻，`Object.freeze` 不会替它做。
+ * 2. **越界写的表现取决于模式**：渲染进程的打包产物是严格模式，写入抛
+ *    `TypeError`；非严格模式下被静默丢弃。两种情况下引擎自身都完好——
+ *    这正是要冻结的目的：坏的是调用方，不是状态。
+ * 3. **不影响 IPC**。冻结对象的结构化克隆（structured clone）正常，
+ *    所以 `toSession()` 的返回值照旧能过进程间通信。
+ */
+function freezeState(state: EngineState): Readonly<EngineState> {
+  Object.freeze(state.chapterPos)
+  return Object.freeze(state)
+}
+
 export class TypingEngine {
   private readonly _novel: Novel
-  private _state: EngineState
+  private _state: Readonly<EngineState>
   private readonly _listeners = new Set<() => void>()
 
   constructor(novel: Novel, init?: { ratio?: number; mode?: InputMode }) {
     this._novel = novel
-    this._state = {
+    this._state = freezeState({
       cursor: 0,
       revealStart: 0,
       chapterPos: novel.chapters.map(() => 0),
@@ -1812,7 +1841,7 @@ export class TypingEngine {
       ratio: clampRatio(init?.ratio ?? DEFAULT_RATIO),
       mode: init?.mode ?? 'ime',
       startedAt: null
-    }
+    })
   }
 
   get novel(): Novel {
@@ -1825,6 +1854,12 @@ export class TypingEngine {
     return this._novel.flatText.slice(revealStart, cursor)
   }
 
+  /**
+   * 返回**同一个引用**直到状态真的变化——`useSyncExternalStore` 每次渲染都调用它，
+   * 并用 `Object.is` 比对；每次新建副本会让 React 认为每帧都在变，直接触发
+   * 「The result of getSnapshot should be cached to avoid an infinite loop」。
+   * 所以这里【不能】用防御性拷贝，只能靠 `freezeState` 保证交出去的状态不可改。
+   */
   getSnapshot(): EngineState {
     return this._state
   }
@@ -1878,7 +1913,7 @@ export class TypingEngine {
     const current = chapters[idx]
     if (current) chapterPos[idx] = cursor - current.start
 
-    this._state = { ...this._state, cursor, activeChapter: idx, chapterPos }
+    this._state = freezeState({ ...this._state, cursor, activeChapter: idx, chapterPos })
     this.emit()
   }
 
@@ -1888,7 +1923,7 @@ export class TypingEngine {
     const total = this._novel.flatText.length
     if (this._state.cursor >= total) return
     if (this._state.startedAt === null) {
-      this._state = { ...this._state, startedAt: now }
+      this._state = freezeState({ ...this._state, startedAt: now })
     }
     this.commit(this._state.cursor + k * this._state.ratio)
   }
@@ -1923,26 +1958,26 @@ export class TypingEngine {
     const chapterPos = this._state.chapterPos.slice()
     chapterPos[i] = cursor - chapter.start
 
-    this._state = {
+    this._state = freezeState({
       ...this._state,
       revealStart: chapter.start,
       cursor,
       activeChapter: i,
       chapterPos
-    }
+    })
     this.emit()
   }
 
   setRatio(n: number): void {
     const ratio = clampRatio(n)
     if (ratio === this._state.ratio) return
-    this._state = { ...this._state, ratio }
+    this._state = freezeState({ ...this._state, ratio })
     this.emit()
   }
 
   setMode(mode: InputMode): void {
     if (mode === this._state.mode) return
-    this._state = { ...this._state, mode }
+    this._state = freezeState({ ...this._state, mode })
     this.emit()
   }
 
@@ -2006,7 +2041,7 @@ export class TypingEngine {
     const current = novel.chapters[activeChapter]
     if (current) chapterPos[activeChapter] = cursor - current.start
 
-    engine._state = {
+    engine._state = freezeState({
       cursor,
       revealStart,
       chapterPos,
@@ -2014,7 +2049,7 @@ export class TypingEngine {
       ratio: clampRatio(s.ratio),
       mode: s.mode === 'key' ? 'key' : 'ime',
       startedAt: typeof s.startedAt === 'number' && Number.isFinite(s.startedAt) ? s.startedAt : null
-    }
+    })
     return engine
   }
 }
@@ -4010,7 +4045,7 @@ git commit -m "feat(renderer): Ribbon 选项卡、工具栏按钮与 Toast 反�
 
 **Interfaces:**
 - Consumes: `Novel` / `Chapter` 类型；Task 7 的 `.chapter-item` 样式
-- Produces: `<ChapterList novel={Novel | null} activeChapter={number} chapterPos={number[]} onJump={(i: number) => void} />`
+- Produces: `<ChapterList novel={Novel | null} activeChapter={number} chapterPos={readonly number[]} onJump={(i: number) => void} />`
   - `data-testid="chapter-list"`、`chapter-item-${i}`、`chapter-pct-${i}`
   - 行高常量 `ROW_HEIGHT = 32`
 
@@ -4026,7 +4061,9 @@ const OVERSCAN = 6
 export interface ChapterListProps {
   novel: Novel | null
   activeChapter: number
-  chapterPos: number[]
+  // 与 EngineState.chapterPos 同型：快照是冻结的只读数组，这里照抄类型，
+  // 别在组件里写回它（写了在严格模式下抛 TypeError，非严格模式下被静默丢弃）。
+  chapterPos: readonly number[]
   onJump: (index: number) => void
 }
 
