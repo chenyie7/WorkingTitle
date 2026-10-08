@@ -149,6 +149,12 @@ export function createSessionStore(baseDir: string): SessionStore {
         // 反过来「旧 text + 新 meta」同样在这里被拦下。旧版本写的缓存没有 textBytes
         // 字段，比较时 undefined 必然不等 → 自动降级为 cache miss 重读源文件。
         //
+        // 【这一道门同时管住「text 自己写坏」，所以不必拆成两道】text 没有 temp+rename，
+        // 也不需要：半截的 text 会让 meta 里描述【源文件】的 sourcePath/mtimeMs/size 依然
+        // 成立，而 textBytes 描述的是一个更短的文件，于是被同一处比较拒掉。实测：66 字节的
+        // 正文只落盘前 56 字节（确为原文前缀、源文件未变）时 readNovelCache 返回 null。
+        // 一个提交点覆盖「meta 写坏」与「text 写坏」两个方向。
+        //
         // 【这一门的边界，别当成保证】它比的是字节数，所以两段【等长】的文本仍会被放行：
         // 实测为 A 书写好缓存后，把 novel-cache.txt 覆写成另一段等长文本而 meta 不动，
         // readNovelCache(A) 仍返回 A 的章节目录配那段新文本。要彻底关掉这个窗口，
