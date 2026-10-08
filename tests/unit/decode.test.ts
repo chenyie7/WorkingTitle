@@ -64,4 +64,21 @@ describe('decodeBuffer', () => {
     expect(r.text).toBe('')
     expect(r.hadBom).toBe(false)
   })
+
+  it('Shift_JIS 日文不被 GB18030 兜底误选', () => {
+    // scoreText 奖励 CJK 表意文字占比，而 GB18030 会把任意字节对映射进该区：
+    // 日文正确解码（假名不在该区）得约 529，GB18030 乱码得约 971。
+    // 若兜底追加不设条件，这里就会被解成乱码。
+    const ja = '風が吹く\n彼は城壁に立っていた。\n'
+    const buf = iconv.encode(ja, 'shift_jis')
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ja)
+  })
+
+  it('EUC-KR 韩文不被 GB18030 兜底误选', () => {
+    const ko = '바람이 분다\n그는 성벽에 서 있었다.\n'
+    const buf = iconv.encode(ko, 'euc-kr')
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ko)
+  })
 })
