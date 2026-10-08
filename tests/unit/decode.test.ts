@@ -81,4 +81,16 @@ describe('decodeBuffer', () => {
     const r = decodeBuffer(buf)
     expect(r.text).toBe(ko)
   })
+
+  it('无 BOM 的 UTF-16LE 不被 GB18030 兜底误选', () => {
+    // 为什么必须用【无 BOM】的样本：带 BOM 的 UTF-16 在第一步就被 BOM 检查短路由掉，
+    // 根本走不到 needsGbFallback，所以那个用例覆盖不到这条路径。
+    // jschardet 对无 BOM 的 UTF-16 返回 `utf-16-le`（带连字符的 WHATWG 标签），
+    // 照 compat 表写的正则（UTF-16LE）会漏配 → 追加 GB18030 → 乱码胜出。
+    const ko = '바람이 분다\n그는 성벽에 서 있었다.\n'
+    const buf = iconv.encode(ko, 'utf16le') // iconv-lite 的 utf16le 不加 BOM
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ko)
+    expect(r.encoding).not.toBe('GB18030')
+  })
 })
