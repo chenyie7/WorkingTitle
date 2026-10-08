@@ -5,7 +5,27 @@ export const PREAMBLE_TITLE = '前言'
 /** 正文里常见的句读符号：标题行不会包含它们 */
 const SENTENCE_PUNCT = /[。！？；，]/
 
-const TITLE_PATTERNS: RegExp[] = [
+/**
+ * 标题行的长度上限（量的是 trim 后的串）。
+ *
+ * 这是 TITLE_PATTERNS[2]（`chapter\s+\d+.*$`）唯一的界：那条正则的 `.*$` 本身无界，
+ * 没有这个上限，一整段以 "Chapter 3" 开头的英文正文会被整行当成标题。
+ * 上限量的是 trim 后的串，所以缩进与补白不占额度。
+ */
+const MAX_TITLE_LEN = 40
+
+/**
+ * 【每个模式都不得带 /g 或 /y】——这条靠注释与评审守，类型系统守不住。
+ *
+ * `RegExp.prototype.test` 在带 /g 或 /y 的正则上会读写自身的 lastIndex，于是同一行的判定
+ * 会取决于「它前面刚测过什么」：isChapterTitle 就变成有状态的函数，第 n 行是不是标题
+ * 要看第 n-1 行。导入一部二十多万行的小说时，这种错误既不可复现、也几乎不可见。
+ *
+ * 下面的 readonly 挡不住这件事：它只能阻止往表里 push、或对元素重新赋值，管不到
+ * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
+ * readonly 守的是另一件小事（别往这张表里塞模式）。
+ */
+const TITLE_PATTERNS: readonly RegExp[] = [
   // 第一章 / 第 12 章 / 第十二章 / 第一百零八回 / 第3节
   /^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/,
   // 序章 / 楔子 雪夜 / 番外一 —— 后面必须跟空白才能带副标题，
@@ -19,7 +39,7 @@ const TITLE_PATTERNS: RegExp[] = [
 
 export function isChapterTitle(line: string): boolean {
   const t = line.trim()
-  if (t.length === 0 || t.length > 40) return false
+  if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
   if (SENTENCE_PUNCT.test(t)) return false
   return TITLE_PATTERNS.some((re) => re.test(t))
 }
@@ -51,6 +71,9 @@ export function splitChapters(text: string, fallbackTitle: string): SplitResult 
     }
   }
 
+  // 单位不一样，是刻意保留的：slices 里的 from/to 是【行号】（lines 的下标），
+  // 而下面 Chapter 的 start/end 是【flatText 的字符偏移】。本函数的全部工作就是在这两种量
+  // 之间换算，两个名字看着像却量不同的东西——统一命名反而会把两种单位伪装成同一种。
   const slices: Array<{ title: string; from: number; to: number }> = []
   if (titleIdx[0] > 0) {
     slices.push({ title: PREAMBLE_TITLE, from: 0, to: titleIdx[0] })
