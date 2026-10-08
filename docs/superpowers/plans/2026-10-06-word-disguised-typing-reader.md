@@ -826,7 +826,12 @@ describe('splitChapters', () => {
     const { flatText, chapters } = splitChapters(text, 'x')
     expect(chapters).toHaveLength(2)
     expect(chapters[0].title).toBe('第一章 甲')
-    expect(flatText.slice(chapters[0].start, chapters[0].end)).toBe('第一章 甲')
+    // 非末章的区间末尾会带一个 \n 作为章间分隔（见 splitChapters 的拼接逻辑），
+    // 所以这里 trim 后比较标题内容，而不是期望切片严格等于标题。
+    // 注意：正是这个 \n 让 flatText 与原文逐字相等，见下面那条断言。
+    expect(flatText.slice(chapters[0].start, chapters[0].end).trim()).toBe('第一章 甲')
+    // 本章没有章节被丢弃（两个标题都不是空章），所以 flatText 必须与原文逐字相等。
+    expect(flatText).toBe(text)
     expectContiguous(flatText, chapters)
   })
 
