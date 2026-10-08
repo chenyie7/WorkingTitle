@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest'
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
-import { dirname, join } from 'node:path'
 import iconv from 'iconv-lite'
 import {
   decodeBuffer,
@@ -106,70 +103,97 @@ describe('decodeBuffer', () => {
 })
 
 /**
- * 从 jschardet 自己的词表里读出它「实际会吐出的编码名」全集。
+ * jschardet@4.0.0 实际会吐出的编码名【实测快照】（86 个）。
  *
- * 刻意在测试期现读、而不是抄一份快照：本测试的全部意义就是拿我们的假设去对库的真实词表，
- * jschardet 升级导致这里失败是【特性】而非毛病——它会强制我们重新测量。
- * 注意它的 exports map 只暴露 "."，所以深路径 import 必须走绝对路径
- * （createRequire 解析出入口文件后取同目录的兄弟文件），否则报 ERR_PACKAGE_PATH_NOT_EXPORTED。
+ * 为什么用快照而不是运行时去读 jschardet 的词表：它的 exports map 只暴露 "."，深路径
+ * import 会 ERR_PACKAGE_PATH_NOT_EXPORTED，只能靠绝对路径动态 import 绕过——为一份
+ * 「本应稳定」的测试引入这种真实脆弱性不值得。快照同样能抓住本测试要抓的那类 bug：
+ * 旧正则写 UTF-16LE 时，快照里的 utf-16-le 匹配不上，测试立刻失败。
+ *
+ * 【机制】同一个族会以两种拼写并存：`UTF-16` / `UTF-32` 是 compat 改名后的裸名，
+ * 而 `utf-16-le` / `utf-16-be` / `utf-32-be` / `utf-32-le` 是原样吐出的 WHATWG 标签。
+ * 照 compat 表写正则就会「看起来对、实际漏配」——这就是当初无 BOM UTF-16 被追加
+ * GB18030 并解成乱码的完整机制，也是本测试存在的理由。
+ *
+ * 【这份快照抓不到什么】jschardet 升级【新增】一个名字时，快照不会知道，测试仍然通过。
+ * 需要重新测量并更新本表（属 Task 15 的 (b) 覆盖范围）。
  */
-async function jschardetVocabulary(): Promise<string[]> {
-  const buildDir = dirname(createRequire(import.meta.url).resolve('jschardet'))
-  const [registryModule, outputNamesModule] = await Promise.all([
-    import(pathToFileURL(join(buildDir, 'registry.js')).href) as Promise<{
-      REGISTRY: Record<string, unknown>
-    }>,
-    import(pathToFileURL(join(buildDir, 'output_names.js')).href) as Promise<{
-      _COMPAT_NAMES: Record<string, string>
-    }>
-  ])
-  // 词表里是内部名，真正吐给调用方的是经 _COMPAT_NAMES 改名后的名字
-  return [...new Set(Object.keys(registryModule.REGISTRY).map((n) => outputNamesModule._COMPAT_NAMES[n] ?? n))]
-}
+const JSCHARDET_EMITTED_NAMES = [
+  "ascii", "utf-8", "UTF-8-SIG", "UTF-16",
+  "utf-16-be", "utf-16-le", "UTF-32", "utf-32-be",
+  "utf-32-le", "utf-7", "Big5", "CP932",
+  "CP949", "EUC-JP", "EUC-KR", "GB18030",
+  "HZ-GB-2312", "ISO-2022-JP", "iso2022_jp_2004", "iso2022_jp_ext",
+  "ISO-2022-KR", "SHIFT_JIS", "CP874", "Windows-1250",
+  "Windows-1251", "Windows-1252", "Windows-1253", "Windows-1254",
+  "Windows-1255", "Windows-1256", "Windows-1257", "cp1258",
+  "KOI8-R", "koi8-u", "TIS-620", "ISO-8859-1",
+  "ISO-8859-2", "iso8859-3", "iso8859-4", "ISO-8859-5",
+  "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9",
+  "iso8859-10", "ISO-8859-13", "iso8859-14", "iso8859-15",
+  "iso8859-16", "Johab", "MacCyrillic", "MacGreek",
+  "MacIceland", "MacLatin2", "MacRoman", "MacTurkish",
+  "cp720", "cp1006", "cp1125", "koi8-t",
+  "KZ1048", "ptcp154", "hp-roman8", "cp437",
+  "cp737", "cp775", "cp850", "cp852",
+  "IBM855", "cp856", "cp857", "cp858",
+  "cp860", "cp861", "cp862", "cp863",
+  "cp864", "cp865", "IBM866", "cp869",
+  "cp1140", "cp424", "cp500", "cp875",
+  "cp1026", "cp273"
+]
 
-describe('词汇表：黑名单是对 jschardet 名字表的断言', () => {
-  /**
-   * 需要豁免 GB18030 兜底的全部名字——这是【完整枚举】，不是抽样。
-   * 单字节拉丁系不需要豁免（兜底就是为它们准备的）；GB* 家族由 candidateEncodings
-   * 另行映射成 GB18030，不走本名单。
-   */
-  const MUST_BE_EXEMPT = [
-    'Big5',
-    'CP932',
-    'CP949',
-    'EUC-JP',
-    'EUC-KR',
-    'SHIFT_JIS',
-    'Johab',
-    'UTF-16',
-    'utf-16-be',
-    'utf-16-le',
-    'UTF-32',
-    'utf-32-be',
-    'utf-32-le'
-  ]
+/**
+ * 快照里属于【多字节 CJK / Unicode】的名字——必须免于 GB18030 兜底。
+ * 完整枚举而非抽样：单字节拉丁系不需要豁免（兜底正是为它们准备的）；
+ * GB* 家族由 candidateEncodings 另行映射成 GB18030，不走本名单。
+ */
+const MUST_BE_EXEMPT = [
+  'Big5',
+  'CP932',
+  'CP949',
+  'EUC-JP',
+  'EUC-KR',
+  'SHIFT_JIS',
+  'Johab',
+  'UTF-16',
+  'utf-16-be',
+  'utf-16-le',
+  'UTF-32',
+  'utf-32-be',
+  'utf-32-le'
+]
+
+/**
+ * 快照里另外三个「多字节 CJK 但不需豁免」的名字，【显式点名】列出而不是靠过滤条件默默排除：
+ * 它们都是 7-bit 编码（每个字节 < 0x80），会先被严格 UTF-8 短路接管，根本走不到候选列表。
+ * 见设计文档 §13。静默排除正是这类 bug 藏身之处，所以宁可写死在这里。
+ */
+const SEVEN_BIT_BEYOND_REACH = ['ISO-2022-JP', 'ISO-2022-KR', 'HZ-GB-2312']
+
+describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
   const norm = (s: string): string => s.toUpperCase().replace(/[-_]/g, '')
 
-  it('这些名字确实还在 jschardet 的词表里（信念没过期）', async () => {
-    const vocab = await jschardetVocabulary()
-    expect(MUST_BE_EXEMPT.filter((n) => !vocab.includes(n))).toEqual([])
+  it('快照自检：两张名单都确实取自快照', () => {
+    expect(JSCHARDET_EMITTED_NAMES).toHaveLength(86)
+    expect(MUST_BE_EXEMPT.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
+    expect(SEVEN_BIT_BEYOND_REACH.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
   })
 
-  it('词表里每个多字节 CJK/Unicode 名都免于 GB18030 兜底', () => {
+  it('多字节 CJK/Unicode 名全部免于 GB18030 兜底，且豁免集合不多不少', () => {
     // 这条就是当初能抓住 UTF-16LE 那个 bug 的断言：旧正则写 UTF-16LE，
-    // 而 jschardet 吐的是 utf-16-le，于是这里会列出 utf-16-le / utf-16-be / utf-32-*。
+    // 而 jschardet 吐的是 utf-16-le，于是这里会列出 utf-16-be/le、utf-32-be/le。
     expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n.toUpperCase()))).toEqual([])
-  })
 
-  it('豁免集合与词表严格一致——不多（死条款）也不少（漏配）', async () => {
-    const vocab = await jschardetVocabulary()
-    const exempt = vocab.filter((n) => !needsGbFallback(n.toUpperCase())).sort()
+    // 反向：豁免集合必须与上面严格相等——多了（死条款）少了（漏配）都失败。
+    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n.toUpperCase())).sort()
     expect(exempt).toEqual([...MUST_BE_EXEMPT].sort())
   })
 
-  it('黑名单里没有死条款：每个前缀都能对上词表里的真名字', async () => {
-    const vocab = await jschardetVocabulary()
-    const dead = CONFIDENT_MULTIBYTE_NAMES.filter((alt) => !vocab.some((v) => norm(v).startsWith(alt)))
+  it('黑名单里没有死条款：每个前缀都能对上快照里的真名字', () => {
+    const dead = CONFIDENT_MULTIBYTE_NAMES.filter(
+      (alt) => !JSCHARDET_EMITTED_NAMES.some((v) => norm(v).startsWith(alt))
+    )
     expect(dead).toEqual([])
   })
 })
