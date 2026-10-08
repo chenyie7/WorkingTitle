@@ -34,32 +34,45 @@ export interface SessionStore {
  *     cursor 缺失一律落 0，而 chapters[0].start 按构造恒为 0，所以第 0 章那一项也是 0。
  * 于是畸形数据不会崩溃，而是伪装成一次成功的恢复（比例、模式、计时都还在，进度却回到
  * 开头）。校验失败一律当作「没有记录」，由调用方走空状态。
+ *
+ * 【返回字段名而不是 true/false】这条警告原先只说「结构不合法」，读日志的人无法知道是哪个
+ * 字段——而这正是「进度莫名其妙没了」时要查的东西。改成返回第一个不合格字段的描述，
+ * isPersistedSession 只是它的布尔外壳（`=== null`），两条路径不会各写一套而漂移。
  */
-function isPersistedSession(v: unknown): v is PersistedSession {
-  if (typeof v !== 'object' || v === null) return false
+function sessionProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
   const s = v as Record<string, unknown>
-  if (typeof s.novelTitle !== 'string' || typeof s.sourcePath !== 'string') return false
-  if (s.mode !== 'ime' && s.mode !== 'key') return false
-  if (!Array.isArray(s.chapterPos)) return false
-  if (!s.chapterPos.every((n) => typeof n === 'number')) return false
-  if (s.startedAt !== null && typeof s.startedAt !== 'number') return false
+  if (typeof s.novelTitle !== 'string') return 'novelTitle 不是字符串'
+  if (typeof s.sourcePath !== 'string') return 'sourcePath 不是字符串'
+  if (s.mode !== 'ime' && s.mode !== 'key') return 'mode 既不是 ime 也不是 key'
+  if (!Array.isArray(s.chapterPos)) return 'chapterPos 不是数组'
+  if (!s.chapterPos.every((n) => typeof n === 'number')) return 'chapterPos 含非数字项'
+  if (s.startedAt !== null && typeof s.startedAt !== 'number') {
+    return 'startedAt 既不是 null 也不是数字'
+  }
   for (const k of ['ratio', 'cursor', 'revealStart', 'activeChapter']) {
     const n = s[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) return `${k} 不是有限数字`
   }
-  return true
+  return null
 }
 
-/** NovelCacheMeta.chapters 里每个元素的必填字段。 */
-function isChapter(v: unknown): boolean {
-  if (typeof v !== 'object' || v === null) return false
+function isPersistedSession(v: unknown): v is PersistedSession {
+  return sessionProblem(v) === null
+}
+
+/** NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。 */
+function chapterProblem(v: unknown, i: number): string | null {
+  if (typeof v !== 'object' || v === null) return `chapters[${i}] 不是对象`
   const c = v as Record<string, unknown>
-  if (typeof c.title !== 'string') return false
+  if (typeof c.title !== 'string') return `chapters[${i}].title 不是字符串`
   for (const k of ['index', 'start', 'end', 'charCount']) {
     const n = c[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
+      return `chapters[${i}].${k} 不是有限数字`
+    }
   }
-  return true
+  return null
 }
 
 /**
@@ -76,17 +89,41 @@ function isChapter(v: unknown): boolean {
  * 【为什么是必填字段校验而不是精确形状校验】与 isPersistedSession 同样的取舍：将来版本
  * 若在 meta 里多写几个键，旧记录仍应有效。所以这里只问「我需要的字段在不在、类型对不对」，
  * 不问「有没有多余的键」。
+ *
+ * 【丢弃这份缓存不会丢任何东西——这是 return null 而不是「尽力而为」的理由】缓存里没有
+ * 不可再生的信息：title ← 文件名、encoding/hadBom ← 检测、chapters ← 切分、flatText ← 解码，
+ * 而全应用唯一不可再生的状态是阅读进度，它在 session.json 里（另一个文件、另一套校验），
+ * 本路径不碰。所有 null 都落回 loadNovelFromFile(meta.sourcePath)，源文件是同一个路径；
+ * 源文件若也没了，现有代码本来就会返回 null（statSync 抛）。所以这里只是把一种情况挪到
+ * 一条【已经由四处未命中走过】的路径上，不引入新的行为类别。
+ *
+ * 【顺带约束了 Task 12：两次恢复不必互相同步】实测 fromSession 按【重建出来的】
+ * chapters 长度建 chapterPos、用 s.chapterPos?.[i] 取值、缺失项落 0，且 cursor 被夹到新的
+ * flatText 长度内——章数比记录多、少、或正文更短，它都是逐章降级而不是抛错。所以
+ * 「缓存被判无效」最坏也就是首次启动慢一点（重读源文件 + 重新解码切分），
+ * 不会让已存的阅读位置丢失或损坏。Task 12 的会话恢复因此无需与缓存有效性协调。
  */
-function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
-  if (typeof v !== 'object' || v === null) return false
+function cacheMetaProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
   const m = v as Record<string, unknown>
-  if (typeof m.sourcePath !== 'string' || typeof m.title !== 'string') return false
-  if (typeof m.encoding !== 'string' || typeof m.hadBom !== 'boolean') return false
+  if (typeof m.sourcePath !== 'string') return 'sourcePath 不是字符串'
+  if (typeof m.title !== 'string') return 'title 不是字符串'
+  if (typeof m.encoding !== 'string') return 'encoding 不是字符串'
+  if (typeof m.hadBom !== 'boolean') return 'hadBom 不是布尔值'
   for (const k of ['mtimeMs', 'size', 'textBytes']) {
     const n = m[k]
-    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+    if (typeof n !== 'number' || !Number.isFinite(n)) return `${k} 不是有限数字`
   }
-  return Array.isArray(m.chapters) && m.chapters.every(isChapter)
+  if (!Array.isArray(m.chapters)) return 'chapters 不是数组'
+  for (let i = 0; i < m.chapters.length; i++) {
+    const problem = chapterProblem(m.chapters[i], i)
+    if (problem !== null) return problem
+  }
+  return null
+}
+
+function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
+  return cacheMetaProblem(v) === null
 }
 
 export function createSessionStore(baseDir: string): SessionStore {
@@ -105,8 +142,12 @@ export function createSessionStore(baseDir: string): SessionStore {
         if (!existsSync(sessionPath)) return null
         const parsed: unknown = JSON.parse(readFileSync(sessionPath, 'utf8'))
         if (!isPersistedSession(parsed)) {
-          // 结构不合法的记录同样要说出来：静默丢弃就是「进度莫名其妙没了」的成因。
-          console.warn('[wt] 会话文件结构不合法，按无记录处理：', sessionPath)
+          // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
+          // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
+          console.warn(
+            `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
+            sessionPath
+          )
           return null
         }
         return parsed
@@ -138,7 +179,10 @@ export function createSessionStore(baseDir: string): SessionStore {
       // 临时文件也要删：崩溃可能正好把 .tmp 留在磁盘上，「清除阅读记录」应当清干净。
       for (const p of [sessionPath, sessionTmpPath, cacheMetaPath, cacheTextPath]) {
         try {
-          if (existsSync(p)) rmSync(p)
+          // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
+          // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
+          // 告警更糟：它教会看日志的人忽略这一行。
+          rmSync(p, { force: true })
         } catch (err) {
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
@@ -182,7 +226,10 @@ export function createSessionStore(baseDir: string): SessionStore {
         if (!isNovelCacheMeta(parsed)) {
           // 形状不对同样是「未命中」，不是「命中但字段是 undefined」——后者会一路
           // 送到渲染进程（Task 6 的 openNovel 是 `if (cached) return cached`）。
-          console.warn('[wt] 缓存元数据结构不合法，按未命中处理：', cacheMetaPath)
+          console.warn(
+            `[wt] 缓存元数据结构不合法（${cacheMetaProblem(parsed) ?? '未知'}），按未命中处理：`,
+            cacheMetaPath
+          )
           return null
         }
         const meta = parsed
