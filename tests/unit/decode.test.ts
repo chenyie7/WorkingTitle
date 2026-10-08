@@ -200,13 +200,28 @@ describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
     expect(SEVEN_BIT_BEYOND_REACH.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
   })
 
+  it('谓词自带归一化：大小写与分隔符都由它自己处理', () => {
+    // 回归守卫：调用方忘了 .toUpperCase() 时，不能再静默返回 true（= 追加兜底）。
+    // 这正是本模块修了一整天的那个 bug 可能的再入口。
+    expect(needsGbFallback('utf-16-le')).toBe(false)
+    expect(needsGbFallback('utf_16_le')).toBe(false)
+    expect(needsGbFallback('shift_jis')).toBe(false)
+    expect(needsGbFallback('BIG5')).toBe(false)
+
+    // 反向：该兜底的仍然要兜底，别把归一化写成「一律不兜底」。
+    expect(needsGbFallback('windows-1252')).toBe(true)
+    expect(needsGbFallback('koi8-r')).toBe(true)
+    expect(needsGbFallback('')).toBe(true)
+  })
+
   it('多字节 CJK/Unicode 名全部免于 GB18030 兜底，且豁免集合不多不少', () => {
     // 这条就是当初能抓住 UTF-16LE 那个 bug 的断言：旧正则写 UTF-16LE，
     // 而 jschardet 吐的是 utf-16-le，于是这里会列出 utf-16-be/le、utf-32-be/le。
-    expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n.toUpperCase()))).toEqual([])
+    // 刻意传【原始名字】不做预处理——归一化是谓词自己的责任（见上一条用例）。
+    expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n))).toEqual([])
 
     // 反向：豁免集合必须与上面严格相等——多了（死条款）少了（漏配）都失败。
-    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n.toUpperCase())).sort()
+    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n)).sort()
     expect(exempt).toEqual([...MUST_BE_EXEMPT].sort())
   })
 
