@@ -67,6 +67,11 @@ export function splitChapters(text: string, fallbackTitle: string): SplitResult 
     title: s.title,
     body: lines.slice(s.from, s.to).join('\n')
   }))
+  // 【这个过滤器只能丢掉「全空白的前言」，它不是通用的空章节清理】
+  // 每个章节切片都从它自己的标题行开始（from = titleIdx[i]），而 isChapterTitle 要求
+  // 该行 trim() 后非空，所以真章节的 body 必然包含自己的标题行，body.trim() 永不为 ''。
+  // 也就是说「相邻标题之间的空章节」根本不可能存在——没有可丢的空章节。
+  // 唯一会被丢掉的，是文件开头到第一个标题之间那段全空白区域（例如文件以若干空行开头）。
   const kept = bodies.filter((b) => b.body.trim() !== '')
 
   // 除最后一章外，每章正文末尾补一个 \n，计入该章。
