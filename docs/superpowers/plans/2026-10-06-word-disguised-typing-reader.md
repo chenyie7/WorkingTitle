@@ -1078,7 +1078,11 @@ describe('TypingEngine 基础推进', () => {
 
 describe('退格：只回吐显示，绝不改小说内容', () => {
   it('backspace 按 ratio 回退', () => {
-    const e = new TypingEngine(makeNovel(), { ratio: 10 })
+    // 默认 fixture 只有 24 字，ratio 10 时 pump(3) = 30 会被夹紧到 24
+    // （见 spec §2 的 min(cursor + k*ratio, flatText.length)），就测不出「按 ratio 回退」了。
+    // 这里用一个足够长的单章小说，保证不触发末尾夹紧。
+    const long = '第一章 甲\n' + 'A'.repeat(100) + '\n'
+    const e = new TypingEngine(makeNovel(long), { ratio: 10 })
     e.pump(3)
     expect(e.getSnapshot().cursor).toBe(30)
     e.backspace(1)
@@ -1111,8 +1115,9 @@ describe('跨章节', () => {
     const e = new TypingEngine(n, { ratio: 1 })
     const c0 = n.chapters[0]
     const c1 = n.chapters[1]
-    // 推进到第二章中间
-    const steps = c0.charCount + 3
+    // 推进到第二章中间。第二章区间是 [c0.charCount, c0.charCount + c1.charCount)，
+    // 取中点才能确保已越过标题行（标题行位于该章开头），否则下面的 toContain(c1.title) 会失败。
+    const steps = c0.charCount + Math.floor(c1.charCount / 2)
     for (let i = 0; i < steps; i++) e.pump(1)
     const s = e.getSnapshot()
     expect(s.revealStart).toBe(0)
@@ -1139,13 +1144,15 @@ describe('跨章节', () => {
 
 describe('章节跳转与回填', () => {
   it('跳到没读过的章：阅读区为空，游标在该章开头', () => {
+    // 默认 fixture 只有 2 章，索引 2 越界——越界是无操作，另有专门用例覆盖
+    // （见下面的「跳到越界索引为无操作」）。这里用第 2 章（索引 1），它在全新引擎上尚未读过。
     const n = makeNovel()
     const e = new TypingEngine(n, { ratio: 1 })
-    e.jumpToChapter(2)
+    e.jumpToChapter(1)
     const s = e.getSnapshot()
-    expect(s.activeChapter).toBe(2)
-    expect(s.revealStart).toBe(n.chapters[2].start)
-    expect(s.cursor).toBe(n.chapters[2].start)
+    expect(s.activeChapter).toBe(1)
+    expect(s.revealStart).toBe(n.chapters[1].start)
+    expect(s.cursor).toBe(n.chapters[1].start)
     expect(e.visibleText).toBe('')
   })
 
