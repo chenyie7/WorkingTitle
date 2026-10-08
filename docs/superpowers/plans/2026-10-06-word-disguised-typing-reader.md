@@ -3954,7 +3954,13 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import type { InputMode } from '../../src/core/types'
 
-function makeEngine(): { pump: ReturnType<typeof vi.fn>; backspace: ReturnType<typeof vi.fn> } {
+// 刻意【不】写返回类型注解。Vitest 5 下 ReturnType<typeof vi.fn> 会把 T 冻结成
+// 默认的 Mock<Procedure | Constructable>，赋给 (k: number) => void 时报 TS2322，
+// 于是 pnpm typecheck 门禁失败——而 Task 11 的步骤只跑 vitest，这个错要到
+// Task 12/13/14 和 CI 才炸。让 TS 自行推断即可（得到 Mock<Procedure>，照样带
+// .mock / .mock.calls）。也不要为了「显式化」去 import Mock：引擎契约是结构类型
+// （见本任务 Interfaces），不该把 Vitest 的类型漏进去。
+function makeEngine() {
   return { pump: vi.fn(), backspace: vi.fn() }
 }
 
@@ -3984,6 +3990,23 @@ describe('输入法友好模式', () => {
     fireEvent.compositionUpdate(input(), { data: 'ni' })
     fireEvent.compositionUpdate(input(), { data: 'nihao' })
     expect(engine.pump).not.toHaveBeenCalled()
+  })
+
+  it('合成中按退格交给输入法删除拼音：既不拦截也不回退', () => {
+    const engine = setup('ime')
+    const el = input()
+    fireEvent.compositionStart(el)
+    // isComposing 由 KeyboardEvent 构造函数透传，实现读的是 e.nativeEvent.isComposing
+    const notPrevented = fireEvent.keyDown(el, { key: 'Backspace', isComposing: true })
+    expect(notPrevented).toBe(true)
+    expect(engine.backspace).not.toHaveBeenCalled()
+  })
+
+  it('非合成态按退格照常回退并拦截', () => {
+    const engine = setup('ime')
+    const notPrevented = fireEvent.keyDown(input(), { key: 'Backspace' })
+    expect(notPrevented).toBe(false)
+    expect(engine.backspace).toHaveBeenCalledWith(1)
   })
 
   it('compositionend 后 textarea 被清空', () => {
@@ -4187,6 +4210,10 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Backspace') {
+      // 合成中（拼音还没上屏）绝不能拦截退格：这时退格是输入法用来删除拼音的。
+      // 拦截会导致用户删不掉自己打错的拼音，还会让正文莫名回退。
+      // React 的合成事件不暴露 isComposing（取到的是 undefined），必须读 nativeEvent。
+      if (e.nativeEvent.isComposing) return
       e.preventDefault()
       engineRef.current.backspace(1)
       return
