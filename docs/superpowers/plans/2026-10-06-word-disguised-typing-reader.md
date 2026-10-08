@@ -2346,7 +2346,7 @@ git commit -m "feat(core): TypingEngine 游标状态机（pump/backspace/jumpToC
 
 **Files:**
 - Create: `src/main/loadNovel.ts`, `src/main/sessionStore.ts`, `src/main/startup.ts`
-- Test: `tests/unit/sessionStore.test.ts`, `tests/unit/startup.test.ts`, `tests/unit/loadNovel.test.ts`
+- Test: `tests/unit/sessionStore.test.ts`, `tests/unit/startup.test.ts`, `tests/unit/loadNovel.test.ts`, `tests/unit/guardA.test.ts`, `tests/unit/guardB.test.ts`（后两条为评审补入，见 Step 10.5）
 
 **Interfaces:**
 - Consumes: `decodeBuffer`（Task 2）、`splitChapters`（Task 3）、`Novel` / `PersistedSession` / `NovelCacheMeta`
@@ -2413,37 +2413,6 @@ describe('sessionStore 会话读写', () => {
     store.writeSession(s)
     expect(store.readSession()).toEqual(s)
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
-  })
-
-  // 原子性的机制级守卫：renameSync 会换成【另一个 inode】，而 writeFileSync 对已存在的
-  // 路径是原地截断、inode 不变。读文件【内容】看不出这个差别——这正是原子性没有被任何
-  // 内容级断言覆盖住的原因，也是这条用例存在的理由。
-  //
-  // 【为什么这是确定成立的，而不只是这一次观测到】临时文件在改名【之前】就已创建，所以
-  // 新 inode 的分配发生在旧 inode 被释放之前，文件系统没有机会把它回收重用。实测连写
-  // 20 次：temp+rename 得到 20 个互不相同的 inode，改成直接写则 20 次都是同一个 inode。
-  //
-  // 【它不是唯一可行的守卫，另一种其实更贴近性质】把 node:fs 的 writeFileSync 换成
-  // 「先写 20 字节前缀再抛错」，断言上一次的会话仍然完好——那一条钉的是【性质】（不会
-  // 出现半截文件）而不是机制，本来更该选它。没选它是因为它需要 `// @vitest-environment
-  // node`：实测在 jsdom 下 mock 一次都拦不到（`vi.spyOn(fs, 'writeFileSync')` 报
-  // "Module namespace is not configurable"，直接赋值报 "Cannot redefine property"），
-  // 也就是那个 pragma 是承重的——为一条已由 inode 守卫覆盖的机制，让此后每个读者都背上
-  // 环境与配置成本，不划算。顺带记下：那条 mock 守卫是【失败即安全】而非空转——若 mock
-  // 没生效，第二次写入会成功，断言反而会红。
-  it('writeSession 走的是 temp + rename（换 inode，而不是原地截断）', () => {
-    const store = createSessionStore(dir)
-    store.writeSession(makeSession({ cursor: 1 }))
-    const sessionPath = join(dir, 'session.json')
-    const first = statSync(sessionPath).ino
-    store.writeSession(makeSession({ cursor: 2 }))
-    // 前提：这一步的平台确实给出有意义的 inode。若某个平台报 0，失败会指在这里，
-    // 而不是让下面的守卫变成一句看不出所以然的自比较。
-    expect(first).toBeGreaterThan(0)
-
-    expect(statSync(sessionPath).ino).not.toBe(first)
-    // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
-    expect(store.readSession()!.cursor).toBe(2)
   })
 
   // 持久化失败的守卫：失败必须留下痕迹，而不是「应用看着健康、其实什么都没存」。
@@ -3091,9 +3060,181 @@ export function loadNovelFromFile(filePath: string): Novel {
 
 Run: `pnpm test`
 Expected: 全绿。六组测试通过：decode / chapters / engine / sessionStore / startup / loadNovel
-（原文写的「七组」含 smoke，而 tests/smoke.test.ts 已在 Task 3 的 Step 6.5 删除。）
+（原文写的「七组」含 smoke，而 tests/smoke.test.ts 已在 Task 3 的 Step 6.5 删除。
+ 紧接着的 Step 10.5 会再补入 guardA / guardB 两个文件，那时是**八组**。）
 
 > **此处刻意不写具体用例数。** 这一行位于所有 fence 之外，而逐字节一致约定只保证「代码 = fence 里的代码」——**它对 fence 之外的散文一言不发**，所以散文里的计数会静默过期（曾写「98 个用例」，后续批次加了两条腿的用例后就成了 100，而没有任何检查会发现）。需要数字时请以 `pnpm test` 的实际输出为准。
+
+- [ ] **Step 10.5: 写两条原子性守卫（评审补入）**
+
+Step 3 的 `writeSession` 用的是 temp + rename，但它的**唯一**证据原本是「直接写会留下截断/空的
+session.json」这条实测，没有守卫。评审指出：我原先「原子性无法在进程内观测」的论断下得太宽——
+它排除的是**针对真实文件系统的崩溃注入**（`writeFileSync` 是同步的，测试线程打不断它），
+但守卫并不需要打断写入，**换掉它**、或者**根本不看它**，都可以。于是补下面两条：
+
+- `guardA.test.ts` 钉**性质**：把 `writeFileSync` 换成「先写 20 字节前缀再抛错」，断言
+  **一次半途而废的保存不得破坏上一份完好会话**。顶部的 `// @vitest-environment node` 是承重的：
+  实测在 jsdom 下 `vi.mock('node:fs')` 一次都拦不到（`vi.spyOn` 报
+  "Module namespace is not configurable"，直接赋值报 "Cannot redefine property"）。
+  它的前提自检（`expect(mockHits).toBe(1)`）是关键——去掉 pragma 时实测红在这一行
+  （`expected +0 to be 1`），也就是**注入失效会被指名道姓地报出来**，而不是静默退化成空跑。
+- `guardB.test.ts` 钉**机制**：`renameSync` 会给 `session.json` 换上临时文件的 inode，而
+  `writeFileSync` 是原地截断、inode 不变。它不用 mock、在 jsdom 下原样可跑；代价不是全局配置，
+  只是 A 的一个文件级 pragma，所以两条都留——将来实现若改用第三方的原子写工具，B 会继续通过
+  却不再观测到任何有意义的东西，而 A 依然在测那件事。Windows 上跳过（部分文件系统对每个文件
+  都报 0，正确的实现反而会红），该平台的性质由 A 覆盖。
+
+两条守卫杀的是同一个回退：把 `writeSession` 改回直接写，它们**同时**变红，其余用例不受影响。
+
+Run: `pnpm vitest run tests/unit/guardA.test.ts tests/unit/guardB.test.ts`
+Expected: 2 passed。
+
+```ts
+// @vitest-environment node
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { PersistedSession } from '../../src/core/types'
+
+// 注入一次「写到一半就死」的写入：把数据的前 20 字节落盘后抛错。
+// 这不是「中断真实的 writeFileSync」（那是做不到的），而是把它【换掉】——
+// 于是「进程死在写入中途」这件事在进程内变成可观测的。
+let armed = false
+let mockHits = 0
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    default: actual,
+    writeFileSync: (p: unknown, data: unknown, enc?: unknown) => {
+      if (armed && typeof p === 'string' && p.includes('session.json')) {
+        mockHits++
+        actual.writeFileSync(p, String(data).slice(0, 20), 'utf8')
+        throw new Error('模拟进程在写入中途被杀')
+      }
+      return (actual.writeFileSync as (...a: unknown[]) => void)(p, data, enc)
+    }
+  }
+})
+
+const { createSessionStore } = await import('../../src/main/sessionStore')
+
+function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSession {
+  return {
+    novelTitle: '测试书',
+    sourcePath: '/tmp/测试书.txt',
+    ratio: 10,
+    mode: 'ime',
+    cursor: 120,
+    revealStart: 0,
+    chapterPos: [120, 0],
+    activeChapter: 0,
+    startedAt: null,
+    ...overrides
+  }
+}
+
+let dir = ''
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'wt-atomic-'))
+  armed = false
+  mockHits = 0
+})
+afterEach(() => {
+  armed = false
+  rmSync(dir, { recursive: true, force: true })
+})
+
+describe('writeSession 的原子替换', () => {
+  it('一次半途而废的保存不得破坏上一份完好会话', () => {
+    const store = createSessionStore(dir)
+    const good = makeSession({ cursor: 4242 })
+    store.writeSession(good)
+    expect(store.readSession()).toEqual(good)
+
+    armed = true
+    store.writeSession(makeSession({ cursor: 999999 })) // 半途抛错，被 catch 吞掉
+    armed = false
+
+    // 前提自检：注入确实生效。少了这行，用例在「注入失效」时会静默退化成空跑。
+    expect(mockHits).toBe(1)
+    expect(store.readSession()).toEqual(good)
+  })
+})
+```
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createSessionStore } from '../../src/main/sessionStore'
+import type { PersistedSession } from '../../src/core/types'
+
+function makeSession(cursor: number): PersistedSession {
+  return {
+    novelTitle: '测试书',
+    sourcePath: '/tmp/测试书.txt',
+    ratio: 10,
+    mode: 'ime',
+    cursor,
+    revealStart: 0,
+    chapterPos: [cursor, 0],
+    activeChapter: 0,
+    startedAt: null
+  }
+}
+
+// 【这条守卫钉的是机制，guardA.test.ts 钉的是性质——两条都在，理由如下】
+// 它看的是「整份换掉」与「就地截断」留下的差别：renameSync 会给 session.json 换上临时
+// 文件的 inode，而 writeFileSync 对已存在的路径是原地截断、inode 不变。读文件【内容】
+// 看不出这个差别——这正是原子性没有被任何内容级断言覆盖住的原因。
+//
+// 为什么这条机制型守卫值得留着：它不用 mock、不用 `@vitest-environment node`，在 jsdom 下
+// 原样可跑。而「更该选的那条」是 guardA.test.ts——把写入换成「先写 20 字节再抛错」，直接
+// 断言【一次半途而废的保存不得破坏上一份完好会话】。两者都能杀掉同一个回退，但只有 A 说的是
+// 行为。A 的代价只是一个文件级 pragma（不是全局配置），所以两条都留：将来实现若改用第三方
+// 的原子写工具，B 会继续通过却不再观测到任何有意义的东西，而 A 依然在测那件事。
+//
+// 【为什么这是确定成立的，而不只是这一次观测到】临时文件在改名【之前】就已创建，所以新
+// inode 的分配发生在旧 inode 被释放之前，文件系统没有机会把它回收重用。实测连写 20 次：
+// temp+rename 得到 20 个互不相同的 inode，改成直接写则 20 次都是同一个 inode。
+//
+// 【Windows 上跳过】这条守卫的前提是「inode 能区分不同文件」，而部分 Windows 与网络文件
+// 系统对每个文件都报 0，于是【正确的实现】反而会红。Task 14 要做 Windows 验证，一条在正确
+// 构建上失败的用例比没有用例更糟——会让人去找并不存在的缺陷。该平台上的性质由
+// guardA.test.ts 覆盖，它不依赖 inode。
+describe('session.json 是「整份换掉」而不是「就地截断」', () => {
+  // 柯里化形式是唯一可用的形状：写成 it.skipIf(cond, name, fn) 时 Vitest 5 不报错，
+  // 只是**一个用例都没注册**（整份文件报 "No test found in suite"），于是「加了守卫」
+  // 会变成「守卫不在」。实测踩过。
+  it.skipIf(process.platform === 'win32')(
+    '重复写入后 inode 必须更换（换文件 = 读取方只会看到某一份完整文件）',
+    (ctx) => {
+      const dir = mkdtempSync(join(tmpdir(), 'wt-ino-'))
+      try {
+        const store = createSessionStore(dir)
+        store.writeSession(makeSession(1))
+        const sessionPath = join(dir, 'session.json')
+        const first = statSync(sessionPath).ino
+        store.writeSession(makeSession(2))
+        const second = statSync(sessionPath).ino
+
+        // 前提自检：这个文件系统确实给出有意义的 inode。报 0 时跳过而不是断言——
+        // 在那种文件系统上这条守卫【按构造】无法工作，让它红等于谎报缺陷，
+        // 而它声称覆盖的性质仍由 guardA.test.ts 守着。
+        if (!(first > 0)) ctx.skip()
+        expect(second).not.toBe(first)
+        // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
+        expect(store.readSession()!.cursor).toBe(2)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  )
+})
+```
 
 - [ ] **Step 11: Commit**
 
