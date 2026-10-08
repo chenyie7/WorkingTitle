@@ -36,6 +36,25 @@ function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSessio
   }
 }
 
+// 这两个辅助函数放在模块级而不是第二个 describe 里：clearAll 那条用例也要用它们
+// （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
+function writeSource(content: string): string {
+  const p = join(dir, 'src.txt')
+  writeFileSync(p, content, 'utf8')
+  return p
+}
+
+function makeNovel(sourcePath: string): Novel {
+  return {
+    title: 'src',
+    sourcePath,
+    encoding: 'UTF-8',
+    hadBom: false,
+    flatText: '第一章 甲\n正文。\n',
+    chapters: [{ index: 0, title: '第一章 甲', start: 0, end: 10, charCount: 10 }]
+  }
+}
+
 describe('sessionStore 会话读写', () => {
   it('未写过时 readSession 返回 null', () => {
     const store = createSessionStore(dir)
@@ -92,6 +111,13 @@ describe('sessionStore 会话读写', () => {
   it('clearAll 删除会话与缓存', () => {
     const store = createSessionStore(dir)
     store.writeSession(makeSession())
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
+    // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
+    // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
+    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
     // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
     writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
@@ -109,23 +135,6 @@ describe('sessionStore 会话读写', () => {
 })
 
 describe('sessionStore 小说缓存', () => {
-  function writeSource(content: string): string {
-    const p = join(dir, 'src.txt')
-    writeFileSync(p, content, 'utf8')
-    return p
-  }
-
-  function makeNovel(sourcePath: string): Novel {
-    return {
-      title: 'src',
-      sourcePath,
-      encoding: 'UTF-8',
-      hadBom: false,
-      flatText: '第一章 甲\n正文。\n',
-      chapters: [{ index: 0, title: '第一章 甲', start: 0, end: 10, charCount: 10 }]
-    }
-  }
-
   it('写缓存后能读回等价的 Novel', () => {
     const store = createSessionStore(dir)
     const src = writeSource('第一章 甲\n正文。\n')
@@ -212,6 +221,38 @@ describe('sessionStore 小说缓存', () => {
   it('缓存文件缺失时返回 null', () => {
     const store = createSessionStore(dir)
     const src = writeSource('第一章 甲\n正文。\n')
+    expect(store.readNovelCache(src)).toBeNull()
+  })
+
+  // 与 readSession 的字段校验同源：合法 JSON、但形状不对的 meta 原先会被断言成
+  // NovelCacheMeta 并当作【命中】返回。这不是理论问题——实测在修复前，meta 只写
+  // sourcePath/mtimeMs/size/textBytes 时返回的对象里 chapters/title/encoding/hadBom
+  // 全是 undefined，而 flatText 是对的，于是 Task 6 的 `if (cached) return cached`
+  // 会把它当小说交给渲染进程，chapters.length 当场抛错。
+  it('meta 是合法 JSON 但形状不对时按未命中处理', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'src.txt')
+    const text = '第一章 甲\n正文。\n'
+    writeFileSync(src, text, 'utf8')
+    const st = statSync(src)
+    writeFileSync(join(dir, 'novel-cache.txt'), text, 'utf8')
+
+    const partial = {
+      sourcePath: src,
+      mtimeMs: st.mtimeMs,
+      size: st.size,
+      textBytes: Buffer.byteLength(text, 'utf8')
+    }
+    writeFileSync(join(dir, 'novel-cache.json'), JSON.stringify(partial), 'utf8')
+
+    // 前提：这一对在【其余三道门】上完全自洽——路径、源文件 stat、提交点全部通过，
+    // 所以唯一能拦下它的就是形状校验；否则本用例会退化成「它因别的原因被拒」。
+    expect(partial.sourcePath).toBe(src)
+    expect(statSync(src).mtimeMs).toBe(partial.mtimeMs)
+    expect(statSync(src).size).toBe(partial.size)
+    expect(statSync(join(dir, 'novel-cache.txt')).size).toBe(partial.textBytes)
+    expect(() => JSON.parse(readFileSync(join(dir, 'novel-cache.json'), 'utf8'))).not.toThrow()
+
     expect(store.readNovelCache(src)).toBeNull()
   })
 

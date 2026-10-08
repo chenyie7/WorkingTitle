@@ -50,6 +50,45 @@ function isPersistedSession(v: unknown): v is PersistedSession {
   return true
 }
 
+/** NovelCacheMeta.chapters 里每个元素的必填字段。 */
+function isChapter(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  if (typeof c.title !== 'string') return false
+  for (const k of ['index', 'start', 'end', 'charCount']) {
+    const n = c[k]
+    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+  }
+  return true
+}
+
+/**
+ * 校验读回来的 JSON 是不是一份完整的 NovelCacheMeta。
+ *
+ * 【与 isPersistedSession 是同一套姿势，理由也相同】这里原先是 `JSON.parse(...) as
+ * NovelCacheMeta`——一个合法 JSON 就通过了断言。而**一份形状不对的 meta 会被当成【命中】
+ * 返回**，不是未命中：路径、源文件 stat、提交点这三道门依赖的只是 meta 里那几个存在的
+ * 字段，缺了 title/encoding/hadBom/chapters 照样自洽。实测：meta 只写
+ * sourcePath/mtimeMs/size/textBytes 时，readNovelCache 返回一个 chapters、title、encoding、
+ * hadBom 全为 undefined 的对象，而 flatText 是对的——于是 Task 6 的 `if (cached) return cached`
+ * 会把这样一个「小说」交给渲染进程，chapters.length 当场抛错。
+ *
+ * 【为什么是必填字段校验而不是精确形状校验】与 isPersistedSession 同样的取舍：将来版本
+ * 若在 meta 里多写几个键，旧记录仍应有效。所以这里只问「我需要的字段在不在、类型对不对」，
+ * 不问「有没有多余的键」。
+ */
+function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  if (typeof m.sourcePath !== 'string' || typeof m.title !== 'string') return false
+  if (typeof m.encoding !== 'string' || typeof m.hadBom !== 'boolean') return false
+  for (const k of ['mtimeMs', 'size', 'textBytes']) {
+    const n = m[k]
+    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+  }
+  return Array.isArray(m.chapters) && m.chapters.every(isChapter)
+}
+
 export function createSessionStore(baseDir: string): SessionStore {
   const sessionPath = join(baseDir, 'session.json')
   const sessionTmpPath = join(baseDir, 'session.json.tmp')
@@ -139,7 +178,14 @@ export function createSessionStore(baseDir: string): SessionStore {
     readNovelCache(filePath: string): Novel | null {
       try {
         if (!existsSync(cacheMetaPath) || !existsSync(cacheTextPath)) return null
-        const meta = JSON.parse(readFileSync(cacheMetaPath, 'utf8')) as NovelCacheMeta
+        const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
+        if (!isNovelCacheMeta(parsed)) {
+          // 形状不对同样是「未命中」，不是「命中但字段是 undefined」——后者会一路
+          // 送到渲染进程（Task 6 的 openNovel 是 `if (cached) return cached`）。
+          console.warn('[wt] 缓存元数据结构不合法，按未命中处理：', cacheMetaPath)
+          return null
+        }
+        const meta = parsed
         if (meta.sourcePath !== filePath) return null
         const st = statSync(filePath)
         if (st.mtimeMs !== meta.mtimeMs || st.size !== meta.size) return null
