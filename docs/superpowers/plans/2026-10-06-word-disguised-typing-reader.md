@@ -1091,6 +1091,15 @@ function expectContiguous(flatText: string, chapters: ReturnType<typeof splitCha
   })
 }
 
+/**
+ * 长度上限相关的两条样本，提到 describe 外面是为了让「前提自检」用例引用【同一个常量】——
+ * 样本被改小时自检立刻变红，而不是让用例悄悄退化成在测别的东西。
+ */
+/** 超长样本：原始 70 字，远超上限（无补白，trim 不改变它） */
+const OVER_CAP_TITLE = 'Chapter 3 ' + 'x'.repeat(60)
+/** 补白样本：原始 45 字超限，但 trim 后只有 5 字——上限量的是 trim 后的串，故它是合法标题 */
+const PADDED_TITLE = '　'.repeat(20) + '第一章 风起' + '　'.repeat(20)
+
 describe('isChapterTitle', () => {
   it.each([
     '第一章 风起',
@@ -1103,7 +1112,9 @@ describe('isChapterTitle', () => {
     '番外一',
     'Chapter 3 The Beginning',
     '1、开端',
-    '12．转折'
+    '12．转折',
+    // 前后各垫 20 个全角空格：上限量的是 trim 后的串，补白不该影响判定
+    PADDED_TITLE
   ])('识别标题行：%s', (line) => {
     expect(isChapterTitle(line)).toBe(true)
   })
@@ -1112,11 +1123,26 @@ describe('isChapterTitle', () => {
     '第三章的内容很有意思，我读了三遍。',
     '前言不搭后语',
     '林昭站在城墙上。',
-    '第一章 风起但是这一行其实是一句很长很长的正文句子，明显超过了标题长度上限',
-    '',
-    '   '
+    // 下面这条是【唯一】只被 SENTENCE_PUNCT 那道闸拦下的样本：它匹配 TITLE_PATTERNS[3]
+    // （数字 + 、/.． + 正文），长度也在上限内。上面三条其实都被【模式不匹配】拒掉，
+    // 等于同一个分支测了三遍——删掉那道闸，只有这一条会红。没有它，一行普通的编号正文
+    // （「1．他说道，这是第一章。」）就会变成章节标题。
+    '1．他说道，这是第一章。',
+    ''
   ])('不把正文当标题：%s', (line) => {
     expect(isChapterTitle(line)).toBe(false)
+  })
+
+  // 【前提自检】长度上限相关的样本必须真的如用例名所说。
+  // Task 3 期间有一条样本（37 字）名字声称测上限，实际根本没超过 40 字、是被模式不匹配拒掉的
+  // ——用例名在说谎，整个 Task 3 都没人发现。把前提写成断言，样本被改小就会立刻红。
+  it('前提自检：长度上限相关的样本确实如用例名所说', () => {
+    // 40 是 chapters.ts 里 MAX_TITLE_LEN 的值（模块私有、未导出）。这里写死是有意的：
+    // 上限一旦被改，本用例会红，逼人重新核对「超长」「补白」这两条样本还成不成立。
+    expect(OVER_CAP_TITLE.length).toBeGreaterThan(40)
+    expect(isChapterTitle(OVER_CAP_TITLE)).toBe(false) // 超长 → 被上限拒掉
+    expect(PADDED_TITLE.length).toBeGreaterThan(40) // 原始长度确实超限
+    expect(PADDED_TITLE.trim().length).toBeLessThanOrEqual(40) // trim 后不超 → 合法标题
   })
 })
 
@@ -1138,15 +1164,18 @@ describe('splitChapters', () => {
     expect(chapters[1].title).toBe('第二章 云涌')
     expect(chapters[2].title).toBe('第三章 雷动')
     expectContiguous(flatText, chapters)
-    // 这条断言必须落在【真实 fixture】上，它是全项目唯一守住「有章节的拼接路径」保真的地方。
+    // 这条是【唯一落在真实 fixture 上的保真断言】——重点在「真实 fixture」，不在「唯一」。
+    // 「相邻标题之间无正文」那条用内联字符串断言了同一条律的同一支，两者被同一个变异一起
+    // 打红；此前把「唯一」写在句子头部是不准确的。真正缺的是「拿读进来的真文件来比」这件事：
+    // sample-utf8.txt 走的正是三章拼接，而 94 字的它此前从未与源文件比较过。
     // expectContiguous 只校验 (flatText, chapters) 这一对【自洽】：区间连续、下标、charCount。
     // 它对 flatText 是否等于源文件一言不发——去掉拼接时的章间 \n，它照样全绿（实测）。
     // 上面「无标题 → 单章节」那条虽然也断言了 flatText === text，但走的是提前返回分支
     // （titleIdx 为空直接 return { flatText: text }），那个断言恒真，碰不到拼接逻辑。
     // 而这条用例走的是三章拼接：只有 flatText 与源文件逐字相等，Task 4 那些指向 flatText
     // 的 cursor/revealStart/chapterPos 偏移，才对得上用户真正导入的那个文件。
-    // 【保真律 · 分支一】没有任何东西被丢弃 → flatText === text。
-    // 分支二（丢掉了一段全空白前言 → flatText === text.slice(off)）在「标题前只有空白时…」里。
+    // 【保真律】完整表述见「标题前只有空白时…」那条：flatText 是 text 的后缀，被去掉的前缀全是空白。
+    // 本用例是「前缀为空」的那一支（什么都没丢）→ flatText === text。
     expect(flatText).toBe(text)
   })
 
@@ -1160,11 +1189,35 @@ describe('splitChapters', () => {
   it('标题之前的内容归入「前言」伪章节', () => {
     const text = '版权声明\n作者：某人\n\n第一章 风起\n正文一。\n'
     const { flatText, chapters } = splitChapters(text, 'x')
+    // 「前言」是设计文档 §7 定死的字面量，而且【用户可见】——侧栏直接把它显示出来。
+    // 下面那条 toBe(PREAMBLE_TITLE) 是拿常量比自己，挡不住常量本身被改，所以在这里钉住字面量。
+    // 与 decode.test.ts 里 expect(r.encoding).toBe('UTF-8') 同一用意。
+    expect(PREAMBLE_TITLE).toBe('前言')
     expect(chapters[0].title).toBe(PREAMBLE_TITLE)
     expect(chapters[0].start).toBe(0)
     expect(flatText.slice(chapters[0].start, chapters[0].end)).toContain('版权声明')
     expect(chapters[1].title).toBe('第一章 风起')
+    // 【保真律】前言被保留时前缀为空 → flatText === text。
+    // 这一支此前没人守：把前言切片的 to 写成 titleIdx[0] - 1（一个"看起来更对称"的改动）
+    // 会从 flatText 里悄悄吃掉一个 \n，而本用例其余断言连同 expectContiguous 在那之下全都
+    // 自洽——它们校验的是 (flatText, chapters) 内部一致，与源文件无关。
+    expect(flatText).toBe(text)
     expectContiguous(flatText, chapters)
+  })
+
+  it('全角空格缩进的标题行：能识别，且 Chapter.title 是 trim 后的（不含缩进）', () => {
+    const indented = '　　第一章 风起　' // 首尾各一个 U+3000——中文 txt 小说的常见排版
+    // 自检前提：两端确实各有一个全角空格，否则本用例会悄悄退化成一条普通标题用例
+    expect(indented.startsWith('　')).toBe(true)
+    expect(indented.endsWith('　')).toBe(true)
+    expect(isChapterTitle(indented)).toBe(true)
+    const { flatText, chapters } = splitChapters(indented + '\n正文。\n', 'x')
+    // trim 掉缩进才是重点：Task 9 会把 title 原样渲染到侧栏，Task 5 会原样持久化。
+    // 留着缩进的话，侧栏每条标题都多一段看不见的空白，看起来像排版风格而不像 bug。
+    expect(chapters[0].title).toBe('第一章 风起')
+    // 而 flatText 必须保留原文那份缩进——"标题要整洁"与"正文要逐字保真"是两件事，
+    // 不能顺手一起处理掉。
+    expect(flatText).toBe(indented + '\n正文。\n')
   })
 
   it('标题前只有空白时不产生前言章节', () => {
@@ -1172,17 +1225,23 @@ describe('splitChapters', () => {
     const { flatText, chapters } = splitChapters(text, 'x')
     expect(chapters).toHaveLength(1)
     expect(chapters[0].title).toBe('第一章 风起')
-    // 【保真律 · 分支二】flatText 恰好等于「原文减去被丢掉的那段全空白前言」，不多不少：
-    //     flatText === text.slice(off)，off = 第一个标题行首字符的下标。
-    // 完整规律是这两条分支的并集，分支一（没有任何东西被丢弃 → flatText === text）
-    // 断言在「按 第X章 切出三章」里。之所以要分成两条而不是只写 `flatText === text`：
-    // 丢掉一段空白前言是【合法】行为，此时 flatText 本来就不等于原文——正因为如此，
-    // 这条断言无法统一地写在每个用例里，保真的缺口才在 Task 3 之前一直没人发现。
-    // 该规律经 30000 例随机文本实测无例外（分支一 17110/17110，分支二 6351/6351）。
+    // 【保真律】flatText 是 text 的一个【后缀】，且被去掉的那段前缀【全是空白】。
+    // 这是无检测器的完整表述——不需要先判断"丢没丢东西"，三种情形一并覆盖：
+    //   · 什么都没丢（无前言 / 前言非空白 / 压根没有标题）→ 前缀是空串，flatText === text
+    //   · 丢掉了一段全空白前言 → 前缀就是那段空白，flatText === text.slice(off)
+    //   · 保留了非空白前言 → 前缀是空串
+    // 此前只写了两条具名分支（"没丢" / "丢了空白前言"），漏了"保留了非空白前言"那一支：
+    // 它既不经过提前返回、也不经过过滤器，正需要一个能覆盖它的表述。
+    // 该律经 40000 例随机文本实测无例外，其中保留非空白前言的有 5778 例，全部成立。
+    // 本用例属于前缀非空的那一支：flatText === text.slice(off)。
+    // 之所以必须分成多条断言、不能统一写 flatText === text：丢掉一段空白前言是【合法】行为，
+    // 此时 flatText 本来就不等于原文——保真的缺口在 Task 3 之前一直没人发现，正是这个原因。
     // off 的定义：第一个标题行首字符在原文中的下标
     //   = 它【前面每一行的长度】之和 + 每行一个 \n（原文按 \n 拆行，行间各有一个分隔符）。
     // 本例前两行都是空字符串（长度 0），各贡献 1 个 \n，故 off = 0 + 1 + 0 + 1 = 2。
-    // 用 indexOf 求而不是写死 2：让「off 就是标题行的起点」这件事自证，下面的 expect 再钉住它。
+    // 用 indexOf 而不是写死 2：让「off = 第一个标题行的起点」以定义的形式出现。
+    // 但 indexOf 本身并不证明这个定义成立——钉住它的是下面两条断言：toBe(2) 钉住取值，
+    // 与 flatText 的相等断言钉住语义。两者都在，这个定义才算被证明。
     const off = text.indexOf('第一章 风起')
     expect(off).toBe(2)
     expect(flatText).toBe(text.slice(off))
@@ -1219,6 +1278,11 @@ describe('splitChapters', () => {
     const { flatText, chapters } = splitChapters(text, 'x')
     expect(chapters).toHaveLength(300)
     expectContiguous(flatText, chapters)
+    // 加这条不是为了让规模更大，而是为了让本用例有牙：expectContiguous 只查结构，
+    // 一个内部自洽但内容被改错的 flatText 能让它全绿。300 章约 9 KB，比真实输入小三个
+    // 数量级，所以它是【结构冒烟测试】而非规模测试——给它牙齿靠的是这条保真断言，
+    // 而不是把样本加大。
+    expect(flatText).toBe(text)
   })
 })
 ```
@@ -1238,7 +1302,27 @@ export const PREAMBLE_TITLE = '前言'
 /** 正文里常见的句读符号：标题行不会包含它们 */
 const SENTENCE_PUNCT = /[。！？；，]/
 
-const TITLE_PATTERNS: RegExp[] = [
+/**
+ * 标题行的长度上限（量的是 trim 后的串）。
+ *
+ * 这是 TITLE_PATTERNS[2]（`chapter\s+\d+.*$`）唯一的界：那条正则的 `.*$` 本身无界，
+ * 没有这个上限，一整段以 "Chapter 3" 开头的英文正文会被整行当成标题。
+ * 上限量的是 trim 后的串，所以缩进与补白不占额度。
+ */
+const MAX_TITLE_LEN = 40
+
+/**
+ * 【每个模式都不得带 /g 或 /y】——这条靠注释与评审守，类型系统守不住。
+ *
+ * `RegExp.prototype.test` 在带 /g 或 /y 的正则上会读写自身的 lastIndex，于是同一行的判定
+ * 会取决于「它前面刚测过什么」：isChapterTitle 就变成有状态的函数，第 n 行是不是标题
+ * 要看第 n-1 行。导入一部二十多万行的小说时，这种错误既不可复现、也几乎不可见。
+ *
+ * 下面的 readonly 挡不住这件事：它只能阻止往表里 push、或对元素重新赋值，管不到
+ * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
+ * readonly 守的是另一件小事（别往这张表里塞模式）。
+ */
+const TITLE_PATTERNS: readonly RegExp[] = [
   // 第一章 / 第 12 章 / 第十二章 / 第一百零八回 / 第3节
   /^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/,
   // 序章 / 楔子 雪夜 / 番外一 —— 后面必须跟空白才能带副标题，
@@ -1252,7 +1336,7 @@ const TITLE_PATTERNS: RegExp[] = [
 
 export function isChapterTitle(line: string): boolean {
   const t = line.trim()
-  if (t.length === 0 || t.length > 40) return false
+  if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
   if (SENTENCE_PUNCT.test(t)) return false
   return TITLE_PATTERNS.some((re) => re.test(t))
 }
@@ -1284,6 +1368,9 @@ export function splitChapters(text: string, fallbackTitle: string): SplitResult 
     }
   }
 
+  // 单位不一样，是刻意保留的：slices 里的 from/to 是【行号】（lines 的下标），
+  // 而下面 Chapter 的 start/end 是【flatText 的字符偏移】。本函数的全部工作就是在这两种量
+  // 之间换算，两个名字看着像却量不同的东西——统一命名反而会把两种单位伪装成同一种。
   const slices: Array<{ title: string; from: number; to: number }> = []
   if (titleIdx[0] > 0) {
     slices.push({ title: PREAMBLE_TITLE, from: 0, to: titleIdx[0] })
