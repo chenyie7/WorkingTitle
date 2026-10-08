@@ -2,12 +2,16 @@ import type { Chapter, InputMode, Novel, PersistedSession } from './types'
 import { DEFAULT_RATIO, MAX_RATIO, MIN_RATIO } from './types'
 
 export interface EngineState {
-  /** 下一个要被抽出来的字符下标；唯一进度指针 */
+  /** 下一个要被抽出来的字符下标；**阅读位置**的唯一指针——注意不是全部状态的唯一指针，
+   * chapterPos 是独立的持久化状态，cursor 反推不出它（jumpToChapter 要读它） */
   cursor: number
   /** 当前显示窗口的起点 */
   revealStart: number
   /**
-   * 每章「上次停留位置」（章内相对偏移）。
+   * 每章「上次离开该章时，光标停在该章内的偏移」（章内相对偏移）。
+   *
+   * 两点别读错：对**当前章**而言它就是此刻的偏移（不是「上次」）；而被整章越过的章
+   * 会被直接写成 `charCount`——那些章从未「停留」过。
    *
    * 刻意是 `readonly`：`getSnapshot()` 直接把内部状态交出去（`useSyncExternalStore`
    * 要求同一状态返回同一引用，不能每次渲染新建副本），于是这个数组同时也是
@@ -23,6 +27,13 @@ export interface EngineState {
   startedAt: number | null
 }
 
+/**
+ * 两条策略，刻意不同，别当成不一致：
+ *   · **非有限输入**（NaN / ±Infinity）→ `DEFAULT_RATIO`。这类值不是「太大」而是**不可用**
+ *     （多半来自算错或缺失的输入），丢掉它比钳到上限更诚实。
+ *   · **有限但越界** → 钳到 `[MIN_RATIO, MAX_RATIO]`。用户拖滑块拖到头是合法意图。
+ * 实测：clampRatio(Infinity) === 10 而 clampRatio(9999) === 500；两条都有断言钉住。
+ */
 export function clampRatio(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_RATIO
   return Math.max(MIN_RATIO, Math.min(MAX_RATIO, Math.round(n)))
@@ -93,11 +104,24 @@ export class TypingEngine {
     }
   }
 
+  /**
+   * 通知所有订阅者。
+   *
+   * 【订阅者抛异常会中断整个循环，后面的订阅者收不到这次通知】——这是刻意的，与
+   * React 的 store 契约一致（渲染函数的异常应当冒泡，而不是被吞掉）。别把它「加固」
+   * 成 try/catch 吞异常：那会把渲染错误变成静默的状态不同步。
+   */
   private emit(): void {
     for (const fn of this._listeners) fn()
   }
 
-  /** 二分查找 pos 落在哪一章；pos === 长度时取最后一章 */
+  /**
+   * 二分查找 pos 落在哪一章；pos === 长度时取最后一章。
+   *
+   * `chapters.length === 0` 那一行经 splitChapters 不可达（空文本也会产出 1 章），
+   * 它**正是** commit 里 `if (current)` 存在的唯一理由——两处是一件事，
+   * 要删就一起删，别只删一个（只删守卫，空章节目录会让 `chapters[idx]` 变成 undefined 解引用）。
+   */
   private chapterIndexOf(pos: number): number {
     const chapters = this._novel.chapters
     if (chapters.length === 0) return 0
@@ -124,6 +148,10 @@ export class TypingEngine {
   private commit(nextCursor: number): void {
     const chapters = this._novel.chapters
     const total = this._novel.flatText.length
+    // 下夹 0 是【不可达的防守】，别把它当成 commit 的一般性范围闸：pump 有 k > 0 闸
+    // 且 ratio ≥ 1、backspace 以 revealStart(≥ 0) 为下界、jump 至少是 chapter.start、
+    // fromSession 夹到 ≥ 0——差分实测 0/5200 有差异。真正承重的是 Math.min 那半边：
+    // 「游标不越过正文末尾」全靠它（去掉它，末尾钳制立刻失守）。
     const cursor = Math.max(0, Math.min(nextCursor, total))
     const idx = this.chapterIndexOf(cursor)
     const chapterPos = this._state.chapterPos.slice()
@@ -139,7 +167,15 @@ export class TypingEngine {
     this.emit()
   }
 
-  /** 输入 k 个字，抽出 k × ratio 个字符 */
+  /**
+   * 输入 k 个字，抽出 k × ratio 个字符。
+   *
+   * 【这个 `k > 0` 闸是承重的，不要照 backspace 的样子删掉】：它是**唯一**维持
+   * `revealStart ≤ cursor` 的东西——`commit` 只把游标夹到 `[0, total]`，
+   * **从不夹到 revealStart**。实测：去掉它，一次 `pump(-5)` 就把游标退到窗口起点之前
+   * （15 → 10，而 revealStart 是 12），阅读区从此永久空白。
+   * 与之相对，backspace 的 `k > 0` 闸只是契约性的（见那里）。两者看着对称，作用不同。
+   */
   pump(k: number, now: number = Date.now()): void {
     if (!(k > 0)) return
     const total = this._novel.flatText.length
@@ -150,7 +186,15 @@ export class TypingEngine {
     this.commit(this._state.cursor + k * this._state.ratio)
   }
 
-  /** 退格 k 次，回吐 k × ratio 个字符；小说内容不变 */
+  /**
+   * 退格 k 次，回吐 k × ratio 个字符；小说内容不变。
+   *
+   * 这里的 `k > 0` 闸【只守契约、不守不变量】：下面那行 `Math.max(revealStart, …)`
+   * 对 k 的任何符号都保得住 `revealStart ≤ cursor`（k 为负时 `cursor - k*ratio` 更大，
+   * 仍被 revealStart 托住）。所以这个闸的作用是「负数不当成前进」——若哪天被绕过，
+   * `k = -1` 的效果是**向前跳**（`cursor - (-1 × ratio)` 变大），而不是无操作。
+   * 与 pump 那个闸不同（那个承重），但也别删：Task 11 只会用 k ≥ 1，这是给调用方的契约。
+   */
   backspace(k: number): void {
     if (!(k > 0)) return
     const next = Math.max(this._state.revealStart, this._state.cursor - k * this._state.ratio)
@@ -177,6 +221,10 @@ export class TypingEngine {
     const raw = chapter.start + (this._state.chapterPos[i] ?? 0)
     const cursor = Math.max(chapter.start, Math.min(raw, chapter.end))
 
+    // 这一行【保留，不要为了「让 jumpToChapter 更精简」删掉】：它是本方法内的**本地保证**
+    // ——跳转之后 chapterPos[i] 一定与刚算出的 cursor 一致，与 chapterPos 当初从哪来无关。
+    // 删掉它，跳章的这份一致性就得依赖三个方法之外的某次夹紧（fromSession 那条），
+    // 而那正是本任务里 important-1 的成因形状：把保证挪到看不见的地方，用简洁换掉它。
     const chapterPos = this._state.chapterPos.slice()
     chapterPos[i] = cursor - chapter.start
 
@@ -198,8 +246,12 @@ export class TypingEngine {
   }
 
   setMode(mode: InputMode): void {
-    if (mode === this._state.mode) return
-    this._state = freezeState({ ...this._state, mode })
+    // 与 fromSession 同一套归一：非法值落到 'ime'。此前只有恢复时会校验，构造器与
+    // 这里都不校验，于是 `toSession → fromSession` 对非法 mode 不是恒等
+    // （存进去 'garbage'、读回来 'ime'）。加上这一行，往返对 mode 才是恒等的。
+    const next = mode === 'key' ? 'key' : 'ime'
+    if (next === this._state.mode) return
+    this._state = freezeState({ ...this._state, mode: next })
     this.emit()
   }
 
@@ -270,6 +322,8 @@ export class TypingEngine {
       activeChapter,
       ratio: clampRatio(s.ratio),
       mode: s.mode === 'key' ? 'key' : 'ime',
+      // Number.isFinite 挡的是 NaN / Infinity。JSON.parse 产不出这两个值，
+      // 所以这条【不算】对「磁盘数据畸形」的防护，只是把类型收窄到 number | null。
       startedAt: typeof s.startedAt === 'number' && Number.isFinite(s.startedAt) ? s.startedAt : null
     })
     return engine
