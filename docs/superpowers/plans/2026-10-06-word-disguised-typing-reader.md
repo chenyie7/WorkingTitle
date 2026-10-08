@@ -2411,13 +2411,29 @@ describe('sessionStore 会话读写', () => {
     expect(store.readSession()).toBeNull()
   })
 
+  // 与上一条走的是不同代码路径：那一份连 JSON.parse 都过不去，这一份是【合法 JSON】
+  // 但字段残缺——只挡解析错误的实现会把它当成一份会话交给 TypingEngine.fromSession
+  // （实测不抛错，只会伪装成一次「进度回到开头」的恢复）。
+  it('readSession 对结构不合法的合法 JSON 返回 null', () => {
+    const store = createSessionStore(dir)
+    const partial = { novelTitle: '测试书', sourcePath: '/tmp/测试书.txt' }
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(partial), 'utf8')
+    // 前提：这份内容确实是合法 JSON，否则本用例只是在重复上一条
+    expect(() => JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).not.toThrow()
+    expect(store.readSession()).toBeNull()
+  })
+
   it('clearAll 删除会话与缓存', () => {
     const store = createSessionStore(dir)
     store.writeSession(makeSession())
+    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
+    writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
     store.clearAll()
     expect(store.readSession()).toBeNull()
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
   })
 
   it('clearAll 在文件不存在时不抛异常', () => {
@@ -2486,6 +2502,31 @@ describe('sessionStore 小说缓存', () => {
     const src = writeSource('第一章 甲\n正文。\n')
     expect(store.readNovelCache(src)).toBeNull()
   })
+
+  // 崩溃残留：进程死在「写完 novel-cache.txt、还没写 novel-cache.json」之间。
+  // 磁盘上留下的是 A 书的 meta 配另一本书的正文，而 meta 记的
+  // sourcePath / mtimeMs / size 全都是 A 书自己的、三项自洽，所以只有让 meta
+  // 能自我校验（textBytes）才拦得住。少了那一项就会把 A 书的章节目录配 B 书的正文交给用户。
+  it('崩溃残留的错配缓存对被拒绝（meta 与 text 不是同一次写入）', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    const novel = makeNovel(src)
+    store.writeNovelCache(novel)
+
+    // 只有 txt 被换成了另一本书的正文，meta 保持 A 书那份
+    const tampered = '第二章 乙\n完全不同的正文内容。\n'
+    writeFileSync(join(dir, 'novel-cache.txt'), tampered, 'utf8')
+
+    const meta = JSON.parse(readFileSync(join(dir, 'novel-cache.json'), 'utf8'))
+    // 前提：meta 记的确实还是原来那份文本，且两份文本的长度确实不同——
+    // 否则本用例会在「长度恰好相等」或「meta 也被改了」的情况下虚假通过
+    expect(meta.textBytes).toBe(Buffer.byteLength(novel.flatText, 'utf8'))
+    expect(Buffer.byteLength(tampered, 'utf8')).not.toBe(meta.textBytes)
+    expect(meta.sourcePath).toBe(src)
+    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
+
+    expect(store.readNovelCache(src)).toBeNull()
+  })
 })
 ```
 
@@ -2497,7 +2538,15 @@ Expected: FAIL —— 无法解析 `../../src/main/sessionStore`。
 - [ ] **Step 3: 写 `src/main/sessionStore.ts`**
 
 ```ts
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import type { Novel, NovelCacheMeta, PersistedSession } from '../core/types'
 
@@ -2509,8 +2558,37 @@ export interface SessionStore {
   readNovelCache(filePath: string): Novel | null
 }
 
+/**
+ * 校验读回来的 JSON 是不是一份完整的 PersistedSession。
+ *
+ * 【为什么不能只做 JSON.parse】持久化文件可能是旧版本写的、也可能被手工改过，
+ * 而只要它还是合法 JSON，`as PersistedSession` 这个断言就能把残缺记录一路送进
+ * TypingEngine.fromSession。实测 fromSession 对残缺记录【不抛错】：
+ *   - 删掉 chapterPos：返回的引擎快照是 cursor=12、chapterPos=[0,2]、activeChapter=1
+ *     （缺失的数组被当成全 0，只有游标所在章的项被重算）；
+ *   - 只留 novelTitle / sourcePath：返回一个「从头开始」的引擎——cursor=0、
+ *     chapterPos=[0,0]、ratio=10、mode='ime'、startedAt=null。
+ * 于是畸形数据不会崩溃，而是伪装成一次成功的恢复（比例、模式、计时都还在，进度却回到
+ * 开头）。校验失败一律当作「没有记录」，由调用方走空状态。
+ */
+function isPersistedSession(v: unknown): v is PersistedSession {
+  if (typeof v !== 'object' || v === null) return false
+  const s = v as Record<string, unknown>
+  if (typeof s.novelTitle !== 'string' || typeof s.sourcePath !== 'string') return false
+  if (s.mode !== 'ime' && s.mode !== 'key') return false
+  if (!Array.isArray(s.chapterPos)) return false
+  if (!s.chapterPos.every((n) => typeof n === 'number')) return false
+  if (s.startedAt !== null && typeof s.startedAt !== 'number') return false
+  for (const k of ['ratio', 'cursor', 'revealStart', 'activeChapter']) {
+    const n = s[k]
+    if (typeof n !== 'number' || !Number.isFinite(n)) return false
+  }
+  return true
+}
+
 export function createSessionStore(baseDir: string): SessionStore {
   const sessionPath = join(baseDir, 'session.json')
+  const sessionTmpPath = join(baseDir, 'session.json.tmp')
   const cacheMetaPath = join(baseDir, 'novel-cache.json')
   const cacheTextPath = join(baseDir, 'novel-cache.txt')
 
@@ -2522,8 +2600,17 @@ export function createSessionStore(baseDir: string): SessionStore {
     readSession(): PersistedSession | null {
       try {
         if (!existsSync(sessionPath)) return null
-        return JSON.parse(readFileSync(sessionPath, 'utf8')) as PersistedSession
-      } catch {
+        const parsed: unknown = JSON.parse(readFileSync(sessionPath, 'utf8'))
+        if (!isPersistedSession(parsed)) {
+          // 结构不合法的记录同样要说出来：静默丢弃就是「进度莫名其妙没了」的成因。
+          console.warn('[wt] 会话文件结构不合法，按无记录处理：', sessionPath)
+          return null
+        }
+        return parsed
+      } catch (err) {
+        // 解析失败与「文件读不出来」都按无记录处理，启动不该被一份坏文件卡住；
+        // 但要说出来——不然「目录只读 / 磁盘满」会表现成「应用一切正常，只是记不住进度」。
+        console.warn('[wt] 读取会话失败，按无记录处理：', err)
         return null
       }
     },
@@ -2531,18 +2618,26 @@ export function createSessionStore(baseDir: string): SessionStore {
     writeSession(s: PersistedSession): void {
       try {
         ensureDir()
-        writeFileSync(sessionPath, JSON.stringify(s), 'utf8')
-      } catch {
-        // 持久化失败不应打断阅读
+        // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整
+        // 文件、要么看到新的完整文件，不会看到「写了一半的 session.json」。
+        // 直接写目标路径的话，进程在写完之前死掉，留下的是截断甚至空的文件，readSession
+        // 只能返回 null——游标、chapterPos、activeChapter、ratio、mode、startedAt 全部
+        // 静默丢失。实测这种残留的表现：截断成 20 字节与空文件都读回 null。
+        // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
+        writeFileSync(sessionTmpPath, JSON.stringify(s), 'utf8')
+        renameSync(sessionTmpPath, sessionPath)
+      } catch (err) {
+        console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
       }
     },
 
     clearAll(): void {
-      for (const p of [sessionPath, cacheMetaPath, cacheTextPath]) {
+      // 临时文件也要删：崩溃可能正好把 .tmp 留在磁盘上，「清除阅读记录」应当清干净。
+      for (const p of [sessionPath, sessionTmpPath, cacheMetaPath, cacheTextPath]) {
         try {
           if (existsSync(p)) rmSync(p)
-        } catch {
-          // 忽略
+        } catch (err) {
+          console.warn('[wt] 删除持久化文件失败：', p, err)
         }
       }
     },
@@ -2551,6 +2646,7 @@ export function createSessionStore(baseDir: string): SessionStore {
       try {
         ensureDir()
         const st = statSync(novel.sourcePath)
+        const text = novel.flatText
         const meta: NovelCacheMeta = {
           sourcePath: novel.sourcePath,
           mtimeMs: st.mtimeMs,
@@ -2558,13 +2654,21 @@ export function createSessionStore(baseDir: string): SessionStore {
           encoding: novel.encoding,
           hadBom: novel.hadBom,
           title: novel.title,
-          chapters: novel.chapters
+          chapters: novel.chapters,
+          // 与下面写出的字节数同源：writeFileSync 用 'utf8' 写出的就是这么多字节，
+          // 读取时拿 statSync(cacheTextPath).size 与它比对即可自我校验。
+          textBytes: Buffer.byteLength(text, 'utf8')
         }
         // 全文单独存纯文本：20MB 小说塞进 JSON 会白白付出转义与解析开销
-        writeFileSync(cacheTextPath, novel.flatText, 'utf8')
+        writeFileSync(cacheTextPath, text, 'utf8')
+        // meta 是这一对文件之间的【提交点】，必须最后写：崩溃若落在上面那行与这行之间，
+        // 磁盘上是「新 text + 旧 meta」，而旧 meta 的 textBytes 对不上新文本的大小，
+        // 读取时整对被拒。反过来（先写 meta）留下「新 meta + 旧 text」，同样被 textBytes
+        // 拦下——两种顺序的残余风险相同，这里只是让 meta 承担提交语义。
         writeFileSync(cacheMetaPath, JSON.stringify(meta), 'utf8')
-      } catch {
-        // 缓存失败不影响本次使用
+      } catch (err) {
+        // 缓存失败不影响本次使用，但下次启动会重新读源文件——值得留一条痕迹。
+        console.warn('[wt] 写入小说缓存失败，下次启动将重新读取源文件：', err)
       }
     },
 
@@ -2575,6 +2679,18 @@ export function createSessionStore(baseDir: string): SessionStore {
         if (meta.sourcePath !== filePath) return null
         const st = statSync(filePath)
         if (st.mtimeMs !== meta.mtimeMs || st.size !== meta.size) return null
+        // 提交点校验。少了这一行，「新 text + 旧 meta」这种崩溃残留也能通过上面三项
+        // （meta 记的是自己那本书的 sourcePath/mtime/size，全都自洽），
+        // 于是把 A 书的章节目录配上 B 书的正文交给用户。
+        // 反过来「旧 text + 新 meta」同样在这里被拦下。旧版本写的缓存没有 textBytes
+        // 字段，比较时 undefined 必然不等 → 自动降级为 cache miss 重读源文件。
+        //
+        // 【这一门的边界，别当成保证】它比的是字节数，所以两段【等长】的文本仍会被放行：
+        // 实测为 A 书写好缓存后，把 novel-cache.txt 覆写成另一段等长文本而 meta 不动，
+        // readNovelCache(A) 仍返回 A 的章节目录配那段新文本。要彻底关掉这个窗口，
+        // textBytes 得换成内容哈希——那要改动 types.ts 里的 NovelCacheMeta（Task 2 的文件），
+        // 本次不做（见设计文档 §13）。
+        if (statSync(cacheTextPath).size !== meta.textBytes) return null
         return {
           title: meta.title,
           sourcePath: meta.sourcePath,
@@ -2583,7 +2699,8 @@ export function createSessionStore(baseDir: string): SessionStore {
           flatText: readFileSync(cacheTextPath, 'utf8'),
           chapters: meta.chapters
         }
-      } catch {
+      } catch (err) {
+        console.warn('[wt] 读取小说缓存失败，将重新读取源文件：', err)
         return null
       }
     }
@@ -2600,7 +2717,19 @@ Expected: 全部 PASS。
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { applyUserDataOverride, resolveInitialNovelPath } from '../../src/main/startup'
+
+/** 调用方应当注入的谓词形状：区分「是普通文件」与「存在」。 */
+function realIsFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
 
 describe('applyUserDataOverride', () => {
   it('设置 WT_USER_DATA 时覆盖 userData 路径', () => {
@@ -2618,34 +2747,58 @@ describe('applyUserDataOverride', () => {
 })
 
 describe('resolveInitialNovelPath', () => {
-  const exists = (p: string): boolean => p === '/books/三国演义.txt' || p === './小说.txt'
+  // 名字是 isFile 而不是 exists：这两个问题在「名叫 xxx.txt 的目录」上分道扬镳，
+  // 而本函数依赖的是后者（见下一条用例）。
+  const isFile = (p: string): boolean => p === '/books/三国演义.txt' || p === './小说.txt'
 
   it('从 argv 里挑出存在的 txt 路径', () => {
-    expect(resolveInitialNovelPath(['/Applications/WT', '/books/三国演义.txt'], exists)).toBe(
+    expect(resolveInitialNovelPath(['/Applications/WT', '/books/三国演义.txt'], isFile)).toBe(
       '/books/三国演义.txt'
     )
   })
 
   it('dev 模式下跳过 "." 之类的非 txt 参数', () => {
-    expect(resolveInitialNovelPath(['/path/electron', '.', './小说.txt'], exists)).toBe('./小说.txt')
+    expect(resolveInitialNovelPath(['/path/electron', '.', './小说.txt'], isFile)).toBe('./小说.txt')
   })
 
   it('忽略不存在的 txt 路径', () => {
-    expect(resolveInitialNovelPath(['/Applications/WT', '/books/不存在.txt'], exists)).toBeNull()
+    expect(resolveInitialNovelPath(['/Applications/WT', '/books/不存在.txt'], isFile)).toBeNull()
   })
 
   it('忽略开关参数', () => {
-    expect(resolveInitialNovelPath(['/Applications/WT', '--inspect', '--flag.txt'], exists)).toBeNull()
+    expect(resolveInitialNovelPath(['/Applications/WT', '--inspect', '--flag.txt'], isFile)).toBeNull()
   })
 
   it('没有候选时返回 null', () => {
-    expect(resolveInitialNovelPath(['/Applications/WT'], exists)).toBeNull()
+    expect(resolveInitialNovelPath(['/Applications/WT'], isFile)).toBeNull()
   })
 
   it('多个候选时取最后一个', () => {
     expect(
-      resolveInitialNovelPath(['/Applications/WT', '/books/三国演义.txt', './小说.txt'], exists)
+      resolveInitialNovelPath(['/Applications/WT', '/books/三国演义.txt', './小说.txt'], isFile)
     ).toBe('./小说.txt')
+  })
+
+  // 名叫 xxx.txt 的目录：existsSync 说 true，statSync(...).isFile() 说 false，
+  // 而 readFileSync 会抛 EISDIR。传 existsSync 的话这样一个目录会被选中 →
+  // loadNovelFromFile 当场抛错 → Task 12 的 initialPath 分支没有 try/catch →
+  // 启动期未处理 rejection。用真实的 statSync 谓词把这条契约钉住。
+  it('名叫 xxx.txt 的目录不会被选中', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wt-startup-'))
+    const dirAsTxt = join(root, '其实是个目录.txt')
+    const realFile = join(root, '真文件.txt')
+    mkdirSync(dirAsTxt)
+    writeFileSync(realFile, '正文', 'utf8')
+
+    // 前提：它确实是个目录、而且确实以 .txt 结尾（否则这条用例测不到那个分支）
+    expect(statSync(dirAsTxt).isDirectory()).toBe(true)
+    expect(dirAsTxt.endsWith('.txt')).toBe(true)
+
+    expect(resolveInitialNovelPath(['/Applications/WT', dirAsTxt], realIsFile)).toBeNull()
+    expect(resolveInitialNovelPath(['/Applications/WT', dirAsTxt, realFile], realIsFile)).toBe(
+      realFile
+    )
+    rmSync(root, { recursive: true, force: true })
   })
 })
 ```
@@ -2668,16 +2821,29 @@ export function applyUserDataOverride(
   return true
 }
 
-/** 从命令行参数里找出要自动打开的小说路径。 */
+/**
+ * 从命令行参数里找出要自动打开的小说路径。
+ *
+ * 【注入的谓词要回答的是「是不是普通文件」，不是「存在不存在」】这两个问题在
+ * 「名叫 `xxx.txt` 的目录」上分道扬镳：实测 `existsSync(目录)` 为 true，
+ * `statSync(目录).isFile()` 为 false，而 `readFileSync(目录)` 抛 `EISDIR`。
+ * 于是传 `existsSync` 的话，这样一个目录会被选中，`loadNovelFromFile` 当场抛错；
+ * Task 12 的 `initialPath` 分支没有 try/catch，一次启动期的未处理 rejection。
+ * 调用方应传 `(p) => { try { return statSync(p).isFile() } catch { return false } }`。
+ *
+ * 本函数是纯的，管不到调用方传什么：Task 6 的 `index.ts` 若仍传 `existsSync`
+ * （它是合法的 `(p: string) => boolean`，不会报类型错），这条修复等于没落地。
+ * 已记入设计文档 §13。
+ */
 export function resolveInitialNovelPath(
   argv: string[],
-  exists: (p: string) => boolean
+  isFile: (p: string) => boolean
 ): string | null {
   for (let i = argv.length - 1; i >= 1; i--) {
     const arg = argv[i]
     if (!arg || arg.startsWith('-')) continue
     if (!arg.toLowerCase().endsWith('.txt')) continue
-    if (exists(arg)) return arg
+    if (isFile(arg)) return arg
   }
   return null
 }
@@ -2692,7 +2858,7 @@ Expected: 全部 PASS。
 
 ```ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import iconv from 'iconv-lite'
@@ -2728,6 +2894,41 @@ describe('loadNovelFromFile', () => {
     expect(novel.flatText).toContain('林昭站在城墙上')
     expect(novel.encoding).not.toBe('UTF-8')
   })
+
+  // 管线级用例（decode → 归一化 → splitChapters）：flatText 是 cursor / revealStart /
+  // chapterPos 的坐标系，Task 4 拿它算、Task 5 把它持久化，所以它必须与用户导入的那份
+  // 文本逐字一致。期望值在这里手写，不用实现里的 normalizeNewlines——两个操作数同源的话，
+  // 实现错了两边会一起错、断言照样打印「相等」。
+  it('CRLF 源文件：flatText 与归一化后的原文逐字相等', () => {
+    const raw = '第一章 风起\r\n\r\n林昭站在城墙上。\r\n第二章 云涌\r\n\r\n城下列阵三日。\r\n'
+    const p = join(dir, 'crlf.txt')
+    writeFileSync(p, Buffer.from(raw, 'utf8'))
+    // 前提：这份源文件真的是 CRLF，否则本用例在测一个并不存在的场景
+    expect(readFileSync(p, 'utf8')).toContain('\r\n')
+
+    const novel = loadNovelFromFile(p)
+    expect(novel.chapters).toHaveLength(2)
+    expect(novel.flatText).toBe(
+      '第一章 风起\n\n林昭站在城墙上。\n第二章 云涌\n\n城下列阵三日。\n'
+    )
+    expect(novel.flatText).not.toContain('\r')
+  })
+
+  // 【钉住「必须先归一化」的是这一条，不是上面那条】单独 \r（旧 Mac 换行）的文本里一个
+  // \n 都没有，splitChapters 按 '\n' 切行会得到「整份文件就是一行」，章节结构塌成单章。
+  // 实测 2 章的 CR-only 文本直接切只得 1 章。所以去掉 decodeBuffer 的归一化，
+  // 这里会红（上面那条 CRLF 用例不会——实测 raw CRLF 与归一化后的切分结论逐例相同）。
+  it('CR-only 源文件：先归一化才切得出多章', () => {
+    const raw = '第一章 风起\r林昭站在城墙上。\r第二章 云涌\r城下列阵三日。\r'
+    const p = join(dir, 'cronly.txt')
+    writeFileSync(p, Buffer.from(raw, 'utf8'))
+    // 前提：一个 \n 都没有，否则「不归一化就会塌成单章」的前提不成立
+    expect(readFileSync(p, 'utf8')).not.toContain('\n')
+
+    const novel = loadNovelFromFile(p)
+    expect(novel.chapters).toHaveLength(2)
+    expect(novel.flatText).toBe('第一章 风起\n林昭站在城墙上。\n第二章 云涌\n城下列阵三日。\n')
+  })
 })
 ```
 
@@ -2740,6 +2941,31 @@ import { decodeBuffer } from '../core/decode'
 import { splitChapters } from '../core/chapters'
 import type { Novel } from '../core/types'
 
+/**
+ * 读文件 → 解码 → 切章，顺序是契约而不是风格。
+ *
+ * 【归一化必须排在切章之前】splitChapters 按 '\n' 切行，它假定输入只含 \n。
+ *   - CRLF 不是问题：实测 36 种 CRLF 形状，`splitChapters(raw).flatText === raw` 与
+ *     `splitChapters(normalized).flatText === normalized` **结论逐例相同**（两边都是
+ *     12/36 保真）。那 24 例不保真的换行种类无关——纯 LF 也 24 例——失败集合恰好是
+ *     「文件开头有空白行 → 前言切片被 kept 过滤器丢掉」，那是 chapters.ts 已写明并有
+ *     用例守着的行为。机制上也不是「join 丢掉 \r」：实测
+ *     `'第一章 甲\r\n正文一。\r\n'.split('\n').slice(0, 2).join('\n')` 得
+ *     `"第一章 甲\r\n正文一。\r"`，\r 被保留，随后补的那个 \n 正好补全 \r\n。
+ *   - 【单独 \r（旧 Mac 换行）才是真会坏的】这类文本里一个 \n 都没有，split('\n')
+ *     无从下刀，整份文件变成一行，章节结构塌成单章：实测 2 章的 CR-only 文本直接切
+ *     只得 1 章，归一化后才是 2 章。此时 flatText 仍严格等于原文（坐标系没坏），
+ *     坏的是章节列表、跳章目标与 chapterPos 的长度。
+ * 归一化由 decodeBuffer 承担（它的三条返回路径都经过 normalizeNewlines），所以这里只需
+ * 保证 decode 的结果直接喂给 splitChapters，中间不要再插入别的处理。
+ *
+ * 【去掉归一化时，两条端到端用例都会红，但红的理由不同】CRLF 那条红在字符串比较上——
+ * 它断言 flatText 等于【归一化后】的字面量（Task 2 的 'CRLF 被归一为 LF' 用例守着同一契约
+ * 的单元层）；CR-only 那条红的更早，章节数就从 2 变成 1。别把上面「CRLF 保真」读成
+ * 「CRLF 可以不用归一化」：保真说的是 splitChapters 喂进原文时的输出等于原文，
+ * 而归一化是 decode 对外的契约（设计文档 §8 也写明缓存的是「解码并归一化后的全文」）。
+ * tests/unit/loadNovel.test.ts 里的这两条用例锁住本函数这一段管线。
+ */
 export function loadNovelFromFile(filePath: string): Novel {
   const buf = readFileSync(filePath)
   const { text, encoding, hadBom } = decodeBuffer(buf)
@@ -2752,7 +2978,8 @@ export function loadNovelFromFile(filePath: string): Novel {
 - [ ] **Step 10: 跑全量单测**
 
 Run: `pnpm test`
-Expected: 全绿。当前应有 decode / chapters / engine / sessionStore / startup / loadNovel / smoke 七组测试通过。
+Expected: 全绿。六组测试通过：decode / chapters / engine / sessionStore / startup / loadNovel
+（本任务实测 98 个用例；原文写的「七组」含 smoke，而 tests/smoke.test.ts 已在 Task 3 的 Step 6.5 删除）。
 
 - [ ] **Step 11: Commit**
 
