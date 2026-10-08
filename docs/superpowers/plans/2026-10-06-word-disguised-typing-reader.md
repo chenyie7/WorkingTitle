@@ -617,6 +617,18 @@ describe('decodeBuffer', () => {
     const r = decodeBuffer(buf)
     expect(r.text).toBe(ko)
   })
+
+  it('无 BOM 的 UTF-16LE 不被 GB18030 兜底误选', () => {
+    // 为什么必须用【无 BOM】的样本：带 BOM 的 UTF-16 在第一步就被 BOM 检查短路由掉，
+    // 根本走不到 needsGbFallback，所以那个用例覆盖不到这条路径。
+    // jschardet 对无 BOM 的 UTF-16 返回 `utf-16-le`（带连字符的 WHATWG 标签），
+    // 照 compat 表写的正则（UTF-16LE）会漏配 → 追加 GB18030 → 乱码胜出。
+    const ko = '바람이 분다\n그는 성벽에 서 있었다.\n'
+    const buf = iconv.encode(ko, 'utf16le') // iconv-lite 的 utf16le 不加 BOM
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ko)
+    expect(r.encoding).not.toBe('GB18030')
+  })
 })
 ```
 
@@ -708,12 +720,26 @@ function scoreText(text: string): number {
  * 【为什么不改成正向白名单】把 windows-125x / ISO-8859-* 也排除在兜底之外，会破坏
  * 「GBK 被误判成 windows-1252 时把它救回来」这个兜底存在的主要理由。本应用面向中文小说，
  * 黑名单偏向「救中文」是刻意的取舍，代价是非中文的遗留单字节编码仍可能被解错（见 §13）。
+ *
+ * 【名字必须先规范化再匹配，且必须用前缀】
+ * jschardet 4 只给裸名 `utf-16` / `utf-32` 做了 compat 改名；四个带端序的名字
+ * （`utf-16-le` / `utf-16-be` / `utf-32-le` / `utf-32-be`）会**原样吐出 WHATWG 标签**
+ * （见 jschardet/build/output_names.js 的 _COMPAT_NAMES），别名表里还有 `utf_16_le`
+ * 这种下划线拼写。照 compat 表写正则会「看起来对、实际漏配」——这正是本函数最初的 bug：
+ * `/i` 只解决大小写、不解决连字符，于是**无 BOM 的 UTF-16 被追加了 GB18030 并被解成乱码**
+ * （实测无 BOM 韩文 UTF-16LE：正确解 0.0 / GB18030 乱码 44.8，乱码胜出）。
+ * 所以先抹掉 `-` `_` 再匹配。
+ * 用前缀而非整串锚定，是为了一并覆盖同族拼写（Big5HKSCS、EUC-JIS-2004、shift_jis_2004）。
+ * 前缀匹配在此安全：jschardet 的注册表里没有任何不属于上述家族的编码名以
+ * BIG5 / CP93 / CP94 / SHIFT / SJIS / EUC / JOHAB / UTF / UCS 开头（CP9xx 只有 932/949）。
  */
 const CONFIDENT_MULTIBYTE =
-  /^(?:BIG5|CP932|SHIFT_JIS|SJIS|EUC-JP|EUC-KR|CP949|JOHAB|UTF-16|UTF-16LE|UTF-16BE|UTF-32|UCS-2)$/i
+  /^(?:BIG5|CP932|CP949|SHIFTJIS|SJIS|EUCJP|EUCJIS|EUCKR|JOHAB|UTF16|UTF32|UCS2)/
 
 function needsGbFallback(detectedUpper: string): boolean {
-  return detectedUpper === '' || !CONFIDENT_MULTIBYTE.test(detectedUpper)
+  // 抹掉分隔符：jschardet 会吐出 utf-16-le / utf_16_le / UTF-16LE 三种拼写。
+  const normalized = detectedUpper.replace(/[-_]/g, '')
+  return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
 }
 
 function candidateEncodings(detected: string): string[] {
@@ -773,7 +799,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（12 个用例）。
+Expected: 全部 PASS（13 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -789,7 +815,7 @@ Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest �
 本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
 
 Run: `git rm tests/smoke.test.ts`
-Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 12 个用例）。
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 13 个用例）。
 
 - [ ] **Step 7: Commit**
 
