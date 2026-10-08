@@ -164,7 +164,7 @@ interface Api {
 
 ### 两模式共用
 
-- `Backspace` → `backspace(1)` + `preventDefault()`
+- `Backspace` → `backspace(1)` + `preventDefault()`，**但合成中必须放行**：判断条件是 `e.nativeEvent.isComposing === true`（React 的合成事件不暴露 `isComposing`，取到的是 `undefined`，必须读 `nativeEvent`）。合成期间退格是输入法用来删除未上屏拼音的，拦截会让用户删不掉自己打错的拼音，同时正文莫名回退——这与 §4 开头「绝不对 keydown 无差别 preventDefault」是同一条原则，此前本节漏了
 - 方向键、Home/End、PageUp/PageDown 交给页面滚动
 - 光标是一个**在文字层里闪烁的 `<span>`**（因为真正的 textarea 是透明的），位置紧随 `cursor` 之后
 - 模式切换按钮在工具栏，切换时给 toast 提示当前模式
