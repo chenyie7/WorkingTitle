@@ -2362,7 +2362,15 @@ git commit -m "feat(core): TypingEngine 游标状态机（pump/backspace/jumpToC
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, utimesSync } from 'node:fs'
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+  utimesSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
@@ -2479,6 +2487,52 @@ describe('sessionStore 小说缓存', () => {
     store.writeNovelCache(makeNovel(src))
 
     writeFileSync(src, '完全不同的内容，长度也不同。\n', 'utf8')
+    expect(store.readNovelCache(src)).toBeNull()
+  })
+
+  // 上面那条同时改动了 mtime 与 size，所以它只证明「两条腿中的至少一条在起作用」。
+  // 下面两条各自只动一条腿，把 `mtimeMs !== meta.mtimeMs || size !== meta.size` 的
+  // 两个分支分别钉住——把 || 错写成 &&，只有它们会红。
+  //
+  // 整数秒的 mtime 是关键：实测 utimesSync(p, S, S) 之后 statSync(p).mtimeMs 恰好是
+  // S * 1000，逐位可还原。不然「只动了 mtime」和「mtime 与记录一致」这两个前提
+  // 都只能靠写入时序去赌，测出来的东西就不确定了。
+  const MTIME_A = 1_700_000_000
+  const MTIME_B = 1_700_000_001
+
+  it('源文件只被 touch（内容与大小不变）时缓存失效', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'src.txt')
+    writeFileSync(src, '第一章 甲\n正文。\n', 'utf8')
+    utimesSync(src, MTIME_A, MTIME_A)
+    store.writeNovelCache(makeNovel(src))
+
+    const before = statSync(src)
+    utimesSync(src, MTIME_B, MTIME_B)
+    const after = statSync(src)
+    // 前提：只动了 mtime，大小没变——否则这条用例测的不是 mtime 那条腿
+    expect(before.mtimeMs).toBe(MTIME_A * 1000)
+    expect(after.mtimeMs).toBe(MTIME_B * 1000)
+    expect(after.size).toBe(before.size)
+
+    expect(store.readNovelCache(src)).toBeNull()
+  })
+
+  it('源文件改成不同长度的内容、且 mtime 被逐位还原时缓存失效', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'src.txt')
+    writeFileSync(src, '第一章 甲\n正文。\n', 'utf8')
+    utimesSync(src, MTIME_A, MTIME_A)
+    store.writeNovelCache(makeNovel(src))
+
+    writeFileSync(src, '完全不同的内容，长度也不同。\n', 'utf8')
+    utimesSync(src, MTIME_A, MTIME_A) // 把 mtime 拨回与 meta 记录一致
+    const st = statSync(src)
+    const meta = JSON.parse(readFileSync(join(dir, 'novel-cache.json'), 'utf8'))
+    // 前提：mtime 与记录逐位相同、大小不同——即只剩 size 那条腿能拦下它
+    expect(st.mtimeMs).toBe(meta.mtimeMs)
+    expect(st.size).not.toBe(meta.size)
+
     expect(store.readNovelCache(src)).toBeNull()
   })
 
@@ -3301,7 +3355,7 @@ import { CH } from '../main/channels'
 
 ```ts
 import { app, BrowserWindow, shell } from 'electron'
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
 import { buildAppMenu } from './menu'
@@ -3371,8 +3425,21 @@ function createWindow(): BrowserWindow {
   return w
 }
 
+/**
+ * 命令行里的路径必须是【普通文件】。不能传 existsSync：名叫 `xxx.txt` 的目录
+ * existsSync 说 true、statSync(...).isFile() 说 false，而 loadNovelFromFile 会对它抛
+ * EISDIR。谓词的形状与 Task 5 文档里的写法一致（见设计文档 §13）。
+ */
+function isRegularFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
 app.whenReady().then(() => {
-  initialNovelPath = resolveInitialNovelPath(process.argv, existsSync)
+  initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
 
   registerIpc({
     getWindow: () => win,
