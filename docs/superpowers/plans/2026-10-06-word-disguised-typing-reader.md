@@ -725,7 +725,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（9 个用例）。
+Expected: 全部 PASS（10 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -733,6 +733,15 @@ Expected: 全部 PASS（9 个用例）。
 
 Run: `pnpm typecheck`
 Expected: exit 0。若 `jschardet` 报缺少类型声明，确认装的是 `jschardet@4.0.0`（自带 `.d.ts`），而不是去装不存在的 `@types/jschardet`。
+
+- [ ] **Step 6.5: 删除已过时的 `tests/smoke.test.ts`**
+
+Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest 在「没找到测试文件」时退出码非 0）。
+它断言的是 `1 + 1 === 2`，既不碰本项目行为也不碰 jsdom / `tests/setup.ts`，属于「绿了但什么都没证明」的测试。
+本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
+
+Run: `git rm tests/smoke.test.ts`
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 10 个用例）。
 
 - [ ] **Step 7: Commit**
 
