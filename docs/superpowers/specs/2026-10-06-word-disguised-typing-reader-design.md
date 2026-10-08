@@ -269,8 +269,10 @@ A4 纸样式：白底、圆角、投影、衬线字体（`Georgia` / `宋体` �
 
 保存到 `app.getPath('userData')/`：
 
-- `session.json`：`{ novelTitle, sourcePath, encoding, ratio, mode, cursor, revealStart, chapterPos, activeChapter, startedAt }`
-- `novel-cache.json`：`{ sourcePath, mtimeMs, size, encoding, hadBom, chapters }` —— 章节目录与元数据，体积小
+- `session.json`：`{ novelTitle, sourcePath, ratio, mode, cursor, revealStart, chapterPos, activeChapter, startedAt }`
+  （刻意**不含 `encoding`**：编码名由 `novel-cache.json` 里的 `NovelCacheMeta.encoding` 承载，恢复 `Novel` 时从那里取，session 再存一份是冗余。此前的本文档多写了它，实现与计划一直是按不含它做的。）
+- `novel-cache.json`：`{ sourcePath, mtimeMs, size, encoding, hadBom, title, chapters, textBytes }` —— 章节目录与元数据，体积小
+  （`title` 用于重建 `Novel.title`；`textBytes` 是缓存两个文件之间的**提交点**，用于防止「旧 meta + 新 text」这类错配——见 Task 5 与 §6。）
 - `novel-cache.txt`：解码并归一化后的全文，纯 UTF-8
 
 拆成两个文件是刻意的：20MB 小说的全文若塞进 JSON，`JSON.parse` / `stringify` 会白白付出转义与解析开销。纯文本缓存可以直接 `fs.readFileSync(path, 'utf8')` 读回。重启时命中缓存则无需再读原文件、不再重复检测编码。
