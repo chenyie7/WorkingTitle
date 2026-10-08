@@ -743,6 +743,13 @@ const SEVEN_BIT_BEYOND_REACH = [
   'ISO-2022-KR'
 ]
 
+/**
+ * 注意：本组是这些编码名【唯一】的守卫。行为用例的样本经 detect() 后只落到
+ * GB18030 / CP932 / CP949 / utf-16-le 四个名字（Shift_JIS 与 EUC-KR 的样本分别被
+ * PREFERRED_SUPERSET 重映射为 CP932 / CP949），于是 13 个信念名里有 10 个没有任何
+ * 行为用例触达：Big5、EUC-JP、EUC-KR、SHIFT_JIS、Johab、UTF-16、utf-16-be、
+ * UTF-32、utf-32-be、utf-32-le。**删掉本组不等于行为测试仍覆盖这些编码。**
+ */
 describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
   const norm = (s: string): string => s.toUpperCase().replace(/[-_]/g, '')
 
