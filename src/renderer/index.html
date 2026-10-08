@@ -2,6 +2,19 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      注意：本 CSP meta 的【位置】是承重的，不要上移、不要加 nonce、更不要删掉它改成响应头。
+      1) dev 下 Vite 会把 React Fast Refresh 的前导代码作为内联 module script 注入到 <head>
+         最前面，恰好落在本 meta 之前；而 CSP3 规定 meta 下发的策略不追溯其之前的内容，
+         所以那段内联脚本能执行、dev 正常。
+      2) 若改为整篇文档生效的响应头（onHeadersReceived），那段内联脚本会被拒绝 → dev 白屏，
+         报错是 "@vitejs/plugin-react can't detect preamble"，而不是 $RefreshReg$ is not defined
+         （后者会被 refresh wrapper 里提升的模块级函数声明遮蔽掉）。且 file:// 生产加载下
+         该回调是否触发未经证实——删掉 meta 风险是生产彻底没有 CSP 却看起来加固过。
+         真要用响应头，顺序必须是：先保留 meta，确认响应头确实生效后再删。
+      3) 反之，将来任何注入到本 meta【之后】的内联脚本都会被 script-src 回退的
+         default-src 'self' 拦掉（例如某些分析脚本、配置 blob、或用 injectTo:'head' 的插件）。
+    -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
