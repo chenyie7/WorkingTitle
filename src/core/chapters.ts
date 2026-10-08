@@ -69,8 +69,19 @@ export function splitChapters(text: string, fallbackTitle: string): SplitResult 
   }))
   const kept = bodies.filter((b) => b.body.trim() !== '')
 
-  // 除最后一章外，每章正文末尾补一个 \n 作为章间分隔并计入该章，
-  // 这样各章区间才能严格首尾相接（end === 下一章 start）。
+  // 除最后一章外，每章正文末尾补一个 \n，计入该章。
+  //
+  // 【这个 \n 不负责区间连续】end === 下一章 start 是【构造性】成立的：start 取自
+  // 追加前的 flatText.length，追加之后再取一次作为 end。把这段 \n 去掉，各章区间
+  // 照样首尾相接——连续性只来自 start/end 的取值方式，与这里补不补字符无关。
+  //
+  // 【它唯一的用途是还原原文】lines.slice(from, to).join('\n') 丢掉了第 to-1 行之后
+  // 本应存在的那个换行；补回来，flatText 才与源文件逐字相等。末章之后原文没有换行，
+  // 故末章不补——这正是下面那个三元判断存在的原因。
+  //
+  // 逐字相等是刚需而非洁癖：Task 4 的 cursor / revealStart / chapterPos 全是 flatText
+  // 的下标，Task 5 又会把它们持久化。只有 flatText === 原文，这些偏移才对得上用户
+  // 真正导入的那个文件。
   let flatText = ''
   const chapters: Chapter[] = []
   kept.forEach((b, i) => {
