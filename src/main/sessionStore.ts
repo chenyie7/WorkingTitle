@@ -61,7 +61,14 @@ function isPersistedSession(v: unknown): v is PersistedSession {
   return sessionProblem(v) === null
 }
 
-/** NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。 */
+/**
+ * NovelCacheMeta.chapters 里每个元素的必填字段；返回不合格字段的描述，合格返回 null。
+ *
+ * 【为什么要逐个元素查】`Array.isArray(v.chapters)` 单看像是够了，但它对元素一无所知：
+ * 一个 `['第一章']` 这样的数组能过那道检查，随后下游读 `chapters[i].start` 得到 undefined，
+ * 偏移就成了 NaN——章节目录与游标一起悄悄失效，而类型断言 `as NovelCacheMeta` 不会拦。
+ * 数组的形状与元素的形状是两件事，这道检查就是往下多走的那一层。
+ */
 function chapterProblem(v: unknown, i: number): string | null {
   if (typeof v !== 'object' || v === null) return `chapters[${i}] 不是对象`
   const c = v as Record<string, unknown>
