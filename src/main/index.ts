@@ -1,7 +1,16 @@
 import { app, BrowserWindow, shell } from 'electron'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
+import { registerIpc } from './ipc'
+import { buildAppMenu } from './menu'
+import { resetStore } from './session'
+import { applyUserDataOverride, resolveInitialNovelPath } from './startup'
+
+applyUserDataOverride(process.env, (name, path) => app.setPath(name, path))
+resetStore()
 
 let win: BrowserWindow | null = null
+let initialNovelPath: string | null = null
 
 function createWindow(): BrowserWindow {
   const w = new BrowserWindow({
@@ -42,7 +51,7 @@ function createWindow(): BrowserWindow {
   })
 
   // 顶层导航一律拒绝。本应用是单文档 SPA，生产环境（loadFile）不存在任何合法的跨文档导航。
-  // 若放行，新文档会继承已注入的 window.api——Task 6 起该接口包含文件 IO 能力，
+  // 若放行，新文档会继承已注入的 window.api——本任务起该接口包含文件 IO 能力，
   // 等于把读写文件的能力交给被导航到的页面。
   // 注意：will-navigate 不会被下面的启动加载（loadURL / loadFile）或页内导航
   // （hash 变化）触发，所以不影响启动流程，也不影响将来的前端路由。
@@ -60,8 +69,29 @@ function createWindow(): BrowserWindow {
   return w
 }
 
+/**
+ * 命令行里的路径必须是【普通文件】。不能传 existsSync：名叫 `xxx.txt` 的目录
+ * existsSync 说 true、statSync(...).isFile() 说 false，而 loadNovelFromFile 会对它抛
+ * EISDIR。谓词的形状与 Task 5 文档里的写法一致（见设计文档 §13）。
+ */
+function isRegularFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
 app.whenReady().then(() => {
+  initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
+
+  registerIpc({
+    getWindow: () => win,
+    getInitialNovelPath: () => initialNovelPath
+  })
+  buildAppMenu(() => win)
   win = createWindow()
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
   })
