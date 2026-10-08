@@ -5543,15 +5543,23 @@ export default function App() {
       const session = await window.api.loadSession()
 
       if (initialPath) {
-        const loaded = await window.api.openNovelPath(initialPath)
-        if (cancelled) return
-        if (session && session.sourcePath === loaded.sourcePath) {
-          setNovel(loaded)
-          setEngine(TypingEngine.fromSession(loaded, session))
-        } else {
-          openNovel(loaded)
+        // 命令行给的文件可能打不开（已删除、权限、EISDIR、解不出编码……）。
+        // 没有这个 try 的话错误会以【未处理的 rejection】形式冒到启动期：空状态不显示、
+        // 也没有任何提示。catch 里刻意【不 return】：失败就不阻断启动，继续走下面的
+        // 会话恢复 / 空状态兜底——用户至少还能看到界面并重新导入。
+        try {
+          const loaded = await window.api.openNovelPath(initialPath)
+          if (cancelled) return
+          if (session && session.sourcePath === loaded.sourcePath) {
+            setNovel(loaded)
+            setEngine(TypingEngine.fromSession(loaded, session))
+          } else {
+            openNovel(loaded)
+          }
+          return
+        } catch {
+          // 与下面会话恢复那条 catch 同形：静默降级，不阻断启动
         }
-        return
       }
 
       if (session) {
