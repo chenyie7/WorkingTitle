@@ -547,6 +547,7 @@ export const RENDER_WINDOW_LIMIT = 30_000
 
 ```ts
 import { describe, it, expect } from 'vitest'
+import { VERSION as JSCHARDET_VERSION } from 'jschardet'
 import iconv from 'iconv-lite'
 import {
   decodeBuffer,
@@ -651,6 +652,12 @@ describe('decodeBuffer', () => {
 })
 
 /**
+ * 快照 JSCHARDET_EMITTED_NAMES 测得时安装的 jschardet 版本。
+ * 与快照绑在一起、由下面的版本断言守着，两者必须一起更新——分开写就会各自过期。
+ */
+const JSCHARDET_VERSION_MEASURED = '4.0.0'
+
+/**
  * jschardet@4.0.0 实际会吐出的编码名【实测快照】（86 个）。
  *
  * 为什么用快照而不是运行时去读 jschardet 的词表：它的 exports map 只暴露 "."，深路径
@@ -721,6 +728,19 @@ const SEVEN_BIT_BEYOND_REACH = ['ISO-2022-JP', 'ISO-2022-KR', 'HZ-GB-2312']
 
 describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
   const norm = (s: string): string => s.toUpperCase().replace(/[-_]/g, '')
+
+  it('安装的 jschardet 版本与快照测得时一致（升级必须重新测量）', () => {
+    // 本快照是【实测】结果，它只能看见「有人把黑名单改错」，看不见「库自己变了」：
+    // jschardet 改名/新增名字都不会改动我们的字面量。版本断言正是补这个洞——
+    // 任何升级都会在这里大声失败，逼我们重新测量，而不是安静地继续用过期快照。
+    expect(
+      JSCHARDET_VERSION,
+      `快照 JSCHARDET_EMITTED_NAMES 是对 jschardet ${JSCHARDET_VERSION_MEASURED} 实测得到的，`
+        + `当前安装的是 ${JSCHARDET_VERSION}。编码名表可能已变：请重新测量快照`
+        + `（读 build/registry.js 与 build/output_names.js），并同时更新`
+        + ` JSCHARDET_EMITTED_NAMES、MUST_BE_EXEMPT 与 JSCHARDET_VERSION_MEASURED。`
+    ).toBe(JSCHARDET_VERSION_MEASURED)
+  })
 
   it('快照自检：两张名单都确实取自快照', () => {
     expect(JSCHARDET_EMITTED_NAMES).toHaveLength(86)
@@ -930,7 +950,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（16 个用例）。
+Expected: 全部 PASS（17 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -946,7 +966,7 @@ Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest �
 本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
 
 Run: `git rm tests/smoke.test.ts`
-Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 16 个用例）。
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 17 个用例）。
 
 - [ ] **Step 7: Commit**
 
