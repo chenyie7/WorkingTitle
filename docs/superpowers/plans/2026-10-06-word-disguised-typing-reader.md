@@ -600,6 +600,23 @@ describe('decodeBuffer', () => {
     expect(r.text).toBe('')
     expect(r.hadBom).toBe(false)
   })
+
+  it('Shift_JIS 日文不被 GB18030 兜底误选', () => {
+    // scoreText 奖励 CJK 表意文字占比，而 GB18030 会把任意字节对映射进该区：
+    // 日文正确解码（假名不在该区）得约 529，GB18030 乱码得约 971。
+    // 若兜底追加不设条件，这里就会被解成乱码。
+    const ja = '風が吹く\n彼は城壁に立っていた。\n'
+    const buf = iconv.encode(ja, 'shift_jis')
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ja)
+  })
+
+  it('EUC-KR 韩文不被 GB18030 兜底误选', () => {
+    const ko = '바람이 분다\n그는 성벽에 서 있었다.\n'
+    const buf = iconv.encode(ko, 'euc-kr')
+    const r = decodeBuffer(buf)
+    expect(r.text).toBe(ko)
+  })
 })
 ```
 
@@ -670,6 +687,22 @@ function scoreText(text: string): number {
   return (cjk / total) * 1000 - replacement * 100
 }
 
+/**
+ * 判断是否需要用 GB18030 兜底。
+ *
+ * jschardet 对中文的常见误判是给出单字节拉丁系（windows-125x / ISO-8859-*）或干脆给不出编码
+ * ——这些情况才需要 GB18030 兜底。但如果它已经明确指出一个多字节 CJK / Unicode 编码，
+ * 就【不能】再追加 GB18030：scoreText 奖励的是 CJK 表意文字占比，而 GB18030 会把
+ * 任意字节对映射进该区，于是日文/韩文的正确解码（假名、谚文都不在该区）反而得分更低。
+ * 实测得分：Shift_JIS 正确 529 / GB18030 乱码 971；EUC-KR 正确 0 / 乱码 706。
+ */
+const CONFIDENT_MULTIBYTE =
+  /^(?:BIG5|CP932|SHIFT_JIS|SJIS|EUC-JP|EUC-KR|CP949|JOHAB|UTF-16|UTF-16LE|UTF-16BE|UTF-32|UCS-2)$/i
+
+function needsGbFallback(detectedUpper: string): boolean {
+  return detectedUpper === '' || !CONFIDENT_MULTIBYTE.test(detectedUpper)
+}
+
 function candidateEncodings(detected: string): string[] {
   const names: string[] = []
   const push = (n: string): void => {
@@ -680,9 +713,11 @@ function candidateEncodings(detected: string): string[] {
   else if (upper === 'ASCII') push('UTF-8')
   else push(detected)
 
-  // GB18030 是简体中文的兜底；jschardet 常把 GBK 误判成 windows-1252，
-  // 靠 scoreText 的 CJK 占比把正确的那个选出来。
-  push('GB18030')
+  // 条件性追加兜底。GB* 的情况上面已经 push 过，这里被去重成空操作。
+  // 不要为了「保险」无条件追加——那会让日文/韩文被解成乱码（见 needsGbFallback 的注释）。
+  // 也不要改成「只按 U+FFFD 数量打分」来回避：GB18030 几乎把所有字节对都映射到某个字符，
+  // 乱码里的替换字符数同样≈0，两边打平，救不了。
+  if (needsGbFallback(upper)) push('GB18030')
   return names
 }
 
@@ -725,7 +760,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（10 个用例）。
+Expected: 全部 PASS（12 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -741,7 +776,7 @@ Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest �
 本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
 
 Run: `git rm tests/smoke.test.ts`
-Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 10 个用例）。
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 12 个用例）。
 
 - [ ] **Step 7: Commit**
 
