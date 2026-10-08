@@ -1758,6 +1758,12 @@ describe('持久化往返', () => {
     expect(s.chapterPos.every((p) => p >= 0)).toBe(true)
     expect(s.activeChapter).toBeGreaterThanOrEqual(0)
     expect(s.activeChapter).toBeLessThan(n.chapters.length)
+
+    // 恢复出来的引擎必须【当场】满足自己的不变量：activeChapter 那一章的 chapterPos
+    // 就等于 cursor 减去该章起点。畸形会话里 activeChapter 由 cursor 反推得出，
+    // 而 chapterPos 是从会话里读来的——两者不同源时，这一条会红。
+    // 实测（修复前）：这里读到 0，真值是 12。
+    expect(s.chapterPos[s.activeChapter]).toBe(s.cursor - n.chapters[s.activeChapter].start)
   })
 })
 ```
@@ -1850,8 +1856,13 @@ export class TypingEngine {
   }
 
   /**
-   * 统一收尾规则：任何游标变化之后都执行。
-   * 把中间被整章越过的章节标记为已读完，再把 chapterPos[新章] 同步为章内偏移。
+   * 统一收尾规则：把中间被整章越过的章节标记为已读完，再把 chapterPos[新章]
+   * 同步为章内偏移。
+   *
+   * 【调用者只有 pump 与 backspace——jumpToChapter 刻意不走这里】（见该方法的注释）。
+   * 「统一收尾规则」这条名字容易读成「任何游标变化之后都执行」，那不是事实，
+   * 也不是笔误：跳章要的是「点了哪章就高亮哪章」，与本方法算出来的 activeChapter
+   * 在目标章已读完时并不一致。
    */
   private commit(nextCursor: number): void {
     const chapters = this._novel.chapters
@@ -1890,7 +1901,18 @@ export class TypingEngine {
     this.commit(next)
   }
 
-  /** 跳转到第 i 章，并回填该章上次的阅读进度 */
+  /**
+   * 跳转到第 i 章，并回填该章上次的阅读进度。
+   *
+   * 【本方法刻意不走 commit（统一收尾规则）】，而是直接写 activeChapter = i。
+   * 理由是「点了哪章就高亮哪章」：用户点第 i 章，左侧列表必须高亮第 i 章。
+   * 若改用 commit 的算法（activeChapter = chapterIndexOf(cursor)），当第 i 章
+   * 已经整章读完时 chapterPos[i] === charCount，游标正好落在**下一章**的开头，
+   * 于是高亮的是下一章——用户点了 A、列表高亮 B。下一键打字会由 commit 自动
+   * 纠正回 cursor 所在章，那是打字推进的正常语义，不是这次点击的语义。
+   * （变异实测：把这里改成 chapterIndexOf(cursor) 全套用例全绿，
+   * 所以两种语义都「没人守」；本注释与 spec §2 是唯一把选择钉下来的地方。）
+   */
   jumpToChapter(i: number): void {
     const chapters = this._novel.chapters
     if (!Number.isInteger(i) || i < 0 || i >= chapters.length) return
@@ -1939,6 +1961,32 @@ export class TypingEngine {
     }
   }
 
+  /**
+   * 从磁盘上的会话恢复。
+   *
+   * 最后一步必须自己跑一遍「收尾」——把 `chapterPos[activeChapter]` 对齐成
+   * `cursor - chapters[activeChapter].start`——不能指望打字来修。原因有两层：
+   *
+   * 1. 会话里的 `chapterPos` 与**当前**的章节目录未必同源。Task 12 只按
+   *    `sourcePath` 匹配会话，用户在同路径上改了小说就会拿到一份描述着
+   *    「已经不存在的章节目录」的 chapterPos；而 Task 5 的缓存闸让这更常见，
+   *    因为改过的文件必然 cache miss，而 cache miss 正是重建章节目录、
+   *    把陈旧会话套到新目录上的那一刻。
+   * 2. 即便不修，`pump` 的末尾闸（`cursor >= total` 即返回）会让它**永远修不好**：
+   *    在末尾时 pump 直接返回、根本不 commit，而 commit 恰恰是唯一会重算
+   *    `chapterPos[active]` 的地方。实测：cursor=48/48 的会话被恢复后，
+   *    chapterPos[3] 停在 0，再 pump 仍是 0。于是「上次读到全书结尾」的用户
+   *    看到一个永远是 0% 的进度条，打字也救不回来。
+   *
+   * 这个写入是**无条件**的：只要 cursor 落在某一章上就写，绝不写成「看起来不一致才修」
+   * ——那种条件判断本身会成为第二条需要单独测试的规则，而且恰恰会在它判断失误的输入上
+   * 悄悄保留这个 bug。对格式良好的会话它是无操作（chapterPos[activeChapter] 本来
+   * 就等于该差值，包括 jumpToChapter 造成的 activeChapter ≠ cursor 所在章那种状态）。
+   *
+   * 它**不**碰 activeChapter：那一项照旧由 cursor 反推。信任会话里存着的
+   * activeChapter 是另一个变异——陈旧或手改的会话会让侧栏高亮与 cursor 完全无关，
+   * 那是被现有用例正确抓住的。
+   */
   static fromSession(novel: Novel, s: PersistedSession): TypingEngine {
     const engine = new TypingEngine(novel, { ratio: s.ratio, mode: s.mode })
     const total = novel.flatText.length
@@ -1952,11 +2000,17 @@ export class TypingEngine {
     const cursor = Math.max(0, Math.min(Number.isFinite(s.cursor) ? s.cursor : 0, total))
     const revealStart = Math.max(0, Math.min(Number.isFinite(s.revealStart) ? s.revealStart : 0, cursor))
 
+    // 建 → 夹 → 修 → 冻结：写入必须排在冻结之前（见下一条提交加上 Object.freeze 后，
+    // 顺序就承重了——冻结之后再写，严格模式下直接抛 TypeError）。
+    const activeChapter = engine.chapterIndexOf(cursor)
+    const current = novel.chapters[activeChapter]
+    if (current) chapterPos[activeChapter] = cursor - current.start
+
     engine._state = {
       cursor,
       revealStart,
       chapterPos,
-      activeChapter: engine.chapterIndexOf(cursor),
+      activeChapter,
       ratio: clampRatio(s.ratio),
       mode: s.mode === 'key' ? 'key' : 'ime',
       startedAt: typeof s.startedAt === 'number' && Number.isFinite(s.startedAt) ? s.startedAt : null
