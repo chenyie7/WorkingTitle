@@ -6,3 +6,5 @@ out/
 .DS_Store
 *.log
 coverage/
+test-results/
+playwright-report/
