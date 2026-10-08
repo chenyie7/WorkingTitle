@@ -493,10 +493,22 @@ export interface PersistedSession {
   sourcePath: string
   ratio: number
   mode: InputMode
+  /**
+   * 下一个要被抽出来的字符在 `Novel.flatText` 中的下标。
+   * 全项目唯一的核心不变量就在这几个字段上：**阅读区显示的内容恒等于
+   * `flatText.slice(revealStart, cursor)`**，除它以外阅读区不显示任何小说文字。
+   */
   cursor: number
+  /** 当前显示窗口的起点（`flatText` 下标）。打字时不变，只在跳章时移动——「跨章连续」就是这么来的。 */
   revealStart: number
+  /**
+   * 每章「上次离开该章时，光标停在该章内的偏移」，长度恒等于 `chapters.length`。
+   * 由「统一收尾规则」维护：任何一次游标变化之后，都重算 cursor 所在章的那一项。
+   */
   chapterPos: number[]
+  /** `cursor` 所在章的下标。 */
   activeChapter: number
+  /** 首次打字的时间戳（状态栏计时用）；从未打过字时为 null。 */
   startedAt: number | null
 }
 
@@ -603,7 +615,8 @@ describe('decodeBuffer', () => {
 
   it('Shift_JIS 日文不被 GB18030 兜底误选', () => {
     // scoreText 奖励 CJK 表意文字占比，而 GB18030 会把任意字节对映射进该区：
-    // 日文正确解码（假名不在该区）得约 529，GB18030 乱码得约 971。
+    // 日文正确解码（假名不在该区）几乎不得分，GB18030 乱码反而得高分。
+    // 本样本实测：正确 400.0 / 乱码 1000.0（同样注意这数字随文本而变，不是固有属性）。
     // 若兜底追加不设条件，这里就会被解成乱码。
     const ja = '風が吹く\n彼は城壁に立っていた。\n'
     const buf = iconv.encode(ja, 'shift_jis')
