@@ -2363,7 +2363,7 @@ git commit -m "feat(core): TypingEngine 游标状态机（pump/backspace/jumpToC
 - [ ] **Step 1: 写失败测试 `tests/unit/sessionStore.test.ts`**
 
 ```ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   mkdtempSync,
   rmSync,
@@ -2444,6 +2444,27 @@ describe('sessionStore 会话读写', () => {
     expect(statSync(sessionPath).ino).not.toBe(first)
     // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
     expect(store.readSession()!.cursor).toBe(2)
+  })
+
+  // 持久化失败的守卫：失败必须留下痕迹，而不是「应用看着健康、其实什么都没存」。
+  // 断言的是「报出来了、而且带着原错误」——那正是这条修复的全部内容。
+  // 让 baseDir 指向一个【文件】：mkdirSync 必然 EEXIST，写入必然失败，且失败原因
+  // 与文本内容、平台时序都无关（实测在 jsdom 下 spy 能正常拦到，且只调用一次）。
+  it('写入失败会带着原错误 console.warn 出来，而不是静默吞掉', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const notADir = join(dir, '不是一个目录')
+      writeFileSync(notADir, 'x', 'utf8')
+      const store = createSessionStore(notADir)
+      store.writeSession(makeSession())
+      // 前提：这次写入确实失败了——否则「报了 warn」可能来自别处
+      expect(existsSync(join(notADir, 'session.json'))).toBe(false)
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy.mock.calls[0][1]).toBeInstanceOf(Error)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('session.json 损坏时返回 null 而不抛异常', () => {
