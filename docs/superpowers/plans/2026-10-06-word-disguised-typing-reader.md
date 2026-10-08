@@ -2353,8 +2353,10 @@ git commit -m "feat(core): TypingEngine 游标状态机（pump/backspace/jumpToC
 - Produces:
   - `loadNovelFromFile(filePath: string): Novel`
   - `createSessionStore(baseDir: string)` → `{ readSession, writeSession, clearAll, writeNovelCache, readNovelCache }`
-  - `applyUserDataOverride(app: { setPath(n: string, p: string): void }): boolean`
-  - `resolveInitialNovelPath(argv: string[], exists: (p: string) => boolean): string | null`
+  - `applyUserDataOverride(env: Record<string, string | undefined>, setPath: (name: string, path: string) => void): boolean`
+  - `resolveInitialNovelPath(argv: string[], isFile: (p: string) => boolean): string | null`
+    （谓词回答的是「**是不是普通文件**」而不是「存在不存在」：名叫 `xxx.txt` 的目录必须被拒绝，
+    见 §13 与 Task 6 里 `isRegularFile` 的写法）
 
 **关键设计**：`sessionStore.ts` 是**纯函数模块**，接受 `baseDir` 参数，不 import `electron`，因此可以在 Vitest 里用 `mkdtemp` 直接测。Electron 绑定放在 Task 6 的 `session.ts`。
 
