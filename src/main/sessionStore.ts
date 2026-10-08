@@ -24,10 +24,14 @@ export interface SessionStore {
  * 【为什么不能只做 JSON.parse】持久化文件可能是旧版本写的、也可能被手工改过，
  * 而只要它还是合法 JSON，`as PersistedSession` 这个断言就能把残缺记录一路送进
  * TypingEngine.fromSession。实测 fromSession 对残缺记录【不抛错】：
- *   - 删掉 chapterPos：返回的引擎快照是 cursor=12、chapterPos=[0,2]、activeChapter=1
- *     （缺失的数组被当成全 0，只有游标所在章的项被重算）；
- *   - 只留 novelTitle / sourcePath：返回一个「从头开始」的引擎——cursor=0、
- *     chapterPos=[0,0]、ratio=10、mode='ime'、startedAt=null。
+ *   - 删掉 chapterPos：缺失的数组被当成全 0，只有游标所在章的项被重算，于是它照样返回
+ *     一个引擎。快照的【具体数字取决于样本】，实测「两章各 10 字（[0,10) 与 [10,20)）、
+ *     cursor=12」得 chapterPos=[0,2]、activeChapter=1，而「两章 20+10（[0,20) 与 [20,30)）、
+ *     同样 cursor=12」得 chapterPos=[12,0]、activeChapter=0——别把那组数字读成这条路径的
+ *     性质，它只是那个样本的值。
+ *   - 只留 novelTitle / sourcePath：返回一个「从头开始」的引擎——cursor=0、ratio=10、
+ *     mode='ime'、startedAt=null，chapterPos 全 0（长度等于章数）。这几个值与样本无关：
+ *     cursor 缺失一律落 0，而 chapters[0].start 按构造恒为 0，所以第 0 章那一项也是 0。
  * 于是畸形数据不会崩溃，而是伪装成一次成功的恢复（比例、模式、计时都还在，进度却回到
  * 开头）。校验失败一律当作「没有记录」，由调用方走空状态。
  */
