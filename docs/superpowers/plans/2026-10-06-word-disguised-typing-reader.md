@@ -2415,6 +2415,37 @@ describe('sessionStore 会话读写', () => {
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
   })
 
+  // 原子性的机制级守卫：renameSync 会换成【另一个 inode】，而 writeFileSync 对已存在的
+  // 路径是原地截断、inode 不变。读文件【内容】看不出这个差别——这正是原子性没有被任何
+  // 内容级断言覆盖住的原因，也是这条用例存在的理由。
+  //
+  // 【为什么这是确定成立的，而不只是这一次观测到】临时文件在改名【之前】就已创建，所以
+  // 新 inode 的分配发生在旧 inode 被释放之前，文件系统没有机会把它回收重用。实测连写
+  // 20 次：temp+rename 得到 20 个互不相同的 inode，改成直接写则 20 次都是同一个 inode。
+  //
+  // 【它不是唯一可行的守卫，另一种其实更贴近性质】把 node:fs 的 writeFileSync 换成
+  // 「先写 20 字节前缀再抛错」，断言上一次的会话仍然完好——那一条钉的是【性质】（不会
+  // 出现半截文件）而不是机制，本来更该选它。没选它是因为它需要 `// @vitest-environment
+  // node`：实测在 jsdom 下 mock 一次都拦不到（`vi.spyOn(fs, 'writeFileSync')` 报
+  // "Module namespace is not configurable"，直接赋值报 "Cannot redefine property"），
+  // 也就是那个 pragma 是承重的——为一条已由 inode 守卫覆盖的机制，让此后每个读者都背上
+  // 环境与配置成本，不划算。顺带记下：那条 mock 守卫是【失败即安全】而非空转——若 mock
+  // 没生效，第二次写入会成功，断言反而会红。
+  it('writeSession 走的是 temp + rename（换 inode，而不是原地截断）', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ cursor: 1 }))
+    const sessionPath = join(dir, 'session.json')
+    const first = statSync(sessionPath).ino
+    store.writeSession(makeSession({ cursor: 2 }))
+    // 前提：这一步的平台确实给出有意义的 inode。若某个平台报 0，失败会指在这里，
+    // 而不是让下面的守卫变成一句看不出所以然的自比较。
+    expect(first).toBeGreaterThan(0)
+
+    expect(statSync(sessionPath).ino).not.toBe(first)
+    // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
+    expect(store.readSession()!.cursor).toBe(2)
+  })
+
   it('session.json 损坏时返回 null 而不抛异常', () => {
     const store = createSessionStore(dir)
     writeFileSync(join(dir, 'session.json'), '{ 这不是 JSON', 'utf8')
@@ -2620,10 +2651,14 @@ export interface SessionStore {
  * 【为什么不能只做 JSON.parse】持久化文件可能是旧版本写的、也可能被手工改过，
  * 而只要它还是合法 JSON，`as PersistedSession` 这个断言就能把残缺记录一路送进
  * TypingEngine.fromSession。实测 fromSession 对残缺记录【不抛错】：
- *   - 删掉 chapterPos：返回的引擎快照是 cursor=12、chapterPos=[0,2]、activeChapter=1
- *     （缺失的数组被当成全 0，只有游标所在章的项被重算）；
- *   - 只留 novelTitle / sourcePath：返回一个「从头开始」的引擎——cursor=0、
- *     chapterPos=[0,0]、ratio=10、mode='ime'、startedAt=null。
+ *   - 删掉 chapterPos：缺失的数组被当成全 0，只有游标所在章的项被重算，于是它照样返回
+ *     一个引擎。快照的【具体数字取决于样本】，实测「两章各 10 字（[0,10) 与 [10,20)）、
+ *     cursor=12」得 chapterPos=[0,2]、activeChapter=1，而「两章 20+10（[0,20) 与 [20,30)）、
+ *     同样 cursor=12」得 chapterPos=[12,0]、activeChapter=0——别把那组数字读成这条路径的
+ *     性质，它只是那个样本的值。
+ *   - 只留 novelTitle / sourcePath：返回一个「从头开始」的引擎——cursor=0、ratio=10、
+ *     mode='ime'、startedAt=null，chapterPos 全 0（长度等于章数）。这几个值与样本无关：
+ *     cursor 缺失一律落 0，而 chapters[0].start 按构造恒为 0，所以第 0 章那一项也是 0。
  * 于是畸形数据不会崩溃，而是伪装成一次成功的恢复（比例、模式、计时都还在，进度却回到
  * 开头）。校验失败一律当作「没有记录」，由调用方走空状态。
  */

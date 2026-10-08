@@ -50,6 +50,37 @@ describe('sessionStore 会话读写', () => {
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
   })
 
+  // 原子性的机制级守卫：renameSync 会换成【另一个 inode】，而 writeFileSync 对已存在的
+  // 路径是原地截断、inode 不变。读文件【内容】看不出这个差别——这正是原子性没有被任何
+  // 内容级断言覆盖住的原因，也是这条用例存在的理由。
+  //
+  // 【为什么这是确定成立的，而不只是这一次观测到】临时文件在改名【之前】就已创建，所以
+  // 新 inode 的分配发生在旧 inode 被释放之前，文件系统没有机会把它回收重用。实测连写
+  // 20 次：temp+rename 得到 20 个互不相同的 inode，改成直接写则 20 次都是同一个 inode。
+  //
+  // 【它不是唯一可行的守卫，另一种其实更贴近性质】把 node:fs 的 writeFileSync 换成
+  // 「先写 20 字节前缀再抛错」，断言上一次的会话仍然完好——那一条钉的是【性质】（不会
+  // 出现半截文件）而不是机制，本来更该选它。没选它是因为它需要 `// @vitest-environment
+  // node`：实测在 jsdom 下 mock 一次都拦不到（`vi.spyOn(fs, 'writeFileSync')` 报
+  // "Module namespace is not configurable"，直接赋值报 "Cannot redefine property"），
+  // 也就是那个 pragma 是承重的——为一条已由 inode 守卫覆盖的机制，让此后每个读者都背上
+  // 环境与配置成本，不划算。顺带记下：那条 mock 守卫是【失败即安全】而非空转——若 mock
+  // 没生效，第二次写入会成功，断言反而会红。
+  it('writeSession 走的是 temp + rename（换 inode，而不是原地截断）', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ cursor: 1 }))
+    const sessionPath = join(dir, 'session.json')
+    const first = statSync(sessionPath).ino
+    store.writeSession(makeSession({ cursor: 2 }))
+    // 前提：这一步的平台确实给出有意义的 inode。若某个平台报 0，失败会指在这里，
+    // 而不是让下面的守卫变成一句看不出所以然的自比较。
+    expect(first).toBeGreaterThan(0)
+
+    expect(statSync(sessionPath).ino).not.toBe(first)
+    // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
+    expect(store.readSession()!.cursor).toBe(2)
+  })
+
   it('session.json 损坏时返回 null 而不抛异常', () => {
     const store = createSessionStore(dir)
     writeFileSync(join(dir, 'session.json'), '{ 这不是 JSON', 'utf8')
