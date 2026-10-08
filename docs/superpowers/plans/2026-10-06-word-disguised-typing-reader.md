@@ -1145,6 +1145,8 @@ describe('splitChapters', () => {
     // （titleIdx 为空直接 return { flatText: text }），那个断言恒真，碰不到拼接逻辑。
     // 而这条用例走的是三章拼接：只有 flatText 与源文件逐字相等，Task 4 那些指向 flatText
     // 的 cursor/revealStart/chapterPos 偏移，才对得上用户真正导入的那个文件。
+    // 【保真律 · 分支一】没有任何东西被丢弃 → flatText === text。
+    // 分支二（丢掉了一段全空白前言 → flatText === text.slice(off)）在「标题前只有空白时…」里。
     expect(flatText).toBe(text)
   })
 
@@ -1167,9 +1169,19 @@ describe('splitChapters', () => {
 
   it('标题前只有空白时不产生前言章节', () => {
     const text = '\n\n第一章 风起\n正文。\n'
-    const { chapters } = splitChapters(text, 'x')
+    const { flatText, chapters } = splitChapters(text, 'x')
     expect(chapters).toHaveLength(1)
     expect(chapters[0].title).toBe('第一章 风起')
+    // 【保真律 · 分支二】flatText 恰好等于「原文减去被丢掉的那段全空白前言」，不多不少：
+    //     flatText === text.slice(off)，off = 第一个标题行首字符的下标。
+    // 完整规律是这两条分支的并集，分支一（没有任何东西被丢弃 → flatText === text）
+    // 断言在「按 第X章 切出三章」里。之所以要分成两条而不是只写 `flatText === text`：
+    // 丢掉一段空白前言是【合法】行为，此时 flatText 本来就不等于原文——正因为如此，
+    // 这条断言无法统一地写在每个用例里，保真的缺口才在 Task 3 之前一直没人发现。
+    // 该规律经 30000 例随机文本实测无例外（分支一 17110/17110，分支二 6351/6351）。
+    const off = text.indexOf('第一章 风起') // = 2：前两行都是空字符串，各贡献 1 个 \n
+    expect(off).toBe(2)
+    expect(flatText).toBe(text.slice(off))
   })
 
   it('相邻标题之间无正文：区间仍连续，且两个标题都不被丢弃（flatText === 原文）', () => {
