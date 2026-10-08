@@ -3035,7 +3035,9 @@ export function loadNovelFromFile(filePath: string): Novel {
 
 Run: `pnpm test`
 Expected: 全绿。六组测试通过：decode / chapters / engine / sessionStore / startup / loadNovel
-（本任务实测 98 个用例；原文写的「七组」含 smoke，而 tests/smoke.test.ts 已在 Task 3 的 Step 6.5 删除）。
+（原文写的「七组」含 smoke，而 tests/smoke.test.ts 已在 Task 3 的 Step 6.5 删除。）
+
+> **此处刻意不写具体用例数。** 这一行位于所有 fence 之外，而逐字节一致约定只保证「代码 = fence 里的代码」——**它对 fence 之外的散文一言不发**，所以散文里的计数会静默过期（曾写「98 个用例」，后续批次加了两条腿的用例后就成了 100，而没有任何检查会发现）。需要数字时请以 `pnpm test` 的实际输出为准。
 
 - [ ] **Step 11: Commit**
 
