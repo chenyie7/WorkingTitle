@@ -37,7 +37,11 @@ export interface PersistedSession {
   revealStart: number
   /**
    * 每章「上次离开该章时，光标停在该章内的偏移」，长度恒等于 `chapters.length`。
-   * 由「统一收尾规则」维护：任何一次游标变化之后，都重算 cursor 所在章的那一项。
+   * 由「统一收尾规则」维护：**`pump` 与 `backspace` 的每一次游标变化之后**，都重算
+   * cursor 所在章的那一项。`jumpToChapter` 是刻意的例外——它只重算被点击的那一章，
+   * 并把 `activeChapter` 直接设为该章（理由见 `engine.ts` 里该方法的注释与 spec §2）。
+   *
+   * 写成「任何一次游标变化之后」是不成立的：跳章也改变游标，却刻意不走这条路。
    */
   chapterPos: number[]
   /** `cursor` 所在章的下标。 */
