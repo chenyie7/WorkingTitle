@@ -548,7 +548,13 @@ export const RENDER_WINDOW_LIMIT = 30_000
 ```ts
 import { describe, it, expect } from 'vitest'
 import iconv from 'iconv-lite'
-import { decodeBuffer, normalizeNewlines, detectBom } from '../../src/core/decode'
+import {
+  decodeBuffer,
+  normalizeNewlines,
+  detectBom,
+  needsGbFallback,
+  CONFIDENT_MULTIBYTE_NAMES
+} from '../../src/core/decode'
 
 const ZH = '第一章 风起\n\n林昭站在城墙上，望着远方的烽火。\n他想起十年前的那个雪夜。\n'
 
@@ -641,6 +647,102 @@ describe('decodeBuffer', () => {
     const r = decodeBuffer(buf)
     expect(r.text).toBe(ko)
     expect(r.encoding).not.toBe('GB18030')
+  })
+})
+
+/**
+ * jschardet@4.0.0 实际会吐出的编码名【实测快照】（86 个）。
+ *
+ * 为什么用快照而不是运行时去读 jschardet 的词表：它的 exports map 只暴露 "."，深路径
+ * import 会 ERR_PACKAGE_PATH_NOT_EXPORTED，只能靠绝对路径动态 import 绕过——为一份
+ * 「本应稳定」的测试引入这种真实脆弱性不值得。快照同样能抓住本测试要抓的那类 bug：
+ * 旧正则写 UTF-16LE 时，快照里的 utf-16-le 匹配不上，测试立刻失败。
+ *
+ * 【机制】同一个族会以两种拼写并存：`UTF-16` / `UTF-32` 是 compat 改名后的裸名，
+ * 而 `utf-16-le` / `utf-16-be` / `utf-32-be` / `utf-32-le` 是原样吐出的 WHATWG 标签。
+ * 照 compat 表写正则就会「看起来对、实际漏配」——这就是当初无 BOM UTF-16 被追加
+ * GB18030 并解成乱码的完整机制，也是本测试存在的理由。
+ *
+ * 【这份快照抓不到什么】jschardet 升级【新增】一个名字时，快照不会知道，测试仍然通过。
+ * 需要重新测量并更新本表（属 Task 15 的 (b) 覆盖范围）。
+ */
+const JSCHARDET_EMITTED_NAMES = [
+  "ascii", "utf-8", "UTF-8-SIG", "UTF-16",
+  "utf-16-be", "utf-16-le", "UTF-32", "utf-32-be",
+  "utf-32-le", "utf-7", "Big5", "CP932",
+  "CP949", "EUC-JP", "EUC-KR", "GB18030",
+  "HZ-GB-2312", "ISO-2022-JP", "iso2022_jp_2004", "iso2022_jp_ext",
+  "ISO-2022-KR", "SHIFT_JIS", "CP874", "Windows-1250",
+  "Windows-1251", "Windows-1252", "Windows-1253", "Windows-1254",
+  "Windows-1255", "Windows-1256", "Windows-1257", "cp1258",
+  "KOI8-R", "koi8-u", "TIS-620", "ISO-8859-1",
+  "ISO-8859-2", "iso8859-3", "iso8859-4", "ISO-8859-5",
+  "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9",
+  "iso8859-10", "ISO-8859-13", "iso8859-14", "iso8859-15",
+  "iso8859-16", "Johab", "MacCyrillic", "MacGreek",
+  "MacIceland", "MacLatin2", "MacRoman", "MacTurkish",
+  "cp720", "cp1006", "cp1125", "koi8-t",
+  "KZ1048", "ptcp154", "hp-roman8", "cp437",
+  "cp737", "cp775", "cp850", "cp852",
+  "IBM855", "cp856", "cp857", "cp858",
+  "cp860", "cp861", "cp862", "cp863",
+  "cp864", "cp865", "IBM866", "cp869",
+  "cp1140", "cp424", "cp500", "cp875",
+  "cp1026", "cp273"
+]
+
+/**
+ * 快照里属于【多字节 CJK / Unicode】的名字——必须免于 GB18030 兜底。
+ * 完整枚举而非抽样：单字节拉丁系不需要豁免（兜底正是为它们准备的）；
+ * GB* 家族由 candidateEncodings 另行映射成 GB18030，不走本名单。
+ */
+const MUST_BE_EXEMPT = [
+  'Big5',
+  'CP932',
+  'CP949',
+  'EUC-JP',
+  'EUC-KR',
+  'SHIFT_JIS',
+  'Johab',
+  'UTF-16',
+  'utf-16-be',
+  'utf-16-le',
+  'UTF-32',
+  'utf-32-be',
+  'utf-32-le'
+]
+
+/**
+ * 快照里另外三个「多字节 CJK 但不需豁免」的名字，【显式点名】列出而不是靠过滤条件默默排除：
+ * 它们都是 7-bit 编码（每个字节 < 0x80），会先被严格 UTF-8 短路接管，根本走不到候选列表。
+ * 见设计文档 §13。静默排除正是这类 bug 藏身之处，所以宁可写死在这里。
+ */
+const SEVEN_BIT_BEYOND_REACH = ['ISO-2022-JP', 'ISO-2022-KR', 'HZ-GB-2312']
+
+describe('词汇表：黑名单必须与 jschardet 的名字表一致', () => {
+  const norm = (s: string): string => s.toUpperCase().replace(/[-_]/g, '')
+
+  it('快照自检：两张名单都确实取自快照', () => {
+    expect(JSCHARDET_EMITTED_NAMES).toHaveLength(86)
+    expect(MUST_BE_EXEMPT.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
+    expect(SEVEN_BIT_BEYOND_REACH.filter((n) => !JSCHARDET_EMITTED_NAMES.includes(n))).toEqual([])
+  })
+
+  it('多字节 CJK/Unicode 名全部免于 GB18030 兜底，且豁免集合不多不少', () => {
+    // 这条就是当初能抓住 UTF-16LE 那个 bug 的断言：旧正则写 UTF-16LE，
+    // 而 jschardet 吐的是 utf-16-le，于是这里会列出 utf-16-be/le、utf-32-be/le。
+    expect(MUST_BE_EXEMPT.filter((n) => needsGbFallback(n.toUpperCase()))).toEqual([])
+
+    // 反向：豁免集合必须与上面严格相等——多了（死条款）少了（漏配）都失败。
+    const exempt = JSCHARDET_EMITTED_NAMES.filter((n) => !needsGbFallback(n.toUpperCase())).sort()
+    expect(exempt).toEqual([...MUST_BE_EXEMPT].sort())
+  })
+
+  it('黑名单里没有死条款：每个前缀都能对上快照里的真名字', () => {
+    const dead = CONFIDENT_MULTIBYTE_NAMES.filter(
+      (alt) => !JSCHARDET_EMITTED_NAMES.some((v) => norm(v).startsWith(alt))
+    )
+    expect(dead).toEqual([])
   })
 })
 ```
@@ -742,14 +844,30 @@ function scoreText(text: string): number {
  * `/i` 只解决大小写、不解决连字符，于是**无 BOM 的 UTF-16 被追加了 GB18030 并被解成乱码**
  * （实测无 BOM 韩文 UTF-16LE：正确解 0.0 / GB18030 乱码 44.8，乱码胜出）。
  * 所以先抹掉 `-` `_` 再匹配。
- * 用前缀而非整串锚定，是为了一并覆盖同族拼写（Big5HKSCS、EUC-JIS-2004、shift_jis_2004）。
- * 前缀匹配在此安全：jschardet 的注册表里没有任何不属于上述家族的编码名以
- * BIG5 / CP93 / CP94 / SHIFT / SJIS / EUC / JOHAB / UTF / UCS 开头（CP9xx 只有 932/949）。
+ * 用前缀而非整串锚定：jschardet 对同一族会给多种拼写（`Big5` / `Shift_JIS` / `utf-16-le`），
+ * 前缀能一并覆盖，且规范化后 `SHIFT_JIS` 与 `SHIFTJIS` 等价。
+ * 【名单里只放 jschardet 真会吐出的名字】`SJIS` / `EUCJIS` / `UCS-2` 这类「想当然的拼写」
+ * 它一个都不产出（`shift_jis_2004` 由 SHIFTJIS 前缀覆盖，注册表里根本没有 UCS-2），属于
+ * 永远不会命中的死条款，已删除。名单与词表的对应关系由 tests/unit/decode.test.ts 的
+ * 词汇表测试逐条核对：改名单、或 jschardet 改名，都会让它失败。
+ * 前缀匹配在此安全：注册表里没有任何不属于上述家族的编码名以
+ * BIG5 / CP93 / CP94 / SHIFT / EUC / JOHAB / UTF 开头（CP9xx 只有 932/949）。
  */
-const CONFIDENT_MULTIBYTE =
-  /^(?:BIG5|CP932|CP949|SHIFTJIS|SJIS|EUCJP|EUCJIS|EUCKR|JOHAB|UTF16|UTF32|UCS2)/
+export const CONFIDENT_MULTIBYTE_NAMES = [
+  'BIG5',
+  'CP932',
+  'CP949',
+  'SHIFTJIS',
+  'EUCJP',
+  'EUCKR',
+  'JOHAB',
+  'UTF16',
+  'UTF32'
+]
 
-function needsGbFallback(detectedUpper: string): boolean {
+const CONFIDENT_MULTIBYTE = new RegExp(`^(?:${CONFIDENT_MULTIBYTE_NAMES.join('|')})`)
+
+export function needsGbFallback(detectedUpper: string): boolean {
   // 抹掉分隔符：jschardet 会吐出 utf-16-le / utf_16_le / UTF-16LE 三种拼写。
   const normalized = detectedUpper.replace(/[-_]/g, '')
   return normalized === '' || !CONFIDENT_MULTIBYTE.test(normalized)
@@ -812,7 +930,7 @@ export function decodeBuffer(buf: Buffer): DecodeResult {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `pnpm vitest run tests/unit/decode.test.ts`
-Expected: 全部 PASS（13 个用例）。
+Expected: 全部 PASS（16 个用例）。
 
 若 GBK 用例失败，打印 `detectEncoding(buf)`（即 `jschardet` 的具名导出 `detect`）的实际结果，并确认 `candidateEncodings` 里确实包含 `GB18030`。
 
@@ -828,7 +946,7 @@ Task 1 的 Step 12 建了它，唯一作用是让 `pnpm test` 非空（vitest �
 本任务的 `decode.test.ts`（9 个真实用例）落地后它已无任何作用，删掉。
 
 Run: `git rm tests/smoke.test.ts`
-Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 13 个用例）。
+Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 16 个用例）。
 
 - [ ] **Step 7: Commit**
 
