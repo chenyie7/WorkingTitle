@@ -4021,6 +4021,15 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
 
 const api = {
+  /**
+   * 宿主平台。渲染层要据此决定标题条左侧留多少空位——macOS 用了
+   * `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上，必须给它们让出位置；
+   * Windows/Linux 没有红绿灯，留空反而是个洞。
+   *
+   * 沙箱化的 preload 能拿到 `process.platform`（Electron 在沙箱里保留了这几个字段），
+   * 但**渲染层拿不到**——所以在这里读取、作为普通值交给它。
+   */
+  platform: process.platform,
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
@@ -4094,6 +4103,20 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     title: '文档1 - Word',
+    // macOS 上隐掉原生标题栏，只把红绿灯浮在网页之上。
+    //
+    // 【为什么必须这么做】默认（default）时标题栏由 macOS 自己画，它的底色跟随系统外观，
+    // 而我们网页里的标题条用的是自己的颜色——两者对不上，用户看到的正是
+    // 「红绿灯那一块和旁边不是一个色」。改成 hiddenInset 后那一块归我们上色，
+    // 顺带也没有了「原生标题条 + 网页里再画一条」的两条标题条。
+    // 其它平台不支持这个值，原样保留系统标题栏。
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          // 竖直居中对齐 32px 的标题条（灯本身约 12px 高）
+          trafficLightPosition: { x: 14, y: 10 }
+        }
+      : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG_DARK : WINDOW_BG_LIGHT,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -4916,6 +4939,21 @@ body {
 
 [data-theme='dark'] .wt-modal__check input {
   accent-color: var(--wt-accent);
+}
+
+/* ---- macOS 红绿灯 ---- 
+ *
+ * 窗口用了 `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上、落在标题条这一行里，
+ * 所以左边要让出位置（三个灯 + 间距约 52px，从 x=14 起）。
+ * 只在 darwin 上让：Windows / Linux 没有红绿灯，留空反而是一个洞。
+ *
+ * `-webkit-app-region: drag` 是必需的——原生标题栏隐掉之后，标题条这一行就是唯一的
+ * 拖拽区；不设的话窗口没法用鼠标移动。行内没有可交互元素（文档名现在是静态文本），
+ * 所以不需要再挑出 no-drag 的例外。
+ */
+[data-platform='darwin'] .wt-ribbon__title {
+  padding-left: 78px;
+  -webkit-app-region: drag;
 }
 ```
 
@@ -7237,6 +7275,7 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * 两个调用点都在 try/catch 里，异常不会冒出去。
  */
 const benignApi: WtApi = {
+  platform: 'darwin',
   importNovel: async () => null,
   openNovelPath: async () => {
     throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')
@@ -7295,6 +7334,8 @@ afterEach(() => {
 import type { Novel, PersistedSession } from '../../../core/types'
 
 export interface WtApi {
+  /** 'darwin' | 'win32' | 'linux'。渲染层靠它决定要不要给红绿灯让位 */
+  platform: string
   importNovel: () => Promise<Novel | null>
   openNovelPath: (path: string) => Promise<Novel>
   initialNovelPath: () => Promise<string | null>
@@ -9216,6 +9257,16 @@ export const IconClose = bundleIcon(DismissFilled, DismissRegular)
 ```ts
 import { useEffect } from 'react'
 import type { WtApi } from '../types/global'
+
+/**
+ * 平台在**模块加载时**就写进 `<html data-platform>`。
+ *
+ * 【为什么不做成 effect】它是静态信息，而 effect 要等首次渲染之后才跑——那一帧里
+ * 标题条的文字会先跳到红绿灯底下、再弹回来。模块级副作用的代价是这一个文件不再"纯"，
+ * 但 `App` 会 import 它，所以它的求值仍早于首次渲染。
+ */
+const hostApi = (window as unknown as { api?: WtApi }).api
+if (hostApi?.platform) document.documentElement.dataset.platform = hostApi.platform
 
 /**
  * 把系统外观写到 `<html data-theme>`，并在它变化时跟着更新。

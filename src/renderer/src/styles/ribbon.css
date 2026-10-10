@@ -417,3 +417,18 @@
 [data-theme='dark'] .wt-modal__check input {
   accent-color: var(--wt-accent);
 }
+
+/* ---- macOS 红绿灯 ---- 
+ *
+ * 窗口用了 `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上、落在标题条这一行里，
+ * 所以左边要让出位置（三个灯 + 间距约 52px，从 x=14 起）。
+ * 只在 darwin 上让：Windows / Linux 没有红绿灯，留空反而是一个洞。
+ *
+ * `-webkit-app-region: drag` 是必需的——原生标题栏隐掉之后，标题条这一行就是唯一的
+ * 拖拽区；不设的话窗口没法用鼠标移动。行内没有可交互元素（文档名现在是静态文本），
+ * 所以不需要再挑出 no-drag 的例外。
+ */
+[data-platform='darwin'] .wt-ribbon__title {
+  padding-left: 78px;
+  -webkit-app-region: drag;
+}

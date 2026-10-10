@@ -2,6 +2,16 @@ import { useEffect } from 'react'
 import type { WtApi } from '../types/global'
 
 /**
+ * 平台在**模块加载时**就写进 `<html data-platform>`。
+ *
+ * 【为什么不做成 effect】它是静态信息，而 effect 要等首次渲染之后才跑——那一帧里
+ * 标题条的文字会先跳到红绿灯底下、再弹回来。模块级副作用的代价是这一个文件不再"纯"，
+ * 但 `App` 会 import 它，所以它的求值仍早于首次渲染。
+ */
+const hostApi = (window as unknown as { api?: WtApi }).api
+if (hostApi?.platform) document.documentElement.dataset.platform = hostApi.platform
+
+/**
  * 把系统外观写到 `<html data-theme>`，并在它变化时跟着更新。
  *
  * 【为什么不用 `@media (prefers-color-scheme: dark)`】实测（Electron 44 / macOS 深色系统）：
