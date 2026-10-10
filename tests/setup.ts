@@ -29,6 +29,7 @@ const benignApi: WtApi = {
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,
+  setThemeSource: async () => {},
   onThemeChange: () => () => {}
 }
 

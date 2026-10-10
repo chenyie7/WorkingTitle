@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { SettingsDialog } from './SettingsDialog'
+import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
   IconAlignCenter,
@@ -204,12 +205,16 @@ export function Ribbon({
   docTitle,
   onDocTitleChange,
   darkPaper,
-  onDarkPaperChange
+  onDarkPaperChange,
+  themeSource,
+  onThemeSourceChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
+  themeSource: ThemeSource
+  onThemeSourceChange: (next: ThemeSource) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -263,6 +268,8 @@ export function Ribbon({
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
         onDarkPaperChange={onDarkPaperChange}
+        themeSource={themeSource}
+        onThemeSourceChange={onThemeSourceChange}
       />
     </div>
   )

@@ -57,4 +57,15 @@ export function registerIpc(deps: IpcDeps): void {
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
   ipcMain.handle(CH.getTheme, (): boolean => nativeTheme.shouldUseDarkColors)
+
+  // 用户在设置里选的外观（跟随系统 / 浅色 / 深色）。
+  //
+  // 【为什么必须落到 nativeTheme 而不是只翻一个 CSS 类】macOS 的**红绿灯与其它原生部分**
+  // 由 `themeSource` 决定；只在页面里换 class 的话，网页变暗了而红绿灯仍是系统色——
+  // 那正是刚修好的那个「两块颜色对不上」。改这里会触发下面的 `nativeTheme.on('updated')`
+  // 广播，原生与网页一起变。
+  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): void => {
+    if (source !== 'system' && source !== 'light' && source !== 'dark') return
+    nativeTheme.themeSource = source
+  })
 }

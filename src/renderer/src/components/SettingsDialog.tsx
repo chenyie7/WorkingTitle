@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
+import type { ThemeSource } from '../types/global'
 
 export interface SettingsDialogProps {
   /** 对话框归 Ribbon 所有：打开它的那个按钮就在「文件」选项卡的工具组里 */
@@ -11,7 +12,16 @@ export interface SettingsDialogProps {
   /** 「深色模式下纸张也变暗」。默认关（真 Word 深色模式下纸张仍是白的）。 */
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
+  /** 外观偏好：跟随系统 / 浅色 / 深色 */
+  themeSource: ThemeSource
+  onThemeSourceChange: (next: ThemeSource) => void
 }
+
+const THEME_OPTIONS: ReadonlyArray<{ value: ThemeSource; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
+]
 
 /**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
@@ -30,7 +40,9 @@ export function SettingsDialog({
   docTitle,
   onDocTitleChange,
   darkPaper,
-  onDarkPaperChange
+  onDarkPaperChange,
+  themeSource,
+  onThemeSourceChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
   const [ratioDraft, setRatioDraft] = useState(String(ratio))
@@ -194,11 +206,33 @@ export function SettingsDialog({
 
           <div className="wt-modal__row">
             {/*
+              外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
+              macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
+            */}
+            <span className="wt-modal__label">外观</span>
+            <div className="wt-seg" role="group" aria-label="外观">
+              {THEME_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`wt-btn${themeSource === opt.value ? ' wt-btn--active' : ''}`}
+                  data-testid={`theme-${opt.value}`}
+                  aria-pressed={themeSource === opt.value}
+                  onClick={() => onThemeSourceChange(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="wt-modal__row">
+            {/*
               默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
               勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
               只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
             */}
-            <span className="wt-modal__label">深色外观</span>
+            <span className="wt-modal__label">纸张</span>
             <label className="wt-modal__check">
               <input
                 type="checkbox"
@@ -206,7 +240,7 @@ export function SettingsDialog({
                 checked={darkPaper}
                 onChange={(e) => onDarkPaperChange(e.target.checked)}
               />
-              纸张也变暗
+              深色模式下也变暗
             </label>
           </div>
 
