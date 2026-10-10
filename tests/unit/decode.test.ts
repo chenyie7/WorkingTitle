@@ -27,6 +27,22 @@ describe('normalizeNewlines', () => {
   it('CRLF 与 CR 都归一为 LF', () => {
     expect(normalizeNewlines('a\r\nb\rc\nd')).toBe('a\nb\nc\nd')
   })
+
+  it('重复转换的 \\r\\r\\n 折叠成一个 LF，不产生空行', () => {
+    expect(normalizeNewlines('a\r\r\nb')).toBe('a\nb')
+  })
+
+  it('三个及以上 \\r 加 \\n 同样只折叠成一个 LF', () => {
+    expect(normalizeNewlines('a\r\r\r\nb')).toBe('a\nb')
+  })
+
+  it('真正的空白行（\\r\\n\\r\\n）不被折叠掉', () => {
+    expect(normalizeNewlines('a\r\n\r\nb')).toBe('a\n\nb')
+  })
+
+  it('\\r\\r\\n 与 CRLF 混排时逐段各自归一', () => {
+    expect(normalizeNewlines('a\r\r\nb\r\nc\rd')).toBe('a\nb\nc\nd')
+  })
 })
 
 describe('decodeBuffer', () => {
