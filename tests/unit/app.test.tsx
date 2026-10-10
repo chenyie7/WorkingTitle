@@ -10,6 +10,20 @@ function makeNovel(): Novel {
   return { title: '测试书', sourcePath: '/tmp/测试书.txt', encoding: 'UTF-8', hadBom: false, flatText, chapters }
 }
 
+/**
+ * 阅读区当前显示了多少字。
+ *
+ * 【为什么不再读状态栏】状态栏里那条「已显示 N / 全书 M 字」已经删掉了——真 Word 只报
+ * 全文字数、从不报「已显示多少」，那个词组本身就是伪装破绽（见 StatusBar.tsx 顶部说明）。
+ * 于是这份文件改用**正文长度**当观测点：那才是用户真正看到的东西，也是「抽了多少字」
+ * 唯一的真相来源（状态栏那条本来就只是它的一个投影）。
+ *
+ * 空状态下没有 `page-text`（渲染的是空状态引导），返回 0。
+ */
+function revealedChars(): number {
+  return screen.queryByTestId('page-text')?.textContent?.length ?? 0
+}
+
 let saved: PersistedSession | null = null
 
 function installApi(novel: Novel | null, session: PersistedSession | null = null): void {
@@ -59,7 +73,7 @@ describe('App 端到端（单测层）', () => {
     installApi(null)
     render(<App />)
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
   })
 
   it('导入后蓝条上不出现小说文件名（那是导入唯一的泄露点）', async () => {
@@ -86,7 +100,7 @@ describe('App 端到端（单测层）', () => {
     const capture = screen.getByTestId('input-capture')
     // 默认比例 10，敲 1 个键应显示 10 个字
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 10'))
+    await waitFor(() => expect(revealedChars()).toBe(10))
     expect(screen.getByTestId('page-text').textContent!.length).toBeGreaterThanOrEqual(10)
   })
 
@@ -100,10 +114,10 @@ describe('App 端到端（单测层）', () => {
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 10'))
+    await waitFor(() => expect(revealedChars()).toBe(10))
 
     fireEvent.keyDown(capture, { key: 'Backspace' })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0'))
+    await waitFor(() => expect(revealedChars()).toBe(0))
     expect(novel.flatText).toBe(originalFlat)
   })
 
@@ -115,13 +129,13 @@ describe('App 端到端（单测层）', () => {
     await waitFor(() => expect(screen.getByTestId('chapter-item-1')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('chapter-item-1'))
-    await waitFor(() => expect(screen.getByTestId('status-chapter').textContent).toContain('第 2 章'))
+    await waitFor(() => expect(screen.getByTestId('status-chapter').textContent).toBe('2 / 2'))
     expect(screen.getByTestId('chapter-item-1').className).toContain('chapter-item--active')
 
     // 跳章之后阅读区是**空的**：显示窗口从该章开头起算，而这一章还没读过。
     // 少了这一条，「已显示」把 revealStart 漏掉（写成 cursor）也没人发现——
     // 变异实测：把 `state.cursor - state.revealStart` 改成 `state.cursor`，全套用例全绿。
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
+    expect(revealedChars()).toBe(0)
   })
 
   it('改比例后同样的击键抽出更多字', async () => {
@@ -142,7 +156,7 @@ describe('App 端到端（单测层）', () => {
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 2'))
+    await waitFor(() => expect(revealedChars()).toBe(2))
   })
 
   it('有会话时启动即恢复到上次位置，无需重新输入', async () => {
@@ -161,7 +175,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel, session)
     render(<App />)
 
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 15'))
+    await waitFor(() => expect(revealedChars()).toBe(15))
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:5')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
     expect(screen.getByTestId('page-text').textContent).toContain(novel.flatText.slice(0, 15))
@@ -240,7 +254,7 @@ describe('App 端到端（单测层）', () => {
 
     expect(screen.getByTestId('app-root')).toBeTruthy()
     expect(screen.getByTestId('page-empty')).toBeTruthy()
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
+    expect(revealedChars()).toBe(0)
   })
 })

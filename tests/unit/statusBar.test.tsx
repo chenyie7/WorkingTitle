@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { StatusBar, formatElapsed } from '../../src/renderer/src/components/StatusBar'
+import { StatusBar } from '../../src/renderer/src/components/StatusBar'
 import type { Novel } from '../../src/core/types'
 
 const novel: Novel = {
@@ -15,58 +15,46 @@ const novel: Novel = {
   ]
 }
 
-describe('formatElapsed', () => {
-  it('格式化为 HH:MM:SS', () => {
-    expect(formatElapsed(0)).toBe('00:00:00')
-    expect(formatElapsed(1000)).toBe('00:00:01')
-    expect(formatElapsed(61_000)).toBe('00:01:01')
-    expect(formatElapsed(3_661_000)).toBe('01:01:01')
-  })
-
-  it('负数与非法值归零', () => {
-    expect(formatElapsed(-100)).toBe('00:00:00')
-    expect(formatElapsed(Number.NaN)).toBe('00:00:00')
-  })
-})
-
 describe('StatusBar', () => {
   it('未导入小说时显示占位', () => {
-    render(
-      <StatusBar novel={null} revealedChars={0} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={0} />
-    )
-    expect(screen.getByTestId('status-chars').textContent).toContain('全书 0 字')
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+    render(<StatusBar novel={null} revealedChars={0} activeChapter={0} ratio={10} mode="ime" />)
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 —')
     // 全书 0 字时百分比必须短路成 0，否则是 NaN%（0/0）。
     expect(screen.getByTestId('status-percent').textContent).toBe('0%')
   })
 
-  it('显示已显示字数、章节、比例、编码与模式', () => {
-    render(
-      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" startedAt={0} now={61_000} />
-    )
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 250')
-    expect(screen.getByTestId('status-chars').textContent).toContain('全书 1,000 字')
-    expect(screen.getByTestId('status-chapter').textContent).toContain('第 2 章 / 共 2 章')
+  it('章节位置写成 `2 / 2`，而不是「第 2 章 / 共 2 章」', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    // 写成页码形状（真 Word 状态栏左下角就是页码）。**断言里刻意不含「章」字**——
+    // 那个字是小说阅读器最直接的标志，这份用例守的就是「它不出现」。
+    const chapter = screen.getByTestId('status-chapter').textContent
+    expect(chapter).toBe('2 / 2')
+    expect(chapter).not.toContain('章')
+  })
+
+  it('显示比例、编码与模式', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:25')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 GB18030')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
-    expect(screen.getByTestId('status-elapsed').textContent).toBe('用时 00:01:01')
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 
-  it('未开始打字时用时归零', () => {
-    render(
-      <StatusBar novel={novel} revealedChars={0} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={999_999} />
-    )
-    expect(screen.getByTestId('status-elapsed').textContent).toBe('用时 00:00:00')
+  it('不再有「已显示字数」与「用时」这两项', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    const text = screen.getByTestId('statusbar').textContent ?? ''
+    // 「已显示 N / 全书 M 字」是伪装上的破绽：真 Word 只报全文字数，从不报「已显示多少」。
+    expect(text).not.toContain('已显示')
+    // 真 Word 没有阅读计时器。
+    expect(text).not.toContain('用时')
+    expect(screen.queryByTestId('status-chars')).toBeNull()
+    expect(screen.queryByTestId('status-elapsed')).toBeNull()
   })
 
   it('百分比向下取整', () => {
     // 259 / 1000 = 25.9%：floor 得 25，round 得 26，两者可判。
-    render(
-      <StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={0} />
-    )
+    render(<StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" />)
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 })

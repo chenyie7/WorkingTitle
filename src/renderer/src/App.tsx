@@ -49,7 +49,6 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
@@ -167,13 +166,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', flush)
   }, [])
 
-  // 状态栏计时
-  useEffect(() => {
-    if (state?.startedAt == null) return
-    const id = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [state?.startedAt])
-
   const visibleText = engine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
 
@@ -283,8 +275,6 @@ export default function App() {
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
-          startedAt={state?.startedAt ?? null}
-          now={now}
         />
 
         <Toast />
