@@ -9569,3 +9569,73 @@ export function useThemePreference(source: ThemeSource): void {
 `global.d.ts`、`App.tsx`、`Ribbon.tsx`、`SettingsDialog.tsx`（+复选框）、三份 CSS
 （`--wt-titlebar` 从 `--wt-blue` 拆出来：深色下标题条是深灰而强调色要提亮，共用一个变量做不到）、
 `tests/setup.ts` 与四个测试文件。
+
+
+---
+
+## Task 19: 应用身份与图标
+
+**背景**：应用此前没有 `productName`，`app.name` 取的是 npm 包名 `working-title`，
+于是 macOS 菜单栏首项与「关于」显示的是 `working-title`。
+
+**改了什么**：
+- `package.json` 加 `"productName": "WorkingTitle"`（**`name` 保持 `working-title`**：npm 包名不允许大写）。
+  实测之后 `app.name === 'WorkingTitle'`、菜单栏首项与「关于 WorkingTitle」都跟着变。
+- **蓝条上那个 `Word` 与窗口标题 `文档1 - Word` 刻意不动**——那是伪装本身。
+  这一条是用户明确选的：应用身份用 WorkingTitle，界面继续像 Word。
+- 新增 `build/icon.svg`（矢量源）与 `build/icon.png`（2048×2048，`electron-builder.yml` 的
+  `directories.buildResources: build` 会取它当应用图标）。
+
+**Logo 的概念**：一页纸，末尾一根光标——这个产品的核心动作就是「打字，文字从光标处长出来」，
+所以最后一行的文字条短一截、后面跟一根琥珀色光标。构图比例与理由都写在 SVG 的注释里。
+
+**PNG 是怎么出来的**：Playwright 的 Chromium 没下载（`chromium.launch()` 用不了，
+`_electron` 用的是仓库自带的 Electron 所以一直能跑），改用 Electron 的
+`webContents.capturePage()` 渲染 `data:image/svg+xml` —— 能得到透明底、且带 2x 缩放（2048）。
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="WorkingTitle">
+  <title>WorkingTitle</title>
+
+  <!--
+    应用图标。概念：**一页纸，末尾一根光标**——这个产品的核心动作就是「打字，文字从光标处长出来」，
+    所以最后一行的文字条短一截、后面跟一根琥珀色光标，读起来就是「正在写」。
+
+    构图要点：
+    - 圆角方块四周留 100px 透明边距，方块本体 824×824、圆角 184（≈22.4%，
+      这是 Big Sur 之后 macOS 图标的比例）。**不要画满整张画布**——那样在 Dock 里会比邻居大一圈。
+    - 纸页是唯一的大面积白色块，在蓝色底上对比最强，缩到 16px 也还认得出。
+    - 全文只有三种颜色：蓝底（渐变）、白纸、浅蓝文字条，**加一个琥珀色光标**。
+      那一点暖色是整张图标里唯一「在动」的东西，视线自然落上去。
+    - 文字条只有四条：再密的话在 16px 下会糊成一团灰。
+  -->
+  <defs>
+    <linearGradient id="wtBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f7ae5" />
+      <stop offset="1" stop-color="#12408f" />
+    </linearGradient>
+    <filter id="wtPageShadow" x="-30%" y="-20%" width="160%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#06203f" flood-opacity="0.34" />
+    </filter>
+  </defs>
+
+  <g transform="translate(100 100)">
+    <rect width="824" height="824" rx="184" fill="url(#wtBg)" />
+
+    <!-- 纸页。宽高约占蓝底的 48%×63% —— 图标里那个「字形」太小的话，
+         在 Dock 里会比邻居瘦一圈；macOS 图标的字形一般占到 55–65%。 -->
+    <rect x="212" y="152" width="400" height="520" rx="30" fill="#ffffff" filter="url(#wtPageShadow)" />
+
+    <!-- 已经写完的三行 -->
+    <g fill="#b9cde8">
+      <rect x="274" y="262" width="276" height="28" rx="14" />
+      <rect x="274" y="352" width="276" height="28" rx="14" />
+      <rect x="274" y="442" width="276" height="28" rx="14" />
+    </g>
+
+    <!-- 正在写的这一行：短一截，后面那根光标比文字条高，才像卡瑞特而不是一个小方块 -->
+    <rect x="274" y="532" width="158" height="28" rx="14" fill="#b9cde8" />
+    <rect x="452" y="526" width="22" height="40" rx="7" fill="#ffb900" />
+  </g>
+</svg>
+```
