@@ -20,6 +20,7 @@
     "dist:win": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
+    "@fluentui/react-icons": "^2.0.344",
     "iconv-lite": "0.7.3",
     "jschardet": "4.0.0",
     "react": "19.3.0",

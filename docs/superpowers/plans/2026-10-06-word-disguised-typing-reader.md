@@ -4178,8 +4178,8 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 46 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
-    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 51 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
+        `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
 
     （37 → 46 的变动来自 Task 16：删掉随「就地改名」一起作废的 `.wt-ribbon__title-input`，
     加上设置对话框那 10 个 `.wt-modal*`。对话框复用了既有的 `.wt-btn` 与 `.wt-ratio*`。）
@@ -4191,14 +4191,47 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
 
 ```css
+/**
+ * 设计 token + 外壳骨架。
+ *
+ * 【这一版是往「今天的 Word」靠，不是往「好看的通用应用」靠】这个应用的全部价值在于
+ * 看起来像大家熟悉的 Word。所以改了观感，但**没有改结构**：还是标题条 + 选项卡 + 功能区，
+ * 还是灰底上一张白纸。变的只是"哪一代的 Word"——从 2013 那版（发灰的蓝、发丝边、
+ * 中灰画布、极小字号）挪到 M365 / Fluent 2 那一版。
+ *
+ * 【色值是照着实机观感挑的，不是微软的设计 token】下面这些十六进制值是我按"看起来对"
+ * 定的，没有从 Fluent 的设计规范里抄。要再调就照观感调，别把它们当成权威值引用。
+ */
 :root {
-  --wt-blue: #2b579a;
-  --wt-blue-dark: #1e3f73;
-  --wt-blue-light: #e8eef7;
-  --wt-chrome: #f3f3f3;
-  --wt-chrome-border: #d4d4d4;
-  --wt-text: #333333;
-  --wt-statusbar: #2b579a;
+  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和 */
+  --wt-blue: #185abd;
+  --wt-blue-dark: #0f4a9e;
+  --wt-blue-light: #eaf1fb;
+  --wt-accent: #185abd;
+
+  /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
+  --wt-chrome: #f7f7f8;
+  --wt-chrome-border: #e3e3e5;
+  --wt-chrome-border-strong: #d2d2d6;
+  --wt-text: #242424;
+  --wt-text-muted: #616161;
+
+  --wt-statusbar: #185abd;
+
+  /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
+  --wt-canvas: #e9e9ec;
+  --wt-page-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 8px 28px rgba(0, 0, 0, 0.1);
+
+  --wt-radius: 4px;
+  --wt-radius-lg: 6px;
+
+  /* macOS 上 Segoe UI 不存在，会落到 PingFang SC（中文）与 -apple-system（拉丁）；
+     Windows 上则命中 Segoe UI Variable。两边都拿到本机的现代系统字体。 */
+  --wt-font:
+    -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
 }
 
 * {
@@ -4214,12 +4247,13 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--wt-font);
   font-size: 13px;
   color: var(--wt-text);
   background: var(--wt-chrome);
   overflow: hidden;
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 .wt-app {
@@ -4237,8 +4271,8 @@ body {
 .wt-canvas {
   flex: 1;
   overflow: auto;
-  background: #9e9e9e;
-  padding: 24px 0 48px;
+  background: var(--wt-canvas);
+  padding: 28px 0 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4248,7 +4282,7 @@ body {
 .wt-sidebar {
   width: 240px;
   flex: 0 0 240px;
-  background: #fafafa;
+  background: #fbfbfc;
   border-right: 1px solid var(--wt-chrome-border);
   display: flex;
   flex-direction: column;
@@ -4258,31 +4292,39 @@ body {
 .wt-sidebar__header {
   position: relative;
   /* 右侧留出收起按钮的位置，免得书名长的时候文字压到按钮底下 */
-  padding: 10px 28px 10px 12px;
+  padding: 12px 32px 12px 14px;
   border-bottom: 1px solid var(--wt-chrome-border);
   font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+.wt-sidebar__toggle,
+.wt-sidebar__rail {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--wt-text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--wt-radius);
 }
 
 .wt-sidebar__toggle {
   position: absolute;
-  top: 3px;
-  right: 5px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: #888888;
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
+  top: 8px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
 }
 
-.wt-sidebar__toggle:hover {
-  background: #e4e4e4;
-  color: #333333;
+.wt-sidebar__toggle:hover,
+.wt-sidebar__rail:hover {
+  background: #e8e8ea;
+  color: var(--wt-text);
 }
 
 /* 收起后整条侧栏只剩这条 12px 的细缝：颜色很淡、视觉上近乎不存在，但鼠标用户得有入口
@@ -4290,26 +4332,20 @@ body {
 .wt-sidebar__rail {
   flex: 0 0 12px;
   width: 12px;
-  padding: 0;
-  border: none;
   border-right: 1px solid var(--wt-chrome-border);
-  background: #fafafa;
-  color: #c4c4c4;
-  font-family: inherit;
-  font-size: 8px;
-  line-height: 1;
-  cursor: pointer;
+  background: #fbfbfc;
+  color: #c8c8cc;
 }
 
 .wt-sidebar__rail:hover {
-  background: #e4e4e4;
-  color: #333333;
+  color: var(--wt-text);
 }
 
 .wt-sidebar__sub {
   font-weight: 400;
-  color: #777;
+  color: var(--wt-text-muted);
   font-size: 11px;
+  margin-top: 2px;
 }
 
 .wt-sidebar__list {
@@ -4321,14 +4357,15 @@ body {
 .wt-statusbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 24px;
-  flex: 0 0 24px;
-  padding: 0 12px;
+  gap: 18px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 14px;
   background: var(--wt-statusbar);
   color: #ffffff;
   font-size: 11px;
   white-space: nowrap;
+  letter-spacing: 0.01em;
 }
 
 .wt-statusbar__spacer {
@@ -4338,37 +4375,49 @@ body {
 .wt-toast {
   position: fixed;
   left: 50%;
-  bottom: 56px;
+  bottom: 60px;
   transform: translateX(-50%);
-  background: rgba(32, 32, 32, 0.92);
+  background: rgba(28, 28, 30, 0.94);
   color: #ffffff;
-  padding: 9px 18px;
-  border-radius: 4px;
+  padding: 10px 18px;
+  border-radius: var(--wt-radius-lg);
   font-size: 12px;
   z-index: 999;
   pointer-events: none;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
+/* 侧栏那两个三角形按钮的图标尺寸：Fluent 图标默认 1em，这里显式定死，
+   免得受父级 font-size 影响（rail 的 font-size 与 toggle 不同）。 */
+.wt-sidebar__toggle-icon,
+.wt-sidebar__rail-icon {
+  width: 12px;
+  height: 12px;
 }
 ```
 
 - [ ] **Step 2: 写 `src/renderer/src/styles/ribbon.css`**
 
 ```css
+/* 标题条 + 选项卡 + 功能区 + 设置对话框。
+   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 92px，
+   切换按钮用「未按下线框 / 按下实心」的图标对（见 icons.tsx）。 */
+
 .wt-ribbon {
   flex: 0 0 auto;
   background: var(--wt-chrome);
-  border-bottom: 1px solid var(--wt-chrome-border);
 }
 
 .wt-ribbon__title {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 14px;
   background: var(--wt-blue);
   color: #ffffff;
   font-size: 12px;
+  letter-spacing: 0.01em;
 }
 
 .wt-ribbon__title-app {
@@ -4379,47 +4428,53 @@ body {
    一个能点开输入框的「文档1」正是伪装里最显眼的那类破绽。
    仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid。 */
 .wt-ribbon__title-doc {
-  opacity: 0.85;
+  opacity: 0.88;
 }
 
 .wt-tabs {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  padding: 0 8px;
-  height: 28px;
-  border-bottom: 1px solid #c9c9c9;
+  padding: 0 10px;
+  height: 34px;
+  /* 比 --wt-chrome 再深一档：选中页签是纯白、靠「与下方功能区连成一片」表达，
+     标签条不压深的话两者几乎同色，只剩蓝字能分辨了。 */
+  background: #eef0f4;
 }
 
 .wt-tab {
   border: none;
   background: transparent;
-  padding: 5px 14px;
-  font-size: 12px;
+  padding: 6px 14px 7px;
+  font-size: 12.5px;
   font-family: inherit;
-  color: #444444;
+  color: var(--wt-text-muted);
   cursor: pointer;
-  border-radius: 3px 3px 0 0;
+  border-radius: var(--wt-radius-lg) var(--wt-radius-lg) 0 0;
+  transition: background-color 90ms ease;
 }
 
 .wt-tab:hover {
-  background: #e4e4e4;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--wt-text);
 }
 
+/* 选中态靠「与下方白色功能区连成一片」表达，而不是加一圈描边——
+   这正是 Word 的做法，也是这一版和 2013 那版观感差别最大的地方。 */
 .wt-tab--active {
   background: #ffffff;
   color: var(--wt-blue);
   font-weight: 600;
-  box-shadow: 0 -1px 0 #c9c9c9, 1px 0 0 #c9c9c9, -1px 0 0 #c9c9c9;
 }
 
 .wt-toolbar {
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 6px 8px;
-  min-height: 78px;
+  padding: 6px 8px 4px;
+  min-height: 92px;
   background: #ffffff;
+  border-bottom: 1px solid var(--wt-chrome-border);
   overflow-x: auto;
 }
 
@@ -4427,8 +4482,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 10px;
-  border-right: 1px solid #e0e0e0;
+  padding: 0 12px;
+  border-right: 1px solid var(--wt-chrome-border);
 }
 
 .wt-group:last-child {
@@ -4438,85 +4493,135 @@ body {
 .wt-group__body {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   flex: 1;
 }
 
 .wt-group__label {
-  font-size: 10px;
-  color: #888888;
-  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--wt-text-muted);
+  margin-top: 5px;
   white-space: nowrap;
 }
 
 .wt-btn {
-  min-width: 26px;
-  height: 26px;
-  padding: 0 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--wt-radius);
   background: transparent;
-  color: #333333;
+  color: var(--wt-text);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   white-space: nowrap;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease;
 }
 
 .wt-btn:hover {
   background: var(--wt-blue-light);
-  border-color: #b8cce4;
+  border-color: #c4d9f5;
 }
 
 .wt-btn:active {
-  background: #d3e0f0;
+  background: #d3e3fa;
 }
 
+/* 按下态（加粗/斜体/对齐这类切换按钮）。图标本身也会从线框换成实心，见 icons.tsx。 */
 .wt-btn--active {
-  background: #cfe0f5;
-  border-color: #7ea6d8;
+  background: #d3e3fa;
+  border-color: #a8c7ef;
 }
 
-.wt-btn--icon {
-  font-size: 14px;
-  min-width: 26px;
+/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
+.wt-btn--large {
+  flex-direction: column;
+  gap: 4px;
+  width: 62px;
+  height: 64px;
+  padding: 8px 4px 6px;
+}
+
+.wt-btn--large .wt-btn__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.wt-btn__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.wt-btn__label {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 有图标的小按钮只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
+   标签用「视觉隐藏」而不是 display:none —— 后者会把它从无障碍树里也拿掉。 */
+.wt-btn--icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+/* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
+   真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。 */
+.wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+  border-color: var(--wt-chrome-border-strong);
+  background: #fbfbfc;
+  padding: 0 10px;
+}
+
+.wt-btn--icon-only .wt-btn__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .wt-sep {
   width: 1px;
   height: 22px;
-  background: #e0e0e0;
-  margin: 0 4px;
+  background: var(--wt-chrome-border);
+  margin: 0 5px;
 }
 
 .wt-ratio {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .wt-ratio__label {
   font-size: 11px;
-  color: #555555;
+  color: var(--wt-text-muted);
 }
 
 .wt-ratio__input {
   width: 58px;
   height: 26px;
   padding: 0 6px;
-  border: 1px solid #b8b8b8;
-  border-radius: 3px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
   font-family: inherit;
   font-size: 12px;
   text-align: center;
 }
 
 .wt-ratio__input:focus {
-  outline: 2px solid #7ea6d8;
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 2px rgba(24, 90, 189, 0.22);
 }
 
 /* ---- 设置对话框 ---- */
@@ -4530,18 +4635,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(1.5px);
 }
 
 .wt-modal__panel {
-  width: 420px;
+  width: 440px;
   max-width: calc(100% - 48px);
   background: #ffffff;
-  border: 1px solid #b8b8b8;
-  border-radius: 4px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    0 24px 56px rgba(0, 0, 0, 0.26);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
@@ -4549,12 +4657,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
-  padding: 0 6px 0 12px;
+  height: 38px;
+  padding: 0 8px 0 16px;
   background: var(--wt-blue);
   color: #ffffff;
-  font-size: 12px;
-  border-radius: 3px 3px 0 0;
+  font-size: 13px;
 }
 
 .wt-modal__title {
@@ -4562,15 +4669,18 @@ body {
 }
 
 .wt-modal__close {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--wt-radius);
   background: transparent;
   color: inherit;
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .wt-modal__close:hover {
@@ -4580,48 +4690,56 @@ body {
 .wt-modal__body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 14px;
+  gap: 16px;
+  padding: 20px 18px;
 }
 
 .wt-modal__row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .wt-modal__label {
-  flex: 0 0 64px;
+  flex: 0 0 68px;
   font-size: 12px;
-  color: #555555;
+  color: var(--wt-text-muted);
 }
 
 .wt-modal__text {
   flex: 1;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid #b8b8b8;
-  border-radius: 3px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
   font-family: inherit;
   font-size: 12px;
 }
 
 .wt-modal__text:focus {
-  outline: 2px solid #7ea6d8;
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 2px rgba(24, 90, 189, 0.22);
 }
 
 .wt-modal__footer {
   display: flex;
   justify-content: flex-end;
-  padding: 0 14px 14px;
+  gap: 8px;
+  padding: 0 18px 18px;
 }
 
 /* 面板里的按钮要有实边框：`.wt-btn` 在工具栏里靠 hover 才有轮廓，放到白底上会像纯文本 */
 .wt-modal__body .wt-btn,
 .wt-modal__footer .wt-btn {
-  border-color: #b8b8b8;
-  padding: 0 12px;
+  border-color: var(--wt-chrome-border-strong);
+  padding: 0 14px;
+  height: 30px;
+}
+
+.wt-modal__body .wt-btn:hover,
+.wt-modal__footer .wt-btn:hover {
+  border-color: #c4d9f5;
 }
 ```
 
@@ -4632,7 +4750,8 @@ body {
   width: 794px;
   min-height: 1080px;
   background: #ffffff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  /* 投影走 token：画布变浅之后，原来那圈重投影会显得很脏 */
+  box-shadow: var(--wt-page-shadow);
   padding: 72px 84px 96px;
   font-family: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
   font-size: 15px;
@@ -4669,23 +4788,28 @@ body {
 }
 
 .wt-page__empty {
-  color: #b0b0b0;
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  color: #a8a8ad;
+  font-family: var(--wt-font);
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.9;
 }
 
 .wt-page__fold {
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: var(--wt-font);
   font-size: 12px;
-  color: #777777;
-  background: #f5f5f5;
-  border: 1px dashed #cccccc;
-  border-radius: 3px;
-  padding: 5px 10px;
-  margin-bottom: 14px;
+  color: var(--wt-text-muted);
+  background: #f4f6f9;
+  border: 1px solid #dde3ec;
+  border-radius: var(--wt-radius);
+  padding: 6px 12px;
+  margin-bottom: 16px;
   cursor: pointer;
   user-select: none;
+  transition: background-color 90ms ease;
+}
+
+.wt-page__fold:hover {
+  background: #e9eef6;
 }
 
 /* 隐形输入框只占「阅读光标那一点」，【绝不铺满整张纸】。
@@ -4724,20 +4848,22 @@ body {
   padding: 0 12px;
   cursor: pointer;
   font-size: 12px;
-  border-bottom: 1px solid #f0f0f0;
+  color: var(--wt-text);
   white-space: nowrap;
   overflow: hidden;
+  transition: background-color 80ms ease;
 }
 
 .chapter-item:hover {
-  background: #eef3fa;
+  background: #edf2fa;
 }
 
+/* 选中用「左侧一条圆角竖条 + 浅底」，不再用整条边框——后者在浅色侧栏上显得很硬 */
 .chapter-item--active {
   background: var(--wt-blue-light);
-  border-left: 3px solid var(--wt-blue);
-  padding-left: 9px;
+  box-shadow: inset 3px 0 0 var(--wt-blue);
   font-weight: 600;
+  color: var(--wt-blue-dark);
 }
 
 .chapter-item__title {
@@ -5040,7 +5166,9 @@ export function Toast() {
 - [ ] **Step 3: 写 `src/renderer/src/components/Toolbar.tsx`**
 
 ```tsx
+import type { FluentIcon } from '@fluentui/react-icons'
 import { useToolbar } from '../state/ToolbarContext'
+import { IconSettings } from './icons'
 
 /**
  * 工具栏里能出现的三种东西。
@@ -5048,11 +5176,18 @@ import { useToolbar } from '../state/ToolbarContext'
  * 【`ratio` / `mode` / `import` / `clear-session` 四种 kind 已经不在这里了】它们渲染的是
  * 应用的真实功能，现在统一由 `SettingsDialog` 渲染（那四种控件连同各自的 testid 一起搬了
  * 过去）。工具栏只留一个 `settings` kind：一个打开对话框的按钮。
+ *
+ * 【`icon` 可选是有意的】功能区里不是每样东西都有合适的图标——Word 自己的「样式」库就是
+ * 一组文字预览（`AaBbCc` + 样式名），不是图标。没有 `icon` 的项退回去渲染 `label` 文字。
+ *
+ * 【`large` 对应 Word 功能区的两种尺寸】大按钮是「图标在上、标签在下」（新建/保存/导入这类），
+ * 小按钮是纯图标（加粗/对齐那一排）。真 Word 就是这么混着排的，全用小按钮会显得空、全用大的
+ * 又放不下。
  */
 export type ToolbarItem =
-  | { kind: 'toggle'; id: string; label: string; title: string }
-  | { kind: 'placeholder'; id: string; label: string; title: string }
-  | { kind: 'settings' }
+  | { kind: 'toggle'; id: string; label: string; title: string; icon?: FluentIcon; large?: boolean }
+  | { kind: 'placeholder'; id: string; label: string; title: string; icon?: FluentIcon; large?: boolean }
+  | { kind: 'settings'; large?: boolean }
 
 export interface ToolbarGroup {
   label: string
@@ -5079,31 +5214,39 @@ export function Toolbar({
                   <button
                     key="settings"
                     type="button"
-                    className="wt-btn"
+                    className={`wt-btn${item.large ? ' wt-btn--large' : ''}`}
                     data-testid="btn-settings"
                     title="设置 (⌘/Ctrl + ,)"
                     onClick={onOpenSettings}
                   >
-                    设置
+                    <IconSettings className="wt-btn__icon" />
+                    <span className="wt-btn__label">设置</span>
                   </button>
                 )
               }
 
               const active = Boolean(toggles[item.id])
+              const Icon = item.icon
+              // 有图标、又不是大按钮 → 只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
+              // 标签仍渲染在 DOM 里但被 CSS 藏起来，`aria-label` 保证读屏拿得到名字。
+              const iconOnly = Boolean(Icon) && !item.large
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`wt-btn ${active ? 'wt-btn--active' : ''}`}
+                  className={`wt-btn${item.large ? ' wt-btn--large' : ''}${iconOnly ? ' wt-btn--icon-only' : ''}${active ? ' wt-btn--active' : ''}`}
                   data-testid={`btn-${item.id}`}
                   title={item.title}
+                  aria-label={iconOnly ? item.title : undefined}
                   aria-pressed={item.kind === 'toggle' ? active : undefined}
                   onClick={() => {
                     if (item.kind === 'toggle') toggle(item.id)
                     else notify('演示占位功能，未实现')
                   }}
                 >
-                  {item.label}
+                  {/* filled 切换线框/实心，就是 Word 切换按钮的语义（见 icons.tsx 的说明） */}
+                  {Icon ? <Icon filled={active} className="wt-btn__icon" /> : null}
+                  <span className="wt-btn__label">{item.label}</span>
                 </button>
               )
             })}
@@ -5124,6 +5267,42 @@ export function Toolbar({
 import { useEffect, useState } from 'react'
 import { SettingsDialog } from './SettingsDialog'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
+import {
+  IconAlignCenter,
+  IconAlignJustify,
+  IconAlignLeft,
+  IconAlignRight,
+  IconBold,
+  IconBullets,
+  IconColumns,
+  IconComment,
+  IconExport,
+  IconFootnote,
+  IconFormatPainter,
+  IconGrid,
+  IconItalic,
+  IconLineSpacing,
+  IconMargins,
+  IconNew,
+  IconNumbering,
+  IconOrientation,
+  IconPageBreak,
+  IconPicture,
+  IconPrint,
+  IconReadingView,
+  IconRedo,
+  IconRuler,
+  IconSave,
+  IconSearch,
+  IconShape,
+  IconSpellCheck,
+  IconStrike,
+  IconTable,
+  IconToc,
+  IconUnderline,
+  IconUndo,
+  IconWordCount
+} from './icons'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
 export type RibbonTab = (typeof RIBBON_TABS)[number]
@@ -5131,26 +5310,29 @@ export type RibbonTab = (typeof RIBBON_TABS)[number]
 const FONT_GROUP: ToolbarGroup = {
   label: '字体',
   items: [
-    { kind: 'toggle', id: 'bold', label: 'B', title: '加粗' },
-    { kind: 'toggle', id: 'italic', label: 'I', title: '斜体' },
-    { kind: 'toggle', id: 'underline', label: 'U', title: '下划线' },
-    { kind: 'toggle', id: 'strike', label: 'S', title: '删除线' },
+    // 字体名与字号在真 Word 里是下拉框，这里是文字按钮——**刻意不给它们图标**：
+    // 有图标的非大按钮会把标签藏起来（见 Toolbar 的 `--icon-only`），而这两项的
+    // 可读文字本身就是它的样子。
     { kind: 'placeholder', id: 'font-family', label: '宋体', title: '字体' },
     { kind: 'placeholder', id: 'font-size', label: '五号', title: '字号' },
-    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷' }
+    { kind: 'toggle', id: 'bold', label: '加粗', title: '加粗', icon: IconBold },
+    { kind: 'toggle', id: 'italic', label: '斜体', title: '斜体', icon: IconItalic },
+    { kind: 'toggle', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
+    { kind: 'toggle', id: 'strike', label: '删除线', title: '删除线', icon: IconStrike },
+    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter, large: true }
   ]
 }
 
 const PARAGRAPH_GROUP: ToolbarGroup = {
   label: '段落',
   items: [
-    { kind: 'placeholder', id: 'bullets', label: '•≡', title: '项目符号' },
-    { kind: 'placeholder', id: 'numbering', label: '1≡', title: '编号' },
-    { kind: 'toggle', id: 'align-left', label: '左', title: '左对齐' },
-    { kind: 'toggle', id: 'align-center', label: '中', title: '居中' },
-    { kind: 'toggle', id: 'align-right', label: '右', title: '右对齐' },
-    { kind: 'toggle', id: 'align-justify', label: '两', title: '两端对齐' },
-    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距' }
+    { kind: 'placeholder', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
+    { kind: 'placeholder', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    { kind: 'toggle', id: 'align-left', label: '左对齐', title: '左对齐', icon: IconAlignLeft },
+    { kind: 'toggle', id: 'align-center', label: '居中', title: '居中', icon: IconAlignCenter },
+    { kind: 'toggle', id: 'align-right', label: '右对齐', title: '右对齐', icon: IconAlignRight },
+    { kind: 'toggle', id: 'align-justify', label: '两端对齐', title: '两端对齐', icon: IconAlignJustify },
+    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距', icon: IconLineSpacing }
   ]
 }
 
@@ -5158,21 +5340,32 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
  * 【原先这里挂着一个 `READING_GROUP`（比例 + 输入模式），摆在「开始」和「视图」两个选项卡下】
  * 那是全应用最容易被一眼看穿的地方：假 Word 的工具栏里放着「1 键显示 N 字」。整组连同
  * 「文件」选项卡里的「小说」组一起搬进了 `SettingsDialog`，工具栏只留一个「设置」按钮。
+ *
+ * 【`large` 的用法照抄真 Word 的取舍】文件/插入/布局这些页里的项基本都是大按钮（图标在上、
+ * 标签在下），因为它们数量少、辨识靠图标；「开始」页里的格式与对齐是一排小按钮，
+ * 因为只有并排才看得出对比。
  */
 const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   文件: [
     {
       label: '文件',
       items: [
-        { kind: 'placeholder', id: 'new', label: '新建', title: '新建' },
-        { kind: 'placeholder', id: 'save', label: '保存', title: '保存' },
-        { kind: 'placeholder', id: 'export-docx', label: '导出 docx', title: '导出为 docx' },
-        { kind: 'placeholder', id: 'print', label: '打印', title: '打印' }
+        { kind: 'placeholder', id: 'new', label: '新建', title: '新建', icon: IconNew, large: true },
+        { kind: 'placeholder', id: 'save', label: '保存', title: '保存', icon: IconSave, large: true },
+        {
+          kind: 'placeholder',
+          id: 'export-docx',
+          label: '导出 docx',
+          title: '导出为 docx',
+          icon: IconExport,
+          large: true
+        },
+        { kind: 'placeholder', id: 'print', label: '打印', title: '打印', icon: IconPrint, large: true }
       ]
     },
     // 真实功能的唯一入口。排在占位组【后面】——它是整个界面上唯一「有用」的按钮，
     // 摆在最左边反而显眼。
-    { label: '设置', items: [{ kind: 'settings' }] }
+    { label: '设置', items: [{ kind: 'settings', large: true }] }
   ],
   开始: [
     FONT_GROUP,
@@ -5187,9 +5380,9 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '编辑',
       items: [
-        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换' },
-        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销' },
-        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做' }
+        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换', icon: IconSearch, large: true },
+        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销', icon: IconUndo },
+        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做', icon: IconRedo }
       ]
     }
   ],
@@ -5197,10 +5390,17 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '插入',
       items: [
-        { kind: 'placeholder', id: 'table', label: '表格', title: '表格' },
-        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片' },
-        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状' },
-        { kind: 'placeholder', id: 'pagebreak', label: '分页', title: '分页符' }
+        { kind: 'placeholder', id: 'table', label: '表格', title: '表格', icon: IconTable, large: true },
+        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片', icon: IconPicture, large: true },
+        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状', icon: IconShape, large: true },
+        {
+          kind: 'placeholder',
+          id: 'pagebreak',
+          label: '分页',
+          title: '分页符',
+          icon: IconPageBreak,
+          large: true
+        }
       ]
     }
   ],
@@ -5208,9 +5408,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '页面设置',
       items: [
-        { kind: 'placeholder', id: 'margin', label: '页边距', title: '页边距' },
-        { kind: 'placeholder', id: 'orientation', label: '纸张方向', title: '纸张方向' },
-        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏' }
+        { kind: 'placeholder', id: 'margin', label: '页边距', title: '页边距', icon: IconMargins, large: true },
+        {
+          kind: 'placeholder',
+          id: 'orientation',
+          label: '纸张方向',
+          title: '纸张方向',
+          icon: IconOrientation,
+          large: true
+        },
+        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏', icon: IconColumns, large: true }
       ]
     }
   ],
@@ -5218,8 +5425,8 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '引用',
       items: [
-        { kind: 'placeholder', id: 'toc', label: '目录', title: '目录' },
-        { kind: 'placeholder', id: 'footnote', label: '脚注', title: '插入脚注' }
+        { kind: 'placeholder', id: 'toc', label: '目录', title: '目录', icon: IconToc, large: true },
+        { kind: 'placeholder', id: 'footnote', label: '脚注', title: '插入脚注', icon: IconFootnote, large: true }
       ]
     }
   ],
@@ -5227,9 +5434,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '审阅',
       items: [
-        { kind: 'placeholder', id: 'comment', label: '新建批注', title: '新建批注' },
-        { kind: 'placeholder', id: 'spellcheck', label: '拼写检查', title: '拼写检查' },
-        { kind: 'placeholder', id: 'wordcount', label: '字数统计', title: '字数统计' }
+        { kind: 'placeholder', id: 'comment', label: '新建批注', title: '新建批注', icon: IconComment, large: true },
+        {
+          kind: 'placeholder',
+          id: 'spellcheck',
+          label: '拼写检查',
+          title: '拼写检查',
+          icon: IconSpellCheck,
+          large: true
+        },
+        { kind: 'placeholder', id: 'wordcount', label: '字数统计', title: '字数统计', icon: IconWordCount, large: true }
       ]
     }
   ],
@@ -5237,9 +5451,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '视图',
       items: [
-        { kind: 'placeholder', id: 'read-mode', label: '阅读视图', title: '阅读视图' },
-        { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺' },
-        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线' }
+        {
+          kind: 'placeholder',
+          id: 'read-mode',
+          label: '阅读视图',
+          title: '阅读视图',
+          icon: IconReadingView,
+          large: true
+        },
+        { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺', icon: IconRuler, large: true },
+        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线', icon: IconGrid, large: true }
       ]
     }
   ]
@@ -5498,6 +5719,7 @@ git commit -F /tmp/task8-msg.txt   # 切勿用内联 -m：ASCII 引号会静默�
 ```tsx
 import { useEffect, useRef, useState } from 'react'
 import type { Novel } from '../../../core/types'
+import { IconCollapse, IconExpand } from './icons'
 
 export const ROW_HEIGHT = 32
 const OVERSCAN = 6
@@ -5592,7 +5814,7 @@ export function ChapterList({
         title="显示章节栏（⌘/Ctrl + Shift + H）"
         onClick={() => setCollapsed(false)}
       >
-        ▶
+        <IconExpand className="wt-sidebar__rail-icon" />
       </button>
     )
   }
@@ -5609,7 +5831,7 @@ export function ChapterList({
           title="隐藏章节栏（⌘/Ctrl + Shift + H）"
           onClick={() => setCollapsed(true)}
         >
-          ◀
+          <IconCollapse className="wt-sidebar__toggle-icon" />
         </button>
         {novel ? novel.title : '未导入小说'}
         <div className="wt-sidebar__sub">
@@ -8507,3 +8729,177 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 - 单一 tsconfig 拆两份（web / node）而非 project references —— 避免 `composite` + `tsc -b` 的配置坑。
 - 单一 vitest jsdom 环境而非 projects —— core 测试在 jsdom 下照常运行。
 - `CH` 常量必须放在不 import electron 的 `channels.ts`，否则 sandboxed preload 会崩。Task 6 Step 7 专门处理了这一点。
+
+
+---
+
+## Task 17: 界面现代化（Fluent 观感 + 微软官方图标）
+
+**背景**：用户反馈「太丑了、像几十年前的 UI」。方向定为**靠向今天真实的 Word**（M365 / Fluent 2 观感），
+而不是通用的现代 SaaS 风——这个应用的前提就是看起来像 Word，换成通用风格等于自毁伪装。
+
+**做法**：
+- 新增依赖 `@fluentui/react-icons@2.0.344`（MIT），就是 Office / Microsoft 365 在用的那一套。
+  图标名**必须带 `Regular` / `Filled` 后缀**，且用 `bundleIcon(Filled, Regular)` 包一层——
+  这正是 Word 切换按钮的语义：未按下线框、按下实心。
+
+**本文件**（`src/renderer/src/components/icons.tsx`）：
+
+```tsx
+import { bundleIcon } from '@fluentui/react-icons'
+import {
+  TextBoldFilled,
+  TextBoldRegular,
+  TextItalicFilled,
+  TextItalicRegular,
+  TextUnderlineFilled,
+  TextUnderlineRegular,
+  TextStrikethroughFilled,
+  TextStrikethroughRegular,
+  TextFontFilled,
+  TextFontRegular,
+  TextFontSizeFilled,
+  TextFontSizeRegular,
+  ClipboardBrushFilled,
+  ClipboardBrushRegular,
+  TextBulletListFilled,
+  TextBulletListRegular,
+  TextNumberListLtrFilled,
+  TextNumberListLtrRegular,
+  TextAlignLeftFilled,
+  TextAlignLeftRegular,
+  TextAlignCenterFilled,
+  TextAlignCenterRegular,
+  TextAlignRightFilled,
+  TextAlignRightRegular,
+  TextAlignJustifyFilled,
+  TextAlignJustifyRegular,
+  TextLineSpacingFilled,
+  TextLineSpacingRegular,
+  TextParagraphFilled,
+  TextParagraphRegular,
+  SearchFilled,
+  SearchRegular,
+  ArrowUndoFilled,
+  ArrowUndoRegular,
+  ArrowRedoFilled,
+  ArrowRedoRegular,
+  DocumentAddFilled,
+  DocumentAddRegular,
+  SaveFilled,
+  SaveRegular,
+  DocumentArrowDownFilled,
+  DocumentArrowDownRegular,
+  PrintFilled,
+  PrintRegular,
+  FolderOpenFilled,
+  FolderOpenRegular,
+  SettingsFilled,
+  SettingsRegular,
+  DeleteFilled,
+  DeleteRegular,
+  TableFilled,
+  TableRegular,
+  ImageFilled,
+  ImageRegular,
+  ShapesFilled,
+  ShapesRegular,
+  DocumentPageBreakFilled,
+  DocumentPageBreakRegular,
+  DocumentMarginsFilled,
+  DocumentMarginsRegular,
+  ResizeLargeFilled,
+  ResizeLargeRegular,
+  LayoutColumnTwoFilled,
+  LayoutColumnTwoRegular,
+  BookOpenFilled,
+  BookOpenRegular,
+  CommentFilled,
+  CommentRegular,
+  TextGrammarCheckmarkFilled,
+  TextGrammarCheckmarkRegular,
+  TextFootnoteFilled,
+  TextFootnoteRegular,
+  TextWordCountFilled,
+  TextWordCountRegular,
+  ReadingModeMobileFilled,
+  ReadingModeMobileRegular,
+  RulerFilled,
+  RulerRegular,
+  GridFilled,
+  GridRegular,
+  ChevronLeftFilled,
+  ChevronLeftRegular,
+  ChevronRightFilled,
+  ChevronRightRegular,
+  DismissFilled,
+  DismissRegular
+} from '@fluentui/react-icons'
+
+/**
+ * 图标集用的是**微软官方那一套**（`@fluentui/react-icons`，MIT）——就是 Office / Microsoft 365
+ * 自己用的，所以「像 Word」和「现代」这两件事在这里不冲突。
+ *
+ * 【为什么每个都用 `bundleIcon(Filled, Regular)` 包一层】
+ * 这正是 Word 切换按钮的语义：**未按下画线框版，按下画实心版**（加粗、斜体、对齐那一排都是）。
+ * 直接用单个变体的话，按下去只能靠换背景色表达，观感就差一截。
+ * `bundleIcon` 返回的组件吃一个 `filled?: boolean`，其余 SVG 属性照传。
+ *
+ * 【图标名是怎么定的】不要凭记忆写。这个包导出几千个名字、且**必须带 `Regular` / `Filled` 后缀**
+ * （`TextBold` 不存在，只有 `TextBoldRegular` / `TextBoldFilled`）。下面每个名字都是从包里
+ * 实际枚举出来核对过的；其中 `TextLineSpacing`、`TextGrammarCheckmark`、`DocumentMargins`（复数）
+ * 这几个是查出来的而非想当然。要换图标请同样先枚举。
+ */
+export const IconBold = bundleIcon(TextBoldFilled, TextBoldRegular)
+export const IconItalic = bundleIcon(TextItalicFilled, TextItalicRegular)
+export const IconUnderline = bundleIcon(TextUnderlineFilled, TextUnderlineRegular)
+export const IconStrike = bundleIcon(TextStrikethroughFilled, TextStrikethroughRegular)
+export const IconFont = bundleIcon(TextFontFilled, TextFontRegular)
+export const IconFontSize = bundleIcon(TextFontSizeFilled, TextFontSizeRegular)
+export const IconFormatPainter = bundleIcon(ClipboardBrushFilled, ClipboardBrushRegular)
+export const IconBullets = bundleIcon(TextBulletListFilled, TextBulletListRegular)
+export const IconNumbering = bundleIcon(TextNumberListLtrFilled, TextNumberListLtrRegular)
+export const IconAlignLeft = bundleIcon(TextAlignLeftFilled, TextAlignLeftRegular)
+export const IconAlignCenter = bundleIcon(TextAlignCenterFilled, TextAlignCenterRegular)
+export const IconAlignRight = bundleIcon(TextAlignRightFilled, TextAlignRightRegular)
+export const IconAlignJustify = bundleIcon(TextAlignJustifyFilled, TextAlignJustifyRegular)
+export const IconLineSpacing = bundleIcon(TextLineSpacingFilled, TextLineSpacingRegular)
+export const IconParagraph = bundleIcon(TextParagraphFilled, TextParagraphRegular)
+export const IconSearch = bundleIcon(SearchFilled, SearchRegular)
+export const IconUndo = bundleIcon(ArrowUndoFilled, ArrowUndoRegular)
+export const IconRedo = bundleIcon(ArrowRedoFilled, ArrowRedoRegular)
+export const IconNew = bundleIcon(DocumentAddFilled, DocumentAddRegular)
+export const IconSave = bundleIcon(SaveFilled, SaveRegular)
+export const IconExport = bundleIcon(DocumentArrowDownFilled, DocumentArrowDownRegular)
+export const IconPrint = bundleIcon(PrintFilled, PrintRegular)
+export const IconImport = bundleIcon(FolderOpenFilled, FolderOpenRegular)
+export const IconSettings = bundleIcon(SettingsFilled, SettingsRegular)
+export const IconClear = bundleIcon(DeleteFilled, DeleteRegular)
+export const IconTable = bundleIcon(TableFilled, TableRegular)
+export const IconPicture = bundleIcon(ImageFilled, ImageRegular)
+export const IconShape = bundleIcon(ShapesFilled, ShapesRegular)
+export const IconPageBreak = bundleIcon(DocumentPageBreakFilled, DocumentPageBreakRegular)
+export const IconMargins = bundleIcon(DocumentMarginsFilled, DocumentMarginsRegular)
+export const IconOrientation = bundleIcon(ResizeLargeFilled, ResizeLargeRegular)
+export const IconColumns = bundleIcon(LayoutColumnTwoFilled, LayoutColumnTwoRegular)
+export const IconToc = bundleIcon(BookOpenFilled, BookOpenRegular)
+export const IconComment = bundleIcon(CommentFilled, CommentRegular)
+export const IconSpellCheck = bundleIcon(TextGrammarCheckmarkFilled, TextGrammarCheckmarkRegular)
+export const IconFootnote = bundleIcon(TextFootnoteFilled, TextFootnoteRegular)
+export const IconWordCount = bundleIcon(TextWordCountFilled, TextWordCountRegular)
+export const IconReadingView = bundleIcon(ReadingModeMobileFilled, ReadingModeMobileRegular)
+export const IconRuler = bundleIcon(RulerFilled, RulerRegular)
+export const IconGrid = bundleIcon(GridFilled, GridRegular)
+export const IconCollapse = bundleIcon(ChevronLeftFilled, ChevronLeftRegular)
+export const IconExpand = bundleIcon(ChevronRightFilled, ChevronRightRegular)
+export const IconClose = bundleIcon(DismissFilled, DismissRegular)
+```
+
+**同批改动的文件**（围栏均已就地同步）：`word.css`（设计 token 全换：Word 蓝 `#2b579a` → `#185abd`、
+画布 `#9e9e9e` → `#e9e9ec`、新增圆角与投影 token）、`ribbon.css`（标题条 32px / 标签条压深 /
+功能区 92px / 大按钮与纯图标按钮两种尺寸 / 设置对话框圆角与投影）、`page.css`（纸张投影走 token、
+章节项选中改为左侧竖条）、`Toolbar.tsx`（`icon` 与 `large` 两个新字段、`--icon-only`）、
+`Ribbon.tsx`（数据表补图标）、`ChapterList.tsx`（两个三角换成 Fluent 箭头）。
+
+**CSS 类名契约同步为 51 个**（新增 `.wt-btn__icon` `.wt-btn__label` `.wt-btn--icon-only` `.wt-btn--large`
+`.wt-sidebar__rail-icon` `.wt-sidebar__toggle-icon` 与一组 `.wt-modal__*`；删掉已无人使用的 `.wt-btn--icon`）。

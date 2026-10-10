@@ -2,7 +2,8 @@
   width: 794px;
   min-height: 1080px;
   background: #ffffff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  /* 投影走 token：画布变浅之后，原来那圈重投影会显得很脏 */
+  box-shadow: var(--wt-page-shadow);
   padding: 72px 84px 96px;
   font-family: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
   font-size: 15px;
@@ -39,23 +40,28 @@
 }
 
 .wt-page__empty {
-  color: #b0b0b0;
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  color: #a8a8ad;
+  font-family: var(--wt-font);
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.9;
 }
 
 .wt-page__fold {
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: var(--wt-font);
   font-size: 12px;
-  color: #777777;
-  background: #f5f5f5;
-  border: 1px dashed #cccccc;
-  border-radius: 3px;
-  padding: 5px 10px;
-  margin-bottom: 14px;
+  color: var(--wt-text-muted);
+  background: #f4f6f9;
+  border: 1px solid #dde3ec;
+  border-radius: var(--wt-radius);
+  padding: 6px 12px;
+  margin-bottom: 16px;
   cursor: pointer;
   user-select: none;
+  transition: background-color 90ms ease;
+}
+
+.wt-page__fold:hover {
+  background: #e9eef6;
 }
 
 /* 隐形输入框只占「阅读光标那一点」，【绝不铺满整张纸】。
@@ -94,20 +100,22 @@
   padding: 0 12px;
   cursor: pointer;
   font-size: 12px;
-  border-bottom: 1px solid #f0f0f0;
+  color: var(--wt-text);
   white-space: nowrap;
   overflow: hidden;
+  transition: background-color 80ms ease;
 }
 
 .chapter-item:hover {
-  background: #eef3fa;
+  background: #edf2fa;
 }
 
+/* 选中用「左侧一条圆角竖条 + 浅底」，不再用整条边框——后者在浅色侧栏上显得很硬 */
 .chapter-item--active {
   background: var(--wt-blue-light);
-  border-left: 3px solid var(--wt-blue);
-  padding-left: 9px;
+  box-shadow: inset 3px 0 0 var(--wt-blue);
   font-weight: 600;
+  color: var(--wt-blue-dark);
 }
 
 .chapter-item__title {

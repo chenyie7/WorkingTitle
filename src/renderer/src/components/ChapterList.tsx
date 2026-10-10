@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Novel } from '../../../core/types'
+import { IconCollapse, IconExpand } from './icons'
 
 export const ROW_HEIGHT = 32
 const OVERSCAN = 6
@@ -94,7 +95,7 @@ export function ChapterList({
         title="显示章节栏（⌘/Ctrl + Shift + H）"
         onClick={() => setCollapsed(false)}
       >
-        ▶
+        <IconExpand className="wt-sidebar__rail-icon" />
       </button>
     )
   }
@@ -111,7 +112,7 @@ export function ChapterList({
           title="隐藏章节栏（⌘/Ctrl + Shift + H）"
           onClick={() => setCollapsed(true)}
         >
-          ◀
+          <IconCollapse className="wt-sidebar__toggle-icon" />
         </button>
         {novel ? novel.title : '未导入小说'}
         <div className="wt-sidebar__sub">

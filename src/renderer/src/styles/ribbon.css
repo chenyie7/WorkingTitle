@@ -1,18 +1,22 @@
+/* 标题条 + 选项卡 + 功能区 + 设置对话框。
+   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 92px，
+   切换按钮用「未按下线框 / 按下实心」的图标对（见 icons.tsx）。 */
+
 .wt-ribbon {
   flex: 0 0 auto;
   background: var(--wt-chrome);
-  border-bottom: 1px solid var(--wt-chrome-border);
 }
 
 .wt-ribbon__title {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 14px;
   background: var(--wt-blue);
   color: #ffffff;
   font-size: 12px;
+  letter-spacing: 0.01em;
 }
 
 .wt-ribbon__title-app {
@@ -23,47 +27,53 @@
    一个能点开输入框的「文档1」正是伪装里最显眼的那类破绽。
    仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid。 */
 .wt-ribbon__title-doc {
-  opacity: 0.85;
+  opacity: 0.88;
 }
 
 .wt-tabs {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  padding: 0 8px;
-  height: 28px;
-  border-bottom: 1px solid #c9c9c9;
+  padding: 0 10px;
+  height: 34px;
+  /* 比 --wt-chrome 再深一档：选中页签是纯白、靠「与下方功能区连成一片」表达，
+     标签条不压深的话两者几乎同色，只剩蓝字能分辨了。 */
+  background: #eef0f4;
 }
 
 .wt-tab {
   border: none;
   background: transparent;
-  padding: 5px 14px;
-  font-size: 12px;
+  padding: 6px 14px 7px;
+  font-size: 12.5px;
   font-family: inherit;
-  color: #444444;
+  color: var(--wt-text-muted);
   cursor: pointer;
-  border-radius: 3px 3px 0 0;
+  border-radius: var(--wt-radius-lg) var(--wt-radius-lg) 0 0;
+  transition: background-color 90ms ease;
 }
 
 .wt-tab:hover {
-  background: #e4e4e4;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--wt-text);
 }
 
+/* 选中态靠「与下方白色功能区连成一片」表达，而不是加一圈描边——
+   这正是 Word 的做法，也是这一版和 2013 那版观感差别最大的地方。 */
 .wt-tab--active {
   background: #ffffff;
   color: var(--wt-blue);
   font-weight: 600;
-  box-shadow: 0 -1px 0 #c9c9c9, 1px 0 0 #c9c9c9, -1px 0 0 #c9c9c9;
 }
 
 .wt-toolbar {
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 6px 8px;
-  min-height: 78px;
+  padding: 6px 8px 4px;
+  min-height: 92px;
   background: #ffffff;
+  border-bottom: 1px solid var(--wt-chrome-border);
   overflow-x: auto;
 }
 
@@ -71,8 +81,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 10px;
-  border-right: 1px solid #e0e0e0;
+  padding: 0 12px;
+  border-right: 1px solid var(--wt-chrome-border);
 }
 
 .wt-group:last-child {
@@ -82,85 +92,135 @@
 .wt-group__body {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   flex: 1;
 }
 
 .wt-group__label {
-  font-size: 10px;
-  color: #888888;
-  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--wt-text-muted);
+  margin-top: 5px;
   white-space: nowrap;
 }
 
 .wt-btn {
-  min-width: 26px;
-  height: 26px;
-  padding: 0 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--wt-radius);
   background: transparent;
-  color: #333333;
+  color: var(--wt-text);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   white-space: nowrap;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease;
 }
 
 .wt-btn:hover {
   background: var(--wt-blue-light);
-  border-color: #b8cce4;
+  border-color: #c4d9f5;
 }
 
 .wt-btn:active {
-  background: #d3e0f0;
+  background: #d3e3fa;
 }
 
+/* 按下态（加粗/斜体/对齐这类切换按钮）。图标本身也会从线框换成实心，见 icons.tsx。 */
 .wt-btn--active {
-  background: #cfe0f5;
-  border-color: #7ea6d8;
+  background: #d3e3fa;
+  border-color: #a8c7ef;
 }
 
-.wt-btn--icon {
-  font-size: 14px;
-  min-width: 26px;
+/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
+.wt-btn--large {
+  flex-direction: column;
+  gap: 4px;
+  width: 62px;
+  height: 64px;
+  padding: 8px 4px 6px;
+}
+
+.wt-btn--large .wt-btn__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.wt-btn__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.wt-btn__label {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 有图标的小按钮只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
+   标签用「视觉隐藏」而不是 display:none —— 后者会把它从无障碍树里也拿掉。 */
+.wt-btn--icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+/* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
+   真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。 */
+.wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+  border-color: var(--wt-chrome-border-strong);
+  background: #fbfbfc;
+  padding: 0 10px;
+}
+
+.wt-btn--icon-only .wt-btn__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .wt-sep {
   width: 1px;
   height: 22px;
-  background: #e0e0e0;
-  margin: 0 4px;
+  background: var(--wt-chrome-border);
+  margin: 0 5px;
 }
 
 .wt-ratio {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .wt-ratio__label {
   font-size: 11px;
-  color: #555555;
+  color: var(--wt-text-muted);
 }
 
 .wt-ratio__input {
   width: 58px;
   height: 26px;
   padding: 0 6px;
-  border: 1px solid #b8b8b8;
-  border-radius: 3px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
   font-family: inherit;
   font-size: 12px;
   text-align: center;
 }
 
 .wt-ratio__input:focus {
-  outline: 2px solid #7ea6d8;
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 2px rgba(24, 90, 189, 0.22);
 }
 
 /* ---- 设置对话框 ---- */
@@ -174,18 +234,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(1.5px);
 }
 
 .wt-modal__panel {
-  width: 420px;
+  width: 440px;
   max-width: calc(100% - 48px);
   background: #ffffff;
-  border: 1px solid #b8b8b8;
-  border-radius: 4px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    0 24px 56px rgba(0, 0, 0, 0.26);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
@@ -193,12 +256,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
-  padding: 0 6px 0 12px;
+  height: 38px;
+  padding: 0 8px 0 16px;
   background: var(--wt-blue);
   color: #ffffff;
-  font-size: 12px;
-  border-radius: 3px 3px 0 0;
+  font-size: 13px;
 }
 
 .wt-modal__title {
@@ -206,15 +268,18 @@
 }
 
 .wt-modal__close {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--wt-radius);
   background: transparent;
   color: inherit;
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .wt-modal__close:hover {
@@ -224,46 +289,54 @@
 .wt-modal__body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 14px;
+  gap: 16px;
+  padding: 20px 18px;
 }
 
 .wt-modal__row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .wt-modal__label {
-  flex: 0 0 64px;
+  flex: 0 0 68px;
   font-size: 12px;
-  color: #555555;
+  color: var(--wt-text-muted);
 }
 
 .wt-modal__text {
   flex: 1;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid #b8b8b8;
-  border-radius: 3px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
   font-family: inherit;
   font-size: 12px;
 }
 
 .wt-modal__text:focus {
-  outline: 2px solid #7ea6d8;
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 2px rgba(24, 90, 189, 0.22);
 }
 
 .wt-modal__footer {
   display: flex;
   justify-content: flex-end;
-  padding: 0 14px 14px;
+  gap: 8px;
+  padding: 0 18px 18px;
 }
 
 /* 面板里的按钮要有实边框：`.wt-btn` 在工具栏里靠 hover 才有轮廓，放到白底上会像纯文本 */
 .wt-modal__body .wt-btn,
 .wt-modal__footer .wt-btn {
-  border-color: #b8b8b8;
-  padding: 0 12px;
+  border-color: var(--wt-chrome-border-strong);
+  padding: 0 14px;
+  height: 30px;
+}
+
+.wt-modal__body .wt-btn:hover,
+.wt-modal__footer .wt-btn:hover {
+  border-color: #c4d9f5;
 }
