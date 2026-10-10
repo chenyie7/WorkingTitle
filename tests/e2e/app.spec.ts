@@ -30,6 +30,16 @@ test.afterEach(async () => {
   rmSync(profileDir, { recursive: true, force: true })
 })
 
+/**
+ * 「已经抽了多少字」的观测点。
+ *
+ * 【为什么不用状态栏】状态栏那条「已显示 N / 全书 M 字」已经删掉了——真 Word 只报全文字数、
+ * 从不报「已显示多少」，那个词组本身就是伪装破绽。改读**正文长度**：那才是用户真正看到的，
+ * 也是「抽了多少字」唯一的真相来源。`expect.poll` 负责重试（内容上屏不是同步的）。
+ */
+const revealed = async (): Promise<number> =>
+  (await win.locator('[data-testid="page-text"]').textContent())?.length ?? 0
+
 const focusEditor = async (): Promise<void> => {
   // 阅读区被一层透明 textarea（.wt-input）完全覆盖，点 .wt-page 会被它拦截。
   // 直接点这个 textarea —— opacity:0 不影响 Playwright 的可交互判定。
@@ -39,13 +49,13 @@ const focusEditor = async (): Promise<void> => {
 test('启动即导入命令行传入的小说，并列出章节', async () => {
   await expect(win.locator('[data-testid="chapter-item-0"]')).toBeVisible()
   await expect(win.locator('[data-testid="chapter-item-2"]')).toBeVisible()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 })
 
 test('打字不显示原字符，而是按比例抽出小说文字', async () => {
   await focusEditor()
   await win.keyboard.type('aaaaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 50')
+  await expect.poll(revealed).toBe(50)
 
   const text = await win.locator('[data-testid="page-text"]').innerText()
   expect(text).not.toContain('a')
@@ -55,14 +65,14 @@ test('打字不显示原字符，而是按比例抽出小说文字', async () =>
 test('退格只回吐显示，小说内容不受影响', async () => {
   await focusEditor()
   await win.keyboard.type('aaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 30')
+  await expect.poll(revealed).toBe(30)
 
   await win.keyboard.press('Backspace')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 20')
+  await expect.poll(revealed).toBe(20)
 
   await win.keyboard.press('Backspace')
   await win.keyboard.press('Backspace')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   // 再敲一次，仍然从同一位置重新抽出同样的文字
   await win.keyboard.type('a')
@@ -82,7 +92,7 @@ test('改比例后同样的击键抽出更多字', async () => {
 
   await focusEditor()
   await win.keyboard.type('aa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 6')
+  await expect.poll(revealed).toBe(6)
 })
 
 /**
@@ -105,14 +115,14 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
 
   // 在文档名输入框里敲的字母进输入框，不许抽走小说
   await win.keyboard.type('aaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
   // 此后键盘没有焦点宿主，更不该被抢回阅读区
   await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
   await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
   await win.keyboard.type('bbb')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   await win.keyboard.press('Escape')
   await expect(win.locator('[data-testid="settings"]')).toBeHidden()
@@ -124,18 +134,19 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
   await win.locator('[data-testid="chapter-item-1"]').click()
-  await expect(win.locator('[data-testid="status-chapter"]')).toContainText('第 2 章')
+  // 状态栏现在写的是页码形状的 `2 / 3`（真 Word 左下角就是页码），不再是「第 2 章 / 共 3 章」
+  await expect(win.locator('[data-testid="status-chapter"]')).toHaveText('2 / 3')
 
   await focusEditor()
   await win.keyboard.type('a')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 10')
+  await expect.poll(revealed).toBe(10)
   const afterTyping = await win.locator('[data-testid="page-text"]').innerText()
 
   // 离开再回来，进度应被回填
   await win.locator('[data-testid="chapter-item-0"]').click()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
   await win.locator('[data-testid="chapter-item-1"]').click()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 10')
+  await expect.poll(revealed).toBe(10)
   expect(await win.locator('[data-testid="page-text"]').innerText()).toBe(afterTyping)
 })
 
@@ -148,7 +159,7 @@ test('占位按钮点击有可见反馈', async () => {
 test('重启后恢复到上次阅读位置，无需重新输入', async () => {
   await focusEditor()
   await win.keyboard.type('aaaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 40')
+  await expect.poll(revealed).toBe(40)
 
   // 等防抖保存落盘
   await win.waitForTimeout(1200)
@@ -162,5 +173,5 @@ test('重启后恢复到上次阅读位置，无需重新输入', async () => {
   win = await app.firstWindow()
   await win.waitForSelector('[data-testid="app-root"]')
 
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 40')
+  await expect.poll(revealed).toBe(40)
 })

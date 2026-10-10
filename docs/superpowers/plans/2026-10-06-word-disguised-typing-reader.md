@@ -4262,8 +4262,8 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 56 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
-                `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__check` `.wt-modal__close` `.wt-modal__close-icon` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__label-icon` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-modal__title-icon` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-seg` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 57 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
+                    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__check` `.wt-modal__close` `.wt-modal__close-icon` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__label-icon` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-modal__title-icon` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-seg` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__dim` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
 
     （37 → 46 的变动来自 Task 16：删掉随「就地改名」一起作废的 `.wt-ribbon__title-input`，
     加上设置对话框那 10 个 `.wt-modal*`。对话框复用了既有的 `.wt-btn` 与 `.wt-ratio*`。）
@@ -4541,6 +4541,12 @@ body {
 [data-theme='dark'] .wt-sidebar__rail {
   background: #1c1c20;
   color: #55555e;
+}
+
+/* 状态栏里刻意压低一档的信息（目前只有那个章节位置）。
+   它得在，但不该抢眼——见 StatusBar.tsx 顶部那段说明。 */
+.wt-statusbar__dim {
+  opacity: 0.66;
 }
 ```
 
@@ -6581,51 +6587,42 @@ export function Page({
 ```tsx
 import type { InputMode, Novel } from '../../../core/types'
 
-export function formatElapsed(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0
-  const total = Math.floor(ms / 1000)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':')
-}
-
 export interface StatusBarProps {
   novel: Novel | null
   revealedChars: number
   activeChapter: number
   ratio: number
   mode: InputMode
-  startedAt: number | null
-  now: number
 }
 
-export function StatusBar({
-  novel,
-  revealedChars,
-  activeChapter,
-  ratio,
-  mode,
-  startedAt,
-  now
-}: StatusBarProps) {
+/**
+ * 底部状态栏。
+ *
+ * 【刻意【不】显示的三样东西，以及为什么】它们曾经都在这里，都是伪装上的破绽：
+ *
+ * 1. **「已显示 N / 全书 M 字」**——真 Word 的状态栏只报**全文字数**，从不报「已显示多少」。
+ *    「已显示」这个词组本身就说明了有人在按进度往外吐字。
+ * 2. **「用时 HH:MM:SS」**——真 Word 没有阅读计时器。它同时是 App 里那个每秒一次
+ *    `setInterval` 的唯一用途，去掉之后那一层重渲染也一并没了。
+ * 3. **「第 N 章 / 共 M 章」**——改写成 `N / M`（见下）。
+ *
+ * 【章节位置为什么写成 `2 / 1382`】真 Word 状态栏左下角就是页码，形如「第 1 页，共 3 页」
+ * 或简写成 `1 / 3`。写成 `2 / 1382` 反而**比中文全称更像 Word**，同时把「章」这个字
+ * （小说阅读器最直接的标志）去掉了。配色再压低一档，不让它抢眼。
+ */
+export function StatusBar({ novel, revealedChars, activeChapter, ratio, mode }: StatusBarProps) {
   const totalChars = novel?.flatText.length ?? 0
   const totalChapters = novel?.chapters.length ?? 0
   const percent = totalChars === 0 ? 0 : Math.floor((revealedChars / totalChars) * 100)
-  const elapsed = startedAt === null ? '00:00:00' : formatElapsed(now - startedAt)
 
   return (
     <div className="wt-statusbar" data-testid="statusbar">
-      <span data-testid="status-chars">
-        已显示 {revealedChars.toLocaleString('en-US')} / 全书 {totalChars.toLocaleString('en-US')} 字
-      </span>
-      <span data-testid="status-chapter">
-        {novel ? `第 ${activeChapter + 1} 章 / 共 ${totalChapters} 章` : '未导入'}
+      <span className="wt-statusbar__dim" data-testid="status-chapter">
+        {novel ? `${activeChapter + 1} / ${totalChapters}` : '—'}
       </span>
       <span data-testid="status-ratio">比例 1:{ratio}</span>
       <span data-testid="status-encoding">编码 {novel?.encoding ?? '—'}</span>
       <span data-testid="status-mode">输入模式 {mode === 'ime' ? '输入法' : '纯按键'}</span>
-      <span data-testid="status-elapsed">用时 {elapsed}</span>
       <span className="wt-statusbar__spacer" />
       <span data-testid="status-percent">{percent}%</span>
       <span>中文(中国)</span>
@@ -6710,7 +6707,7 @@ describe('Page', () => {
 ```tsx
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { StatusBar, formatElapsed } from '../../src/renderer/src/components/StatusBar'
+import { StatusBar } from '../../src/renderer/src/components/StatusBar'
 import type { Novel } from '../../src/core/types'
 
 const novel: Novel = {
@@ -6725,58 +6722,46 @@ const novel: Novel = {
   ]
 }
 
-describe('formatElapsed', () => {
-  it('格式化为 HH:MM:SS', () => {
-    expect(formatElapsed(0)).toBe('00:00:00')
-    expect(formatElapsed(1000)).toBe('00:00:01')
-    expect(formatElapsed(61_000)).toBe('00:01:01')
-    expect(formatElapsed(3_661_000)).toBe('01:01:01')
-  })
-
-  it('负数与非法值归零', () => {
-    expect(formatElapsed(-100)).toBe('00:00:00')
-    expect(formatElapsed(Number.NaN)).toBe('00:00:00')
-  })
-})
-
 describe('StatusBar', () => {
   it('未导入小说时显示占位', () => {
-    render(
-      <StatusBar novel={null} revealedChars={0} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={0} />
-    )
-    expect(screen.getByTestId('status-chars').textContent).toContain('全书 0 字')
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+    render(<StatusBar novel={null} revealedChars={0} activeChapter={0} ratio={10} mode="ime" />)
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 —')
     // 全书 0 字时百分比必须短路成 0，否则是 NaN%（0/0）。
     expect(screen.getByTestId('status-percent').textContent).toBe('0%')
   })
 
-  it('显示已显示字数、章节、比例、编码与模式', () => {
-    render(
-      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" startedAt={0} now={61_000} />
-    )
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 250')
-    expect(screen.getByTestId('status-chars').textContent).toContain('全书 1,000 字')
-    expect(screen.getByTestId('status-chapter').textContent).toContain('第 2 章 / 共 2 章')
+  it('章节位置写成 `2 / 2`，而不是「第 2 章 / 共 2 章」', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    // 写成页码形状（真 Word 状态栏左下角就是页码）。**断言里刻意不含「章」字**——
+    // 那个字是小说阅读器最直接的标志，这份用例守的就是「它不出现」。
+    const chapter = screen.getByTestId('status-chapter').textContent
+    expect(chapter).toBe('2 / 2')
+    expect(chapter).not.toContain('章')
+  })
+
+  it('显示比例、编码与模式', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:25')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 GB18030')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
-    expect(screen.getByTestId('status-elapsed').textContent).toBe('用时 00:01:01')
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 
-  it('未开始打字时用时归零', () => {
-    render(
-      <StatusBar novel={novel} revealedChars={0} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={999_999} />
-    )
-    expect(screen.getByTestId('status-elapsed').textContent).toBe('用时 00:00:00')
+  it('不再有「已显示字数」与「用时」这两项', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    const text = screen.getByTestId('statusbar').textContent ?? ''
+    // 「已显示 N / 全书 M 字」是伪装上的破绽：真 Word 只报全文字数，从不报「已显示多少」。
+    expect(text).not.toContain('已显示')
+    // 真 Word 没有阅读计时器。
+    expect(text).not.toContain('用时')
+    expect(screen.queryByTestId('status-chars')).toBeNull()
+    expect(screen.queryByTestId('status-elapsed')).toBeNull()
   })
 
   it('百分比向下取整', () => {
     // 259 / 1000 = 25.9%：floor 得 25，round 得 26，两者可判。
-    render(
-      <StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={0} />
-    )
+    render(<StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" />)
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 })
@@ -7537,7 +7522,6 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
@@ -7655,13 +7639,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', flush)
   }, [])
 
-  // 状态栏计时
-  useEffect(() => {
-    if (state?.startedAt == null) return
-    const id = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [state?.startedAt])
-
   const visibleText = engine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
 
@@ -7771,8 +7748,6 @@ export default function App() {
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
-          startedAt={state?.startedAt ?? null}
-          now={now}
         />
 
         <Toast />
@@ -7797,6 +7772,20 @@ function makeNovel(): Novel {
   const text = '第一章 甲\nAAAAAAAAAA\n第二章 乙\nBBBBBBBBBB\n'
   const { flatText, chapters } = splitChapters(text, '测试书')
   return { title: '测试书', sourcePath: '/tmp/测试书.txt', encoding: 'UTF-8', hadBom: false, flatText, chapters }
+}
+
+/**
+ * 阅读区当前显示了多少字。
+ *
+ * 【为什么不再读状态栏】状态栏里那条「已显示 N / 全书 M 字」已经删掉了——真 Word 只报
+ * 全文字数、从不报「已显示多少」，那个词组本身就是伪装破绽（见 StatusBar.tsx 顶部说明）。
+ * 于是这份文件改用**正文长度**当观测点：那才是用户真正看到的东西，也是「抽了多少字」
+ * 唯一的真相来源（状态栏那条本来就只是它的一个投影）。
+ *
+ * 空状态下没有 `page-text`（渲染的是空状态引导），返回 0。
+ */
+function revealedChars(): number {
+  return screen.queryByTestId('page-text')?.textContent?.length ?? 0
 }
 
 let saved: PersistedSession | null = null
@@ -7848,7 +7837,7 @@ describe('App 端到端（单测层）', () => {
     installApi(null)
     render(<App />)
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
   })
 
   it('导入后蓝条上不出现小说文件名（那是导入唯一的泄露点）', async () => {
@@ -7875,7 +7864,7 @@ describe('App 端到端（单测层）', () => {
     const capture = screen.getByTestId('input-capture')
     // 默认比例 10，敲 1 个键应显示 10 个字
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 10'))
+    await waitFor(() => expect(revealedChars()).toBe(10))
     expect(screen.getByTestId('page-text').textContent!.length).toBeGreaterThanOrEqual(10)
   })
 
@@ -7889,10 +7878,10 @@ describe('App 端到端（单测层）', () => {
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 10'))
+    await waitFor(() => expect(revealedChars()).toBe(10))
 
     fireEvent.keyDown(capture, { key: 'Backspace' })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0'))
+    await waitFor(() => expect(revealedChars()).toBe(0))
     expect(novel.flatText).toBe(originalFlat)
   })
 
@@ -7904,13 +7893,13 @@ describe('App 端到端（单测层）', () => {
     await waitFor(() => expect(screen.getByTestId('chapter-item-1')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('chapter-item-1'))
-    await waitFor(() => expect(screen.getByTestId('status-chapter').textContent).toContain('第 2 章'))
+    await waitFor(() => expect(screen.getByTestId('status-chapter').textContent).toBe('2 / 2'))
     expect(screen.getByTestId('chapter-item-1').className).toContain('chapter-item--active')
 
     // 跳章之后阅读区是**空的**：显示窗口从该章开头起算，而这一章还没读过。
     // 少了这一条，「已显示」把 revealStart 漏掉（写成 cursor）也没人发现——
     // 变异实测：把 `state.cursor - state.revealStart` 改成 `state.cursor`，全套用例全绿。
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
+    expect(revealedChars()).toBe(0)
   })
 
   it('改比例后同样的击键抽出更多字', async () => {
@@ -7931,7 +7920,7 @@ describe('App 端到端（单测层）', () => {
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 2'))
+    await waitFor(() => expect(revealedChars()).toBe(2))
   })
 
   it('有会话时启动即恢复到上次位置，无需重新输入', async () => {
@@ -7950,7 +7939,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel, session)
     render(<App />)
 
-    await waitFor(() => expect(screen.getByTestId('status-chars').textContent).toContain('已显示 15'))
+    await waitFor(() => expect(revealedChars()).toBe(15))
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:5')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
     expect(screen.getByTestId('page-text').textContent).toContain(novel.flatText.slice(0, 15))
@@ -8029,8 +8018,8 @@ describe('App 端到端（单测层）', () => {
 
     expect(screen.getByTestId('app-root')).toBeTruthy()
     expect(screen.getByTestId('page-empty')).toBeTruthy()
-    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
-    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
+    expect(screen.getByTestId('status-chapter').textContent).toBe('—')
+    expect(revealedChars()).toBe(0)
   })
 })
 ```
@@ -8145,6 +8134,16 @@ test.afterEach(async () => {
   rmSync(profileDir, { recursive: true, force: true })
 })
 
+/**
+ * 「已经抽了多少字」的观测点。
+ *
+ * 【为什么不用状态栏】状态栏那条「已显示 N / 全书 M 字」已经删掉了——真 Word 只报全文字数、
+ * 从不报「已显示多少」，那个词组本身就是伪装破绽。改读**正文长度**：那才是用户真正看到的，
+ * 也是「抽了多少字」唯一的真相来源。`expect.poll` 负责重试（内容上屏不是同步的）。
+ */
+const revealed = async (): Promise<number> =>
+  (await win.locator('[data-testid="page-text"]').textContent())?.length ?? 0
+
 const focusEditor = async (): Promise<void> => {
   // 阅读区被一层透明 textarea（.wt-input）完全覆盖，点 .wt-page 会被它拦截。
   // 直接点这个 textarea —— opacity:0 不影响 Playwright 的可交互判定。
@@ -8154,13 +8153,13 @@ const focusEditor = async (): Promise<void> => {
 test('启动即导入命令行传入的小说，并列出章节', async () => {
   await expect(win.locator('[data-testid="chapter-item-0"]')).toBeVisible()
   await expect(win.locator('[data-testid="chapter-item-2"]')).toBeVisible()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 })
 
 test('打字不显示原字符，而是按比例抽出小说文字', async () => {
   await focusEditor()
   await win.keyboard.type('aaaaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 50')
+  await expect.poll(revealed).toBe(50)
 
   const text = await win.locator('[data-testid="page-text"]').innerText()
   expect(text).not.toContain('a')
@@ -8170,14 +8169,14 @@ test('打字不显示原字符，而是按比例抽出小说文字', async () =>
 test('退格只回吐显示，小说内容不受影响', async () => {
   await focusEditor()
   await win.keyboard.type('aaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 30')
+  await expect.poll(revealed).toBe(30)
 
   await win.keyboard.press('Backspace')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 20')
+  await expect.poll(revealed).toBe(20)
 
   await win.keyboard.press('Backspace')
   await win.keyboard.press('Backspace')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   // 再敲一次，仍然从同一位置重新抽出同样的文字
   await win.keyboard.type('a')
@@ -8197,7 +8196,7 @@ test('改比例后同样的击键抽出更多字', async () => {
 
   await focusEditor()
   await win.keyboard.type('aa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 6')
+  await expect.poll(revealed).toBe(6)
 })
 
 /**
@@ -8220,14 +8219,14 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
 
   // 在文档名输入框里敲的字母进输入框，不许抽走小说
   await win.keyboard.type('aaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
   // 此后键盘没有焦点宿主，更不该被抢回阅读区
   await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
   await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
   await win.keyboard.type('bbb')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
 
   await win.keyboard.press('Escape')
   await expect(win.locator('[data-testid="settings"]')).toBeHidden()
@@ -8239,18 +8238,19 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
   await win.locator('[data-testid="chapter-item-1"]').click()
-  await expect(win.locator('[data-testid="status-chapter"]')).toContainText('第 2 章')
+  // 状态栏现在写的是页码形状的 `2 / 3`（真 Word 左下角就是页码），不再是「第 2 章 / 共 3 章」
+  await expect(win.locator('[data-testid="status-chapter"]')).toHaveText('2 / 3')
 
   await focusEditor()
   await win.keyboard.type('a')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 10')
+  await expect.poll(revealed).toBe(10)
   const afterTyping = await win.locator('[data-testid="page-text"]').innerText()
 
   // 离开再回来，进度应被回填
   await win.locator('[data-testid="chapter-item-0"]').click()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+  await expect.poll(revealed).toBe(0)
   await win.locator('[data-testid="chapter-item-1"]').click()
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 10')
+  await expect.poll(revealed).toBe(10)
   expect(await win.locator('[data-testid="page-text"]').innerText()).toBe(afterTyping)
 })
 
@@ -8263,7 +8263,7 @@ test('占位按钮点击有可见反馈', async () => {
 test('重启后恢复到上次阅读位置，无需重新输入', async () => {
   await focusEditor()
   await win.keyboard.type('aaaa')
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 40')
+  await expect.poll(revealed).toBe(40)
 
   // 等防抖保存落盘
   await win.waitForTimeout(1200)
@@ -8277,7 +8277,7 @@ test('重启后恢复到上次阅读位置，无需重新输入', async () => {
   win = await app.firstWindow()
   await win.waitForSelector('[data-testid="app-root"]')
 
-  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 40')
+  await expect.poll(revealed).toBe(40)
 })
 ```
 
