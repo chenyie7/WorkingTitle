@@ -1,7 +1,23 @@
 import { useEffect, useState } from 'react'
+import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
+import {
+  IconBook,
+  IconClear,
+  IconClose,
+  IconDarkTheme,
+  IconDesktop,
+  IconDocument,
+  IconFontSize,
+  IconImport,
+  IconKeyboard,
+  IconMoon,
+  IconRename,
+  IconSettings,
+  IconSun
+} from './icons'
 
 export interface SettingsDialogProps {
   /** 对话框归 Ribbon 所有：打开它的那个按钮就在「文件」选项卡的工具组里 */
@@ -17,11 +33,11 @@ export interface SettingsDialogProps {
   onThemeSourceChange: (next: ThemeSource) => void
 }
 
-const THEME_OPTIONS: ReadonlyArray<{ value: ThemeSource; label: string }> = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' }
-]
+const THEME_OPTIONS = [
+  { value: 'system', label: '跟随系统', icon: IconDesktop },
+  { value: 'light', label: '浅色', icon: IconSun },
+  { value: 'dark', label: '深色', icon: IconMoon }
+] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
@@ -133,6 +149,7 @@ export function SettingsDialog({
       <div className="wt-modal__panel">
         <div className="wt-modal__header">
           <span className="wt-modal__title" id="wt-settings-title">
+            <IconSettings className="wt-modal__title-icon" />
             选项
           </span>
           <button
@@ -143,13 +160,16 @@ export function SettingsDialog({
             title="关闭 (Esc)"
             onClick={onClose}
           >
-            ✕
+            <IconClose className="wt-modal__close-icon" />
           </button>
         </div>
 
         <div className="wt-modal__body">
           <div className="wt-modal__row">
-            <span className="wt-modal__label">文档名</span>
+            <span className="wt-modal__label">
+              <IconRename className="wt-modal__label-icon" />
+              文档名
+            </span>
             <input
               className="wt-modal__text"
               data-testid="doc-title-input"
@@ -167,7 +187,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">阅读替换</span>
+            <span className="wt-modal__label">
+              <IconFontSize className="wt-modal__label-icon" />
+              阅读替换
+            </span>
             <div className="wt-ratio">
               <span className="wt-ratio__label">1 键显示</span>
               <input
@@ -187,7 +210,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">输入模式</span>
+            <span className="wt-modal__label">
+              <IconKeyboard className="wt-modal__label-icon" />
+              输入模式
+            </span>
             <button
               type="button"
               className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
@@ -209,20 +235,29 @@ export function SettingsDialog({
               外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
               macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
             */}
-            <span className="wt-modal__label">外观</span>
+            <span className="wt-modal__label">
+              <IconDarkTheme className="wt-modal__label-icon" />
+              外观
+            </span>
             <div className="wt-seg" role="group" aria-label="外观">
-              {THEME_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  className={`wt-btn${themeSource === opt.value ? ' wt-btn--active' : ''}`}
-                  data-testid={`theme-${opt.value}`}
-                  aria-pressed={themeSource === opt.value}
-                  onClick={() => onThemeSourceChange(opt.value)}
-                >
-                  {opt.label}
-                </button>
-              ))}
+              {THEME_OPTIONS.map((opt) => {
+                const active = themeSource === opt.value
+                const OptIcon = opt.icon
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`wt-btn${active ? ' wt-btn--active' : ''}`}
+                    data-testid={`theme-${opt.value}`}
+                    aria-pressed={active}
+                    onClick={() => onThemeSourceChange(opt.value)}
+                  >
+                    {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
+                    <OptIcon filled={active} className="wt-btn__icon" />
+                    {opt.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -232,7 +267,10 @@ export function SettingsDialog({
               勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
               只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
             */}
-            <span className="wt-modal__label">纸张</span>
+            <span className="wt-modal__label">
+              <IconDocument className="wt-modal__label-icon" />
+              纸张
+            </span>
             <label className="wt-modal__check">
               <input
                 type="checkbox"
@@ -245,7 +283,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">小说</span>
+            <span className="wt-modal__label">
+              <IconBook className="wt-modal__label-icon" />
+              小说
+            </span>
             <button
               type="button"
               className="wt-btn"
@@ -253,6 +294,7 @@ export function SettingsDialog({
               title="导入小说 (Ctrl+O)"
               onClick={() => onImport()}
             >
+              <IconImport className="wt-btn__icon" />
               导入小说
             </button>
             <button
@@ -262,6 +304,7 @@ export function SettingsDialog({
               title="清除阅读记录"
               onClick={() => onClearSession()}
             >
+              <IconClear className="wt-btn__icon" />
               清除阅读记录
             </button>
           </div>

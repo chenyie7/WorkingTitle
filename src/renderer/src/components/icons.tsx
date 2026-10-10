@@ -85,7 +85,23 @@ import {
   ChevronRightFilled,
   ChevronRightRegular,
   DismissFilled,
-  DismissRegular
+  DismissRegular,
+  RenameRegular,
+  RenameFilled,
+  KeyboardRegular,
+  KeyboardFilled,
+  DarkThemeRegular,
+  DarkThemeFilled,
+  DocumentRegular,
+  DocumentFilled,
+  BookRegular,
+  BookFilled,
+  DesktopRegular,
+  DesktopFilled,
+  WeatherSunnyRegular,
+  WeatherSunnyFilled,
+  WeatherMoonRegular,
+  WeatherMoonFilled
 } from '@fluentui/react-icons'
 
 /**
@@ -145,3 +161,13 @@ export const IconGrid = bundleIcon(GridFilled, GridRegular)
 export const IconCollapse = bundleIcon(ChevronLeftFilled, ChevronLeftRegular)
 export const IconExpand = bundleIcon(ChevronRightFilled, ChevronRightRegular)
 export const IconClose = bundleIcon(DismissFilled, DismissRegular)
+
+/* 设置对话框用的一组 */
+export const IconRename = bundleIcon(RenameFilled, RenameRegular)
+export const IconKeyboard = bundleIcon(KeyboardFilled, KeyboardRegular)
+export const IconDarkTheme = bundleIcon(DarkThemeFilled, DarkThemeRegular)
+export const IconDocument = bundleIcon(DocumentFilled, DocumentRegular)
+export const IconBook = bundleIcon(BookFilled, BookRegular)
+export const IconDesktop = bundleIcon(DesktopFilled, DesktopRegular)
+export const IconSun = bundleIcon(WeatherSunnyFilled, WeatherSunnyRegular)
+export const IconMoon = bundleIcon(WeatherMoonFilled, WeatherMoonRegular)

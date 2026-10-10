@@ -4262,8 +4262,8 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 53 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
-            `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__check` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-seg` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 56 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
+                `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__check` `.wt-modal__close` `.wt-modal__close-icon` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__label-icon` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-modal__title-icon` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-seg` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
 
     （37 → 46 的变动来自 Task 16：删掉随「就地改名」一起作废的 `.wt-ribbon__title-input`，
     加上设置对话框那 10 个 `.wt-modal*`。对话框复用了既有的 `.wt-btn` 与 `.wt-ratio*`。）
@@ -4808,7 +4808,16 @@ body {
 }
 
 .wt-modal__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
+}
+
+.wt-modal__title-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 
 .wt-modal__close {
@@ -4824,6 +4833,11 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.wt-modal__close-icon {
+  width: 12px;
+  height: 12px;
 }
 
 .wt-modal__close:hover {
@@ -4843,10 +4857,22 @@ body {
   gap: 10px;
 }
 
+/* 每行的标签：一个小图标 + 文字。加了图标之后基准宽度要放宽，
+   否则「阅读替换」这种四字标签会把右边的控件推歪。 */
 .wt-modal__label {
-  flex: 0 0 68px;
+  flex: 0 0 96px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12px;
   color: var(--wt-text-muted);
+}
+
+.wt-modal__label-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--wt-accent);
 }
 
 .wt-modal__text {
@@ -8492,9 +8518,25 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Step 1: 写 `src/renderer/src/components/SettingsDialog.tsx`**
 ```tsx
 import { useEffect, useState } from 'react'
+import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
+import {
+  IconBook,
+  IconClear,
+  IconClose,
+  IconDarkTheme,
+  IconDesktop,
+  IconDocument,
+  IconFontSize,
+  IconImport,
+  IconKeyboard,
+  IconMoon,
+  IconRename,
+  IconSettings,
+  IconSun
+} from './icons'
 
 export interface SettingsDialogProps {
   /** 对话框归 Ribbon 所有：打开它的那个按钮就在「文件」选项卡的工具组里 */
@@ -8510,11 +8552,11 @@ export interface SettingsDialogProps {
   onThemeSourceChange: (next: ThemeSource) => void
 }
 
-const THEME_OPTIONS: ReadonlyArray<{ value: ThemeSource; label: string }> = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' }
-]
+const THEME_OPTIONS = [
+  { value: 'system', label: '跟随系统', icon: IconDesktop },
+  { value: 'light', label: '浅色', icon: IconSun },
+  { value: 'dark', label: '深色', icon: IconMoon }
+] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
@@ -8626,6 +8668,7 @@ export function SettingsDialog({
       <div className="wt-modal__panel">
         <div className="wt-modal__header">
           <span className="wt-modal__title" id="wt-settings-title">
+            <IconSettings className="wt-modal__title-icon" />
             选项
           </span>
           <button
@@ -8636,13 +8679,16 @@ export function SettingsDialog({
             title="关闭 (Esc)"
             onClick={onClose}
           >
-            ✕
+            <IconClose className="wt-modal__close-icon" />
           </button>
         </div>
 
         <div className="wt-modal__body">
           <div className="wt-modal__row">
-            <span className="wt-modal__label">文档名</span>
+            <span className="wt-modal__label">
+              <IconRename className="wt-modal__label-icon" />
+              文档名
+            </span>
             <input
               className="wt-modal__text"
               data-testid="doc-title-input"
@@ -8660,7 +8706,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">阅读替换</span>
+            <span className="wt-modal__label">
+              <IconFontSize className="wt-modal__label-icon" />
+              阅读替换
+            </span>
             <div className="wt-ratio">
               <span className="wt-ratio__label">1 键显示</span>
               <input
@@ -8680,7 +8729,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">输入模式</span>
+            <span className="wt-modal__label">
+              <IconKeyboard className="wt-modal__label-icon" />
+              输入模式
+            </span>
             <button
               type="button"
               className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
@@ -8702,20 +8754,29 @@ export function SettingsDialog({
               外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
               macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
             */}
-            <span className="wt-modal__label">外观</span>
+            <span className="wt-modal__label">
+              <IconDarkTheme className="wt-modal__label-icon" />
+              外观
+            </span>
             <div className="wt-seg" role="group" aria-label="外观">
-              {THEME_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  className={`wt-btn${themeSource === opt.value ? ' wt-btn--active' : ''}`}
-                  data-testid={`theme-${opt.value}`}
-                  aria-pressed={themeSource === opt.value}
-                  onClick={() => onThemeSourceChange(opt.value)}
-                >
-                  {opt.label}
-                </button>
-              ))}
+              {THEME_OPTIONS.map((opt) => {
+                const active = themeSource === opt.value
+                const OptIcon = opt.icon
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`wt-btn${active ? ' wt-btn--active' : ''}`}
+                    data-testid={`theme-${opt.value}`}
+                    aria-pressed={active}
+                    onClick={() => onThemeSourceChange(opt.value)}
+                  >
+                    {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
+                    <OptIcon filled={active} className="wt-btn__icon" />
+                    {opt.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -8725,7 +8786,10 @@ export function SettingsDialog({
               勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
               只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
             */}
-            <span className="wt-modal__label">纸张</span>
+            <span className="wt-modal__label">
+              <IconDocument className="wt-modal__label-icon" />
+              纸张
+            </span>
             <label className="wt-modal__check">
               <input
                 type="checkbox"
@@ -8738,7 +8802,10 @@ export function SettingsDialog({
           </div>
 
           <div className="wt-modal__row">
-            <span className="wt-modal__label">小说</span>
+            <span className="wt-modal__label">
+              <IconBook className="wt-modal__label-icon" />
+              小说
+            </span>
             <button
               type="button"
               className="wt-btn"
@@ -8746,6 +8813,7 @@ export function SettingsDialog({
               title="导入小说 (Ctrl+O)"
               onClick={() => onImport()}
             >
+              <IconImport className="wt-btn__icon" />
               导入小说
             </button>
             <button
@@ -8755,6 +8823,7 @@ export function SettingsDialog({
               title="清除阅读记录"
               onClick={() => onClearSession()}
             >
+              <IconClear className="wt-btn__icon" />
               清除阅读记录
             </button>
           </div>
@@ -9293,7 +9362,23 @@ import {
   ChevronRightFilled,
   ChevronRightRegular,
   DismissFilled,
-  DismissRegular
+  DismissRegular,
+  RenameRegular,
+  RenameFilled,
+  KeyboardRegular,
+  KeyboardFilled,
+  DarkThemeRegular,
+  DarkThemeFilled,
+  DocumentRegular,
+  DocumentFilled,
+  BookRegular,
+  BookFilled,
+  DesktopRegular,
+  DesktopFilled,
+  WeatherSunnyRegular,
+  WeatherSunnyFilled,
+  WeatherMoonRegular,
+  WeatherMoonFilled
 } from '@fluentui/react-icons'
 
 /**
@@ -9353,6 +9438,16 @@ export const IconGrid = bundleIcon(GridFilled, GridRegular)
 export const IconCollapse = bundleIcon(ChevronLeftFilled, ChevronLeftRegular)
 export const IconExpand = bundleIcon(ChevronRightFilled, ChevronRightRegular)
 export const IconClose = bundleIcon(DismissFilled, DismissRegular)
+
+/* 设置对话框用的一组 */
+export const IconRename = bundleIcon(RenameFilled, RenameRegular)
+export const IconKeyboard = bundleIcon(KeyboardFilled, KeyboardRegular)
+export const IconDarkTheme = bundleIcon(DarkThemeFilled, DarkThemeRegular)
+export const IconDocument = bundleIcon(DocumentFilled, DocumentRegular)
+export const IconBook = bundleIcon(BookFilled, BookRegular)
+export const IconDesktop = bundleIcon(DesktopFilled, DesktopRegular)
+export const IconSun = bundleIcon(WeatherSunnyFilled, WeatherSunnyRegular)
+export const IconMoon = bundleIcon(WeatherMoonFilled, WeatherMoonRegular)
 ```
 
 **同批改动的文件**（围栏均已就地同步）：`word.css`（设计 token 全换：Word 蓝 `#2b579a` → `#185abd`、

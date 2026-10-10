@@ -270,7 +270,16 @@
 }
 
 .wt-modal__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
+}
+
+.wt-modal__title-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 
 .wt-modal__close {
@@ -286,6 +295,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.wt-modal__close-icon {
+  width: 12px;
+  height: 12px;
 }
 
 .wt-modal__close:hover {
@@ -305,10 +319,22 @@
   gap: 10px;
 }
 
+/* 每行的标签：一个小图标 + 文字。加了图标之后基准宽度要放宽，
+   否则「阅读替换」这种四字标签会把右边的控件推歪。 */
 .wt-modal__label {
-  flex: 0 0 68px;
+  flex: 0 0 96px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12px;
   color: var(--wt-text-muted);
+}
+
+.wt-modal__label-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--wt-accent);
 }
 
 .wt-modal__text {
