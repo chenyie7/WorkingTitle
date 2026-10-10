@@ -4178,8 +4178,8 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 34 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
-    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 36 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
+    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__header--collapsed` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
   - `App.tsx` 渲染出 `.wt-app` 骨架，含 `data-testid="app-root"`
 
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
@@ -4250,9 +4250,40 @@ body {
 }
 
 .wt-sidebar__header {
-  padding: 10px 12px;
+  position: relative;
+  /* 右侧留出收起按钮的位置，免得书名长的时候文字压到按钮底下 */
+  padding: 10px 28px 10px 12px;
   border-bottom: 1px solid var(--wt-chrome-border);
   font-weight: 600;
+}
+
+/* 收起后只剩一条细带。按钮必须还留在里面——否则鼠标用户没有把书名调回来的入口
+   （那个快捷键是新用户不会知道的）。 */
+.wt-sidebar__header--collapsed {
+  padding: 0;
+  min-height: 20px;
+}
+
+.wt-sidebar__toggle {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #888888;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wt-sidebar__toggle:hover {
+  background: #e4e4e4;
+  color: #333333;
 }
 
 .wt-sidebar__sub {
@@ -5384,6 +5415,7 @@ git commit -F /tmp/task8-msg.txt   # 切勿用内联 -m：ASCII 引号会静默�
 - Consumes: `Novel` / `Chapter` 类型；Task 7 的 `.chapter-item` 样式
 - Produces: `<ChapterList novel={Novel | null} activeChapter={number} chapterPos={readonly number[]} onJump={(i: number) => void} />`
   - `data-testid="chapter-list"`、`chapter-item-${i}`、`chapter-pct-${i}`
+  - `data-testid="sidebar-header"`、`sidebar-header-toggle`（书名信息的收起开关；另有 ⌘/Ctrl+Shift+H 快捷键）
   - 行高常量 `ROW_HEIGHT = 32`
 
 - [ ] **Step 1: 写 `src/renderer/src/components/ChapterList.tsx`**
@@ -5413,6 +5445,8 @@ export function ChapterList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
+  /** 书名信息（小说名 + 章节数/编码）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
+  const [headerHidden, setHeaderHidden] = useState(false)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -5434,6 +5468,29 @@ export function ChapterList({
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
   }, [activeChapter, novel])
 
+  // 书名信息的显示/隐藏快捷键：⌘/Ctrl + Shift + H
+  //
+  // 【为什么挂在 window 上还能收到】InputCapture 在「纯按键」模式下对**带修饰键的组合键**
+  // 是直接放行的（它的 handleKeyDown 里 `if (e.ctrlKey || e.metaKey || e.altKey) return`），
+  // 输入法模式下更是完全不拦截 keydown——所以这个组合不会被抽字逻辑吃掉。
+  //
+  // 【为什么用 e.code 而不是 e.key】按住 Shift 时 `e.key` 是大写 'H'，而输入法或非 QWERTY
+  // 布局还可能给出别的字符；`e.code === 'KeyH'` 是按物理按键位置判定的，不受这两件事影响。
+  //
+  // 【为什么状态只在内存里】用户没要求持久化，而且它现在不属于 PersistedSession 的字段——
+  // 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
+  // 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return
+      if (e.code !== 'KeyH') return
+      e.preventDefault()
+      setHeaderHidden((v) => !v)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const chapters = novel?.chapters ?? []
   const total = chapters.length
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
@@ -5442,11 +5499,29 @@ export function ChapterList({
 
   return (
     <aside className="wt-sidebar">
-      <div className="wt-sidebar__header">
-        {novel ? novel.title : '未导入小说'}
-        <div className="wt-sidebar__sub">
-          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
-        </div>
+      <div
+        className={`wt-sidebar__header${headerHidden ? ' wt-sidebar__header--collapsed' : ''}`}
+        data-testid="sidebar-header"
+      >
+        {!headerHidden && (
+          <>
+            {novel ? novel.title : '未导入小说'}
+            <div className="wt-sidebar__sub">
+              {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
+            </div>
+          </>
+        )}
+        <button
+          type="button"
+          className="wt-sidebar__toggle"
+          data-testid="sidebar-header-toggle"
+          aria-pressed={!headerHidden}
+          aria-label={headerHidden ? '显示书名信息' : '隐藏书名信息'}
+          title={`${headerHidden ? '显示' : '隐藏'}书名信息（⌘/Ctrl + Shift + H）`}
+          onClick={() => setHeaderHidden((v) => !v)}
+        >
+          {headerHidden ? '▸' : '▴'}
+        </button>
       </div>
       <div
         className="wt-sidebar__list"
@@ -5531,6 +5606,53 @@ describe('ChapterList', () => {
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
     expect(screen.getByText('大书')).toBeTruthy()
     expect(screen.getByText(/共 5 章/)).toBeTruthy()
+  })
+
+  it('点按钮收起书名信息，再点一次展开', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    const toggle = screen.getByTestId('sidebar-header-toggle')
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(screen.queryByText('大书')).toBeNull()
+    expect(screen.queryByText(/共 5 章/)).toBeNull()
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(toggle)
+    expect(screen.getByText('大书')).toBeTruthy()
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('收起后按钮仍在（鼠标用户得有入口把它调回来）', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
+    // 只断言「还在」不够——要断言它真的还能把它切回来，否则一个 disabled 的残留按钮也能过
+    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
+    expect(screen.getByText('大书')).toBeTruthy()
+  })
+
+  it('⌘/Ctrl + Shift + H 与按钮等效', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
+    expect(screen.queryByText('大书')).toBeNull()
+
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByText('大书')).toBeTruthy()
+  })
+
+  it('少了 Shift 或修饰键时不触发（别把正常打字吃掉）', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+
+    fireEvent.keyDown(window, { key: 'h', code: 'KeyH' })
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', shiftKey: true })
+    fireEvent.keyDown(window, { key: 'h', code: 'KeyH', metaKey: true })
+    fireEvent.keyDown(window, { key: 'K', code: 'KeyK', metaKey: true, shiftKey: true })
+    expect(screen.getByText('大书')).toBeTruthy()
   })
 
   it('章节很多时只渲染可视区附近的行（虚拟滚动）', () => {
