@@ -5,6 +5,7 @@ import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 import type { InputMode } from '../../src/core/types'
+import type { ThemeSource } from '../../src/renderer/src/types/global'
 
 interface SetupOptions {
   ratio?: number
@@ -17,15 +18,18 @@ interface SetupOptions {
   capture?: boolean
   docTitle?: string
   darkPaper?: boolean
+  themeSource?: ThemeSource
 }
 
 function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
+  onThemeSourceChange: ReturnType<typeof vi.fn>
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
-  const { capture, docTitle = '文档1', darkPaper = false, ...provider } = opts
+  const onThemeSourceChange = vi.fn()
+  const { capture, docTitle = '文档1', darkPaper = false, themeSource = 'system', ...provider } = opts
   render(
     <ToolbarProvider {...provider}>
       <Ribbon
@@ -33,12 +37,14 @@ function setup(opts: SetupOptions = {}): {
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
         onDarkPaperChange={onDarkPaperChange}
+        themeSource={themeSource}
+        onThemeSourceChange={onThemeSourceChange}
       />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange }
+  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -217,6 +223,16 @@ describe('对话框里改文档名', () => {
     fireEvent.blur(input)
     expect(onChange).not.toHaveBeenCalled()
     expect(input.value).toBe('文档1')
+  })
+
+  it('外观三选一：默认跟随系统，点「深色」回调 dark', () => {
+    const { onThemeSourceChange } = setup()
+    openViaButton()
+    expect(screen.getByTestId('theme-system').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('theme-dark').getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(screen.getByTestId('theme-dark'))
+    expect(onThemeSourceChange).toHaveBeenCalledWith('dark')
   })
 
   it('「纸张也变暗」是个复选框，勾选时回调 true', () => {

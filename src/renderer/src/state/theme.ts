@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { WtApi } from '../types/global'
+import type { ThemeSource, WtApi } from '../types/global'
 
 /**
  * 平台在**模块加载时**就写进 `<html data-platform>`。
@@ -46,4 +46,23 @@ export function useDarkPaper(enabled: boolean): void {
   useEffect(() => {
     document.documentElement.dataset.paper = enabled ? 'dark' : 'light'
   }, [enabled])
+}
+
+/**
+ * 把用户选的外观推给主进程。
+ *
+ * 【为什么不能只在页面里翻 class】macOS 的**红绿灯与其它原生部分**由主进程的
+ * `nativeTheme.themeSource` 决定。只改网页的话会出现「网页变暗了、红绿灯还是系统色」——
+ * 那正是刚修好的那种不一致。推给主进程之后，它会经 `themeChanged` 把**解析后的**结果
+ * 广播回来（`useSystemTheme` 负责上色），原生与网页一起变。
+ *
+ * 另一层原因：`'system'` 这个选项本身就只能在主进程里解析——渲染层读不到系统外观
+ * （见 `useSystemTheme` 上面那段实测）。
+ */
+export function useThemePreference(source: ThemeSource): void {
+  useEffect(() => {
+    const api = (window as unknown as { api?: WtApi }).api
+    if (!api) return
+    void api.setThemeSource(source)
+  }, [source])
 }

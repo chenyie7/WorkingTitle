@@ -34,6 +34,8 @@ const api = {
    * 只能由主进程把值显式递过来。别把它"简化"回 CSS 媒体查询。
    */
   getTheme: (): Promise<boolean> => ipcRenderer.invoke(CH.getTheme),
+  setThemeSource: (source: 'system' | 'light' | 'dark'): Promise<void> =>
+    ipcRenderer.invoke(CH.setThemeSource, source),
   onThemeChange: (cb: (dark: boolean) => void): (() => void) => {
     const listener = (_e: unknown, dark: boolean): void => cb(dark)
     ipcRenderer.on(CH.themeChanged, listener)

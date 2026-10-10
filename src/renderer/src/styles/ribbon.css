@@ -432,3 +432,27 @@
   padding-left: 78px;
   -webkit-app-region: drag;
 }
+
+/* 分段控件（设置里的「外观」三选一）。真 Word 的「Office 主题」是个下拉框，
+   三个选项用分段按钮更好按、也更好看出当前选的是哪个。 */
+.wt-seg {
+  display: inline-flex;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
+  overflow: hidden;
+}
+
+.wt-seg .wt-btn {
+  border: none;
+  border-radius: 0;
+  height: 28px;
+  padding: 0 12px;
+}
+
+.wt-seg .wt-btn + .wt-btn {
+  border-left: 1px solid var(--wt-chrome-border-strong);
+}
+
+[data-theme='dark'] .wt-seg .wt-btn--active {
+  background: #2c3a52;
+}

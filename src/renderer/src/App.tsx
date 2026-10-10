@@ -7,10 +7,10 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
-import { useDarkPaper, useSystemTheme } from './state/theme'
+import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
-import type { WtApi } from './types/global'
+import type { ThemeSource, WtApi } from './types/global'
 
 const SAVE_DEBOUNCE_MS = 600
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
@@ -43,9 +43,12 @@ export default function App() {
   const [docTitle, setDocTitle] = useState('文档1')
   /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
   const [darkPaper, setDarkPaper] = useState(false)
+  /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
+  const [themeSource, setThemeSource] = useState<ThemeSource>('system')
 
   useSystemTheme()
   useDarkPaper(darkPaper)
+  useThemePreference(themeSource)
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -248,6 +251,8 @@ export default function App() {
           onDocTitleChange={setDocTitle}
           darkPaper={darkPaper}
           onDarkPaperChange={setDarkPaper}
+          themeSource={themeSource}
+          onThemeSourceChange={setThemeSource}
         />
 
         <div className="wt-body">

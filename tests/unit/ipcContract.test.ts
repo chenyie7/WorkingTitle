@@ -12,7 +12,8 @@ describe('IPC 契约', () => {
       initialNovelPath: 'wt:initial-novel-path',
       menuCommand: 'wt:menu-command',
       getTheme: 'wt:get-theme',
-      themeChanged: 'wt:theme-changed'
+      themeChanged: 'wt:theme-changed',
+      setThemeSource: 'wt:set-theme-source'
     })
   })
 

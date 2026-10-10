@@ -25,6 +25,7 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
     clearSession: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
+    setThemeSource: vi.fn(async () => {}),
     onThemeChange: vi.fn(() => () => {})
   }
 }

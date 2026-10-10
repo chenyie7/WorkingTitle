@@ -7,7 +7,14 @@ import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 function setup(): void {
   render(
     <ToolbarProvider>
-      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} darkPaper={false} onDarkPaperChange={() => {}} />
+      <Ribbon
+        docTitle="文档1"
+        onDocTitleChange={() => {}}
+        darkPaper={false}
+        onDarkPaperChange={() => {}}
+        themeSource="system"
+        onThemeSourceChange={() => {}}
+      />
       <Toast />
     </ToolbarProvider>
   )

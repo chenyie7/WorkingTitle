@@ -3665,7 +3665,8 @@ describe('IPC 契约', () => {
       initialNovelPath: 'wt:initial-novel-path',
       menuCommand: 'wt:menu-command',
       getTheme: 'wt:get-theme',
-      themeChanged: 'wt:theme-changed'
+      themeChanged: 'wt:theme-changed',
+      setThemeSource: 'wt:set-theme-source'
     })
   })
 
@@ -3970,6 +3971,17 @@ export function registerIpc(deps: IpcDeps): void {
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
   ipcMain.handle(CH.getTheme, (): boolean => nativeTheme.shouldUseDarkColors)
+
+  // 用户在设置里选的外观（跟随系统 / 浅色 / 深色）。
+  //
+  // 【为什么必须落到 nativeTheme 而不是只翻一个 CSS 类】macOS 的**红绿灯与其它原生部分**
+  // 由 `themeSource` 决定；只在页面里换 class 的话，网页变暗了而红绿灯仍是系统色——
+  // 那正是刚修好的那个「两块颜色对不上」。改这里会触发下面的 `nativeTheme.on('updated')`
+  // 广播，原生与网页一起变。
+  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): void => {
+    if (source !== 'system' && source !== 'light' && source !== 'dark') return
+    nativeTheme.themeSource = source
+  })
 }
 ```
 
@@ -3986,7 +3998,8 @@ export const CH = {
   initialNovelPath: 'wt:initial-novel-path',
   menuCommand: 'wt:menu-command',
   getTheme: 'wt:get-theme',
-  themeChanged: 'wt:theme-changed'
+  themeChanged: 'wt:theme-changed',
+  setThemeSource: 'wt:set-theme-source'
 } as const
 
 export const MENU_COMMANDS = [
@@ -4053,6 +4066,8 @@ const api = {
    * 只能由主进程把值显式递过来。别把它"简化"回 CSS 媒体查询。
    */
   getTheme: (): Promise<boolean> => ipcRenderer.invoke(CH.getTheme),
+  setThemeSource: (source: 'system' | 'light' | 'dark'): Promise<void> =>
+    ipcRenderer.invoke(CH.setThemeSource, source),
   onThemeChange: (cb: (dark: boolean) => void): (() => void) => {
     const listener = (_e: unknown, dark: boolean): void => cb(dark)
     ipcRenderer.on(CH.themeChanged, listener)
@@ -4247,8 +4262,8 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 51 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
-        `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 53 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
+            `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon-only` `.wt-btn--large` `.wt-btn__icon` `.wt-btn__label` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__check` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-seg` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__rail-icon` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-sidebar__toggle-icon` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
 
     （37 → 46 的变动来自 Task 16：删掉随「就地改名」一起作废的 `.wt-ribbon__title-input`，
     加上设置对话框那 10 个 `.wt-modal*`。对话框复用了既有的 `.wt-btn` 与 `.wt-ratio*`。）
@@ -4955,6 +4970,30 @@ body {
   padding-left: 78px;
   -webkit-app-region: drag;
 }
+
+/* 分段控件（设置里的「外观」三选一）。真 Word 的「Office 主题」是个下拉框，
+   三个选项用分段按钮更好按、也更好看出当前选的是哪个。 */
+.wt-seg {
+  display: inline-flex;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
+  overflow: hidden;
+}
+
+.wt-seg .wt-btn {
+  border: none;
+  border-radius: 0;
+  height: 28px;
+  padding: 0 12px;
+}
+
+.wt-seg .wt-btn + .wt-btn {
+  border-left: 1px solid var(--wt-chrome-border-strong);
+}
+
+[data-theme='dark'] .wt-seg .wt-btn--active {
+  background: #2c3a52;
+}
 ```
 
 - [ ] **Step 3: 写 `src/renderer/src/styles/page.css`**
@@ -5517,6 +5556,7 @@ export function Toolbar({
 ```tsx
 import { useEffect, useState } from 'react'
 import { SettingsDialog } from './SettingsDialog'
+import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
   IconAlignCenter,
@@ -5721,12 +5761,16 @@ export function Ribbon({
   docTitle,
   onDocTitleChange,
   darkPaper,
-  onDarkPaperChange
+  onDarkPaperChange,
+  themeSource,
+  onThemeSourceChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
+  themeSource: ThemeSource
+  onThemeSourceChange: (next: ThemeSource) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -5780,6 +5824,8 @@ export function Ribbon({
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
         onDarkPaperChange={onDarkPaperChange}
+        themeSource={themeSource}
+        onThemeSourceChange={onThemeSourceChange}
       />
     </div>
   )
@@ -5798,7 +5844,14 @@ import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 function setup(): void {
   render(
     <ToolbarProvider>
-      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} darkPaper={false} onDarkPaperChange={() => {}} />
+      <Ribbon
+        docTitle="文档1"
+        onDocTitleChange={() => {}}
+        darkPaper={false}
+        onDarkPaperChange={() => {}}
+        themeSource="system"
+        onThemeSourceChange={() => {}}
+      />
       <Toast />
     </ToolbarProvider>
   )
@@ -7287,6 +7340,7 @@ const benignApi: WtApi = {
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,
+  setThemeSource: async () => {},
   onThemeChange: () => () => {}
 }
 
@@ -7333,6 +7387,9 @@ afterEach(() => {
 ```ts
 import type { Novel, PersistedSession } from '../../../core/types'
 
+/** 外观偏好：跟随系统 / 强制浅色 / 强制深色 */
+export type ThemeSource = 'system' | 'light' | 'dark'
+
 export interface WtApi {
   /** 'darwin' | 'win32' | 'linux'。渲染层靠它决定要不要给红绿灯让位 */
   platform: string
@@ -7344,6 +7401,7 @@ export interface WtApi {
   clearSession: () => Promise<void>
   onMenuCommand: (cb: (cmd: string) => void) => () => void
   getTheme: () => Promise<boolean>
+  setThemeSource: (source: ThemeSource) => Promise<void>
   onThemeChange: (cb: (dark: boolean) => void) => () => void
 }
 
@@ -7382,10 +7440,10 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
-import { useDarkPaper, useSystemTheme } from './state/theme'
+import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
-import type { WtApi } from './types/global'
+import type { ThemeSource, WtApi } from './types/global'
 
 const SAVE_DEBOUNCE_MS = 600
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
@@ -7418,9 +7476,12 @@ export default function App() {
   const [docTitle, setDocTitle] = useState('文档1')
   /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
   const [darkPaper, setDarkPaper] = useState(false)
+  /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
+  const [themeSource, setThemeSource] = useState<ThemeSource>('system')
 
   useSystemTheme()
   useDarkPaper(darkPaper)
+  useThemePreference(themeSource)
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -7623,6 +7684,8 @@ export default function App() {
           onDocTitleChange={setDocTitle}
           darkPaper={darkPaper}
           onDarkPaperChange={setDarkPaper}
+          themeSource={themeSource}
+          onThemeSourceChange={setThemeSource}
         />
 
         <div className="wt-body">
@@ -7696,6 +7759,7 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
     clearSession: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
+    setThemeSource: vi.fn(async () => {}),
     onThemeChange: vi.fn(() => () => {})
   }
 }
@@ -8412,6 +8476,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 import { useEffect, useState } from 'react'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
+import type { ThemeSource } from '../types/global'
 
 export interface SettingsDialogProps {
   /** 对话框归 Ribbon 所有：打开它的那个按钮就在「文件」选项卡的工具组里 */
@@ -8422,7 +8487,16 @@ export interface SettingsDialogProps {
   /** 「深色模式下纸张也变暗」。默认关（真 Word 深色模式下纸张仍是白的）。 */
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
+  /** 外观偏好：跟随系统 / 浅色 / 深色 */
+  themeSource: ThemeSource
+  onThemeSourceChange: (next: ThemeSource) => void
 }
+
+const THEME_OPTIONS: ReadonlyArray<{ value: ThemeSource; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' }
+]
 
 /**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
@@ -8441,7 +8515,9 @@ export function SettingsDialog({
   docTitle,
   onDocTitleChange,
   darkPaper,
-  onDarkPaperChange
+  onDarkPaperChange,
+  themeSource,
+  onThemeSourceChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
   const [ratioDraft, setRatioDraft] = useState(String(ratio))
@@ -8605,11 +8681,33 @@ export function SettingsDialog({
 
           <div className="wt-modal__row">
             {/*
+              外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
+              macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
+            */}
+            <span className="wt-modal__label">外观</span>
+            <div className="wt-seg" role="group" aria-label="外观">
+              {THEME_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`wt-btn${themeSource === opt.value ? ' wt-btn--active' : ''}`}
+                  data-testid={`theme-${opt.value}`}
+                  aria-pressed={themeSource === opt.value}
+                  onClick={() => onThemeSourceChange(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="wt-modal__row">
+            {/*
               默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
               勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
               只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
             */}
-            <span className="wt-modal__label">深色外观</span>
+            <span className="wt-modal__label">纸张</span>
             <label className="wt-modal__check">
               <input
                 type="checkbox"
@@ -8617,7 +8715,7 @@ export function SettingsDialog({
                 checked={darkPaper}
                 onChange={(e) => onDarkPaperChange(e.target.checked)}
               />
-              纸张也变暗
+              深色模式下也变暗
             </label>
           </div>
 
@@ -8670,6 +8768,7 @@ import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 import type { InputMode } from '../../src/core/types'
+import type { ThemeSource } from '../../src/renderer/src/types/global'
 
 interface SetupOptions {
   ratio?: number
@@ -8682,15 +8781,18 @@ interface SetupOptions {
   capture?: boolean
   docTitle?: string
   darkPaper?: boolean
+  themeSource?: ThemeSource
 }
 
 function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
+  onThemeSourceChange: ReturnType<typeof vi.fn>
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
-  const { capture, docTitle = '文档1', darkPaper = false, ...provider } = opts
+  const onThemeSourceChange = vi.fn()
+  const { capture, docTitle = '文档1', darkPaper = false, themeSource = 'system', ...provider } = opts
   render(
     <ToolbarProvider {...provider}>
       <Ribbon
@@ -8698,12 +8800,14 @@ function setup(opts: SetupOptions = {}): {
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
         onDarkPaperChange={onDarkPaperChange}
+        themeSource={themeSource}
+        onThemeSourceChange={onThemeSourceChange}
       />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange }
+  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -8882,6 +8986,16 @@ describe('对话框里改文档名', () => {
     fireEvent.blur(input)
     expect(onChange).not.toHaveBeenCalled()
     expect(input.value).toBe('文档1')
+  })
+
+  it('外观三选一：默认跟随系统，点「深色」回调 dark', () => {
+    const { onThemeSourceChange } = setup()
+    openViaButton()
+    expect(screen.getByTestId('theme-system').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('theme-dark').getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(screen.getByTestId('theme-dark'))
+    expect(onThemeSourceChange).toHaveBeenCalledWith('dark')
   })
 
   it('「纸张也变暗」是个复选框，勾选时回调 true', () => {
@@ -9256,7 +9370,7 @@ export const IconClose = bundleIcon(DismissFilled, DismissRegular)
 
 ```ts
 import { useEffect } from 'react'
-import type { WtApi } from '../types/global'
+import type { ThemeSource, WtApi } from '../types/global'
 
 /**
  * 平台在**模块加载时**就写进 `<html data-platform>`。
@@ -9303,6 +9417,25 @@ export function useDarkPaper(enabled: boolean): void {
   useEffect(() => {
     document.documentElement.dataset.paper = enabled ? 'dark' : 'light'
   }, [enabled])
+}
+
+/**
+ * 把用户选的外观推给主进程。
+ *
+ * 【为什么不能只在页面里翻 class】macOS 的**红绿灯与其它原生部分**由主进程的
+ * `nativeTheme.themeSource` 决定。只改网页的话会出现「网页变暗了、红绿灯还是系统色」——
+ * 那正是刚修好的那种不一致。推给主进程之后，它会经 `themeChanged` 把**解析后的**结果
+ * 广播回来（`useSystemTheme` 负责上色），原生与网页一起变。
+ *
+ * 另一层原因：`'system'` 这个选项本身就只能在主进程里解析——渲染层读不到系统外观
+ * （见 `useSystemTheme` 上面那段实测）。
+ */
+export function useThemePreference(source: ThemeSource): void {
+  useEffect(() => {
+    const api = (window as unknown as { api?: WtApi }).api
+    if (!api) return
+    void api.setThemeSource(source)
+  }, [source])
 }
 ```
 
