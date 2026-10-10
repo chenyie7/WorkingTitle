@@ -5762,6 +5762,16 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { Page } from '../../src/renderer/src/components/Page'
 import { RENDER_WINDOW_LIMIT } from '../../src/core/types'
 
+/**
+ * 折叠用例的 fixture 必须让「渲染的是哪一段」可判：文本全同质（例如全是 'A'）时，
+ * 取开头、取末尾、根本不折叠，三种实现渲染出来的字符串看起来一模一样，断言分辨不出来
+ * ——那等于折叠逻辑没有测试。头尾各放一个标记就够了。
+ */
+const HEAD = 'HEAD-MARKER'
+const TAIL = 'TAIL-MARKER'
+/** 长 RENDER_WINDOW_LIMIT + HEAD.length + TAIL.length，必然触发折叠。 */
+const LONG_TEXT = HEAD + 'A'.repeat(RENDER_WINDOW_LIMIT) + TAIL
+
 describe('Page', () => {
   it('空状态显示引导文案且没有光标', () => {
     render(<Page visibleText="" expanded={false} onToggleExpand={() => {}} empty />)
@@ -5777,10 +5787,18 @@ describe('Page', () => {
   })
 
   it('超过上限时折叠前文，只渲染末尾部分', () => {
-    const text = 'A'.repeat(RENDER_WINDOW_LIMIT + 500)
-    render(<Page visibleText={text} expanded={false} onToggleExpand={() => {}} empty={false} />)
-    expect(screen.getByTestId('page-fold').textContent).toContain('500')
-    expect(screen.getByTestId('page-text').textContent).not.toContain('已折叠')
+    // 前提自检：fixture 必须真的越过上限，否则本用例什么都没测。
+    expect(LONG_TEXT.length).toBeGreaterThan(RENDER_WINDOW_LIMIT)
+    render(<Page visibleText={LONG_TEXT} expanded={false} onToggleExpand={() => {}} empty={false} />)
+    // 「折叠」的实质是丢掉开头那一截：末尾标记在、开头标记不在。
+    // 末条断言不是 not.toContain('已折叠')——折叠提示是 page-text 的兄弟节点，
+    // 那句话恒真，测不出任何东西。
+    const shownText = screen.getByTestId('page-text').textContent ?? ''
+    expect(shownText).toContain(TAIL)
+    expect(shownText).not.toContain(HEAD)
+    expect(screen.getByTestId('page-fold').textContent).toContain(
+      String(LONG_TEXT.length - RENDER_WINDOW_LIMIT)
+    )
   })
 
   it('点击折叠提示会请求展开', () => {
@@ -5791,10 +5809,13 @@ describe('Page', () => {
     expect(onToggleExpand).toHaveBeenCalledTimes(1)
   })
 
-  it('展开后不再显示折叠提示', () => {
-    const text = 'A'.repeat(RENDER_WINDOW_LIMIT + 10)
-    render(<Page visibleText={text} expanded onToggleExpand={() => {}} empty={false} />)
+  it('展开后显示全文，且不再显示折叠提示', () => {
+    render(<Page visibleText={LONG_TEXT} expanded onToggleExpand={() => {}} empty={false} />)
     expect(screen.queryByTestId('page-fold')).toBeNull()
+    // 只断言提示消失是不够的：提示没了、正文却仍停在折叠窗口上，同样满足上一条。
+    const shownText = screen.getByTestId('page-text').textContent ?? ''
+    expect(shownText).toContain(HEAD)
+    expect(shownText).toContain(TAIL)
   })
 
   it('未超过上限时不折叠', () => {
@@ -5845,6 +5866,8 @@ describe('StatusBar', () => {
     expect(screen.getByTestId('status-chars').textContent).toContain('全书 0 字')
     expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 —')
+    // 全书 0 字时百分比必须短路成 0，否则是 NaN%（0/0）。
+    expect(screen.getByTestId('status-percent').textContent).toBe('0%')
   })
 
   it('显示已显示字数、章节、比例、编码与模式', () => {
@@ -5866,6 +5889,14 @@ describe('StatusBar', () => {
       <StatusBar novel={novel} revealedChars={0} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={999_999} />
     )
     expect(screen.getByTestId('status-elapsed').textContent).toBe('用时 00:00:00')
+  })
+
+  it('百分比向下取整', () => {
+    // 259 / 1000 = 25.9%：floor 得 25，round 得 26，两者可判。
+    render(
+      <StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" startedAt={null} now={0} />
+    )
+    expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 })
 ```
