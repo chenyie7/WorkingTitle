@@ -40,6 +40,53 @@ describe('ChapterList', () => {
     expect(screen.getByText(/共 5 章/)).toBeTruthy()
   })
 
+  it('点按钮收起书名信息，再点一次展开', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    const toggle = screen.getByTestId('sidebar-header-toggle')
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(screen.queryByText('大书')).toBeNull()
+    expect(screen.queryByText(/共 5 章/)).toBeNull()
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(toggle)
+    expect(screen.getByText('大书')).toBeTruthy()
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('收起后按钮仍在（鼠标用户得有入口把它调回来）', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
+    // 只断言「还在」不够——要断言它真的还能把它切回来，否则一个 disabled 的残留按钮也能过
+    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
+    expect(screen.getByText('大书')).toBeTruthy()
+  })
+
+  it('⌘/Ctrl + Shift + H 与按钮等效', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
+    expect(screen.queryByText('大书')).toBeNull()
+
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByText('大书')).toBeTruthy()
+  })
+
+  it('少了 Shift 或修饰键时不触发（别把正常打字吃掉）', () => {
+    const novel = makeNovel(5)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+
+    fireEvent.keyDown(window, { key: 'h', code: 'KeyH' })
+    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', shiftKey: true })
+    fireEvent.keyDown(window, { key: 'h', code: 'KeyH', metaKey: true })
+    fireEvent.keyDown(window, { key: 'K', code: 'KeyK', metaKey: true, shiftKey: true })
+    expect(screen.getByText('大书')).toBeTruthy()
+  })
+
   it('章节很多时只渲染可视区附近的行（虚拟滚动）', () => {
     const novel = makeNovel(2000)
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
