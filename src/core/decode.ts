@@ -29,7 +29,7 @@ export function detectBom(buf: Buffer): { encoding: string; length: number } | n
 }
 
 export function normalizeNewlines(text: string): string {
-  return text.replace(/\r\n?/g, '\n')
+  return text.replace(/\r+\n/g, '\n').replace(/\r/g, '\n')
 }
 
 /** 用严格模式试解 UTF-8：非法字节序列会抛错，返回 null。 */
