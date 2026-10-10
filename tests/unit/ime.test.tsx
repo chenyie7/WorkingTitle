@@ -91,6 +91,21 @@ describe('输入法友好模式', () => {
     fireEvent.input(el)
     expect(engine.pump).not.toHaveBeenCalled()
   })
+
+  it('合成态的 input 也绝不清空 textarea（清空会打断输入法合成）', () => {
+    // 这条是【真机 bug 的回归用例】，抓的是上一条抓不到的东西：
+    // 上一条只断言「没抽字」，而当初的实现正是「跳过抽字、但照常清空」——
+    // 清空 textarea 会打断输入法的合成会话，真机表现为候选框闪一下就没、
+    // 拼音永远上不了屏、正文一个字都不出。用户实测报的就是这个。
+    // jsdom 里清空 value 不会取消任何东西，所以只有直接断言 value 才守得住。
+    const engine = setup('ime')
+    const el = input()
+    fireEvent.compositionStart(el)
+    el.value = 'nihao'
+    fireEvent.input(el)
+    expect(el.value).toBe('nihao')
+    expect(engine.pump).not.toHaveBeenCalled()
+  })
 })
 
 describe('纯按键模式', () => {
