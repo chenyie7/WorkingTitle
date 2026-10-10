@@ -77,12 +77,34 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
 
     const focusIfNotTextInput = (e: Event): void => {
       // 点在这些控件上时不抢焦点：否则 mousedown 一冒泡到 window 就把焦点抢回隐藏
-      // textarea，它们当场 blur。Toolbar 的比例输入框就是这样废掉的——blur 触发
+      // textarea，它们当场 blur。设置对话框里的比例输入框就是这样废掉的——blur 触发
       // `commitRatio`，把 draft 重置回当前比例，用户看到的是「点一下就弹回原样、
       // 字根本打不进去」。应用里任何接受文字输入的控件都会中这一枪。
       // 隐藏 textarea 自己也是 `textarea`，但那时 `document.activeElement` 已经是它，
       // 跳不跳过都一样。
       if (e.target instanceof Element && e.target.closest(TEXT_INPUT_SELECTOR)) return
+      // 设置对话框开着时**整块**都不抢：焦点待在对话框里是模态的应有之义，抢回来会让用户
+      // 在对话框里敲的键漏进小说——而字出在遮罩后面，用户看不见。上面那条只挡住文字输入
+      // 控件，点对话框的空白处或按钮时仍会中枪。
+      //
+      // 【用 role="dialog" 而不是给这个对话框造一个专用属性】这是 ARIA 的标准语义，以后
+      // 再加进来的模态自动被覆盖；专用属性则每个新对话框都得记得挂一次，漏挂的表现是
+      // 「打字抽到小说里」，与本次这个 bug 一模一样。
+      if (e.target instanceof Element && e.target.closest('[role="dialog"]')) return
+      // 上面那条只看**点击目标**，还不够——「用『设置』按钮打开对话框」这一下会从另一条
+      // 路漏进来：本监听挂在 window 上，而 React 的事件层挂在容器（#root）上，容器在
+      // window 的【里面】，所以冒泡到 window 时 React 的 onClick 已经跑完——对话框挂载、
+      // autoFocus 已经把焦点送进文档名输入框了。此刻 e.target 还是工具栏上那个按钮
+      // （不在对话框里），于是这一下把刚送进去的焦点又抢回隐藏 textarea：对话框开着，
+      // 用户敲的字全抽进小说。
+      // 所以再判一次**当前焦点**：焦点已经在某个对话框里时，同样不抢。
+      // 【两条都要，缺一不可】这条管「焦点还在对话框里」（刚打开的那一下），上一条管
+      // 「焦点已经离开对话框」（点对话框里不可聚焦的空白处时，浏览器会把焦点交给 body）。
+      if (
+        document.activeElement instanceof Element &&
+        document.activeElement.closest('[role="dialog"]')
+      )
+        return
       if (document.activeElement !== el) el.focus({ preventScroll: true })
     }
 

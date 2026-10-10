@@ -4178,10 +4178,15 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 37 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
-    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-ribbon__title-input` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__rail` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 46 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–16 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半），后续每次改动都按「三份 CSS 里实际出现的 `.wt-*`」重扫一遍：
+    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-modal` `.wt-modal__body` `.wt-modal__close` `.wt-modal__footer` `.wt-modal__header` `.wt-modal__label` `.wt-modal__panel` `.wt-modal__row` `.wt-modal__text` `.wt-modal__title` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__rail` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+
+    （37 → 46 的变动来自 Task 16：删掉随「就地改名」一起作废的 `.wt-ribbon__title-input`，
+    加上设置对话框那 10 个 `.wt-modal*`。对话框复用了既有的 `.wt-btn` 与 `.wt-ratio*`。）
   - `App.tsx` 渲染出 `.wt-app` 骨架，含 `data-testid="app-root"`
-  - `<Ribbon docTitle={string} onDocTitleChange={(t: string) => void} />`：蓝条上的文档名，**由用户自己定、与 `novel.title` 无关**；`data-testid="doc-title"`（按钮）、`doc-title-input`（就地编辑的输入框）
+  - `<Ribbon docTitle={string} onDocTitleChange={(t: string) => void} />`：蓝条上的文档名，**由用户自己定、与 `novel.title` 无关**；`data-testid="doc-title"`
+    （原本是就地改名的按钮 + `doc-title-input`；Task 16 起蓝条上只剩一段静态文本，
+    改名挪进设置对话框，`doc-title-input` 那个 testid 跟着搬过去）
 
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
 
@@ -4370,39 +4375,11 @@ body {
   font-weight: 600;
 }
 
-/* 文档名是个按钮：点它就地改名。做成 button 而不是 span，键盘也能到达，
-   而且不需要额外的「编辑」图标占位置。 */
+/* 蓝条上的文档名。**一段静态文本**：改名搬进了设置对话框，这里不再可点——
+   一个能点开输入框的「文档1」正是伪装里最显眼的那类破绽。
+   仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid。 */
 .wt-ribbon__title-doc {
-  padding: 0 4px;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: inherit;
   opacity: 0.85;
-  cursor: pointer;
-}
-
-.wt-ribbon__title-doc:hover {
-  background: rgba(255, 255, 255, 0.18);
-  opacity: 1;
-}
-
-.wt-ribbon__title-input {
-  width: 170px;
-  padding: 0 4px;
-  border: none;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #1a1a1a;
-  font-family: inherit;
-  font-size: inherit;
-}
-
-.wt-ribbon__title-input:focus {
-  outline: 1px solid #ffffff;
 }
 
 .wt-tabs {
@@ -4540,6 +4517,111 @@ body {
 .wt-ratio__input:focus {
   outline: 2px solid #7ea6d8;
   outline-offset: -1px;
+}
+
+/* ---- 设置对话框 ---- */
+
+/* 遮罩铺满窗口。z-index 刻意【低于】.wt-toast 的 999：比例夹紧的提示是从对话框里发出来
+   的，压在遮罩上才看得见；反过来就被遮罩盖住了。 */
+.wt-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.wt-modal__panel {
+  width: 420px;
+  max-width: calc(100% - 48px);
+  background: #ffffff;
+  border: 1px solid #b8b8b8;
+  border-radius: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+}
+
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
+.wt-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  background: var(--wt-blue);
+  color: #ffffff;
+  font-size: 12px;
+  border-radius: 3px 3px 0 0;
+}
+
+.wt-modal__title {
+  font-weight: 600;
+}
+
+.wt-modal__close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wt-modal__close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.wt-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.wt-modal__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wt-modal__label {
+  flex: 0 0 64px;
+  font-size: 12px;
+  color: #555555;
+}
+
+.wt-modal__text {
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #b8b8b8;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.wt-modal__text:focus {
+  outline: 2px solid #7ea6d8;
+  outline-offset: -1px;
+}
+
+.wt-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 14px;
+}
+
+/* 面板里的按钮要有实边框：`.wt-btn` 在工具栏里靠 hover 才有轮廓，放到白底上会像纯文本 */
+.wt-modal__body .wt-btn,
+.wt-modal__footer .wt-btn {
+  border-color: #b8b8b8;
+  padding: 0 12px;
 }
 ```
 
@@ -4822,13 +4904,15 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
     ```
   - `<Ribbon />`：七个选项卡；文件 / 开始 / 插入 / 布局 / 引用 / 审阅 / 视图
   - `<Toast />`：`toast` 非空时渲染 `.wt-toast`，1.8 秒后自动消失
-  - `data-testid`：`tab-文件` 等（`tab-${name}`）、`btn-${id}`、`ratio-input`、`mode-button`、`toast`
+  - `data-testid`：`tab-文件` 等（`tab-${name}`）、`btn-${id}`、`toast`
+    （`ratio-input` / `mode-button` / `btn-import` / `btn-clear-session` 四个 testid 原有，
+    但渲染它们的控件已经搬进设置对话框——见 Task 16）
 
 **行为契约**（spec §5.2）：
 - `toggle` 类按钮点击 → 切换按下态（`.wt-btn--active` + `aria-pressed`）
 - `placeholder` 类按钮点击 → 弹出 toast「演示占位功能，未实现」
-- 比例输入 → 真实改 `ratio`，夹紧 1..500
-- 模式按钮 → 真实切换 `ime` / `key`
+- 比例输入 → 真实改 `ratio`，夹紧 1..500（控件在设置对话框里，Task 16）
+- 模式按钮 → 真实切换 `ime` / `key`（同上）
 
 - [ ] **Step 1: 写 `src/renderer/src/state/ToolbarContext.tsx`**
 
@@ -4956,43 +5040,33 @@ export function Toast() {
 - [ ] **Step 3: 写 `src/renderer/src/components/Toolbar.tsx`**
 
 ```tsx
-import { useEffect, useState } from 'react'
-import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
-import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
+import { useToolbar } from '../state/ToolbarContext'
 
+/**
+ * 工具栏里能出现的三种东西。
+ *
+ * 【`ratio` / `mode` / `import` / `clear-session` 四种 kind 已经不在这里了】它们渲染的是
+ * 应用的真实功能，现在统一由 `SettingsDialog` 渲染（那四种控件连同各自的 testid 一起搬了
+ * 过去）。工具栏只留一个 `settings` kind：一个打开对话框的按钮。
+ */
 export type ToolbarItem =
   | { kind: 'toggle'; id: string; label: string; title: string }
   | { kind: 'placeholder'; id: string; label: string; title: string }
-  | { kind: 'ratio' }
-  | { kind: 'mode' }
-  | { kind: 'import' }
-  | { kind: 'clear-session' }
+  | { kind: 'settings' }
 
 export interface ToolbarGroup {
   label: string
   items: ToolbarItem[]
 }
 
-export function Toolbar({ groups }: { groups: ToolbarGroup[] }) {
-  const { toggles, toggle, notify, ratio, setRatio, mode, setMode, onImport, onClearSession } =
-    useToolbar()
-  const [draft, setDraft] = useState(String(ratio))
-
-  useEffect(() => {
-    setDraft(String(ratio))
-  }, [ratio])
-
-  const commitRatio = (raw: string): void => {
-    const parsed = Number.parseInt(raw, 10)
-    if (!Number.isFinite(parsed)) {
-      setDraft(String(ratio))
-      return
-    }
-    const next = clampRatioInput(parsed)
-    setRatio(next)
-    setDraft(String(next))
-    if (next !== parsed) notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${next}`)
-  }
+export function Toolbar({
+  groups,
+  onOpenSettings
+}: {
+  groups: ToolbarGroup[]
+  onOpenSettings: () => void
+}) {
+  const { toggles, toggle, notify } = useToolbar()
 
   return (
     <div className="wt-toolbar" data-testid="toolbar">
@@ -5000,94 +5074,38 @@ export function Toolbar({ groups }: { groups: ToolbarGroup[] }) {
         <div className="wt-group" key={group.label}>
           <div className="wt-group__body">
             {group.items.map((item) => {
-              switch (item.kind) {
-                case 'ratio':
-                  return (
-                    <div className="wt-ratio" key="ratio">
-                      <span className="wt-ratio__label">1 键显示</span>
-                      <input
-                        className="wt-ratio__input"
-                        data-testid="ratio-input"
-                        aria-label="比例：输入 1 个字显示小说多少字"
-                        inputMode="numeric"
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onBlur={(e) => commitRatio(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitRatio(e.currentTarget.value)
-                        }}
-                      />
-                      <span className="wt-ratio__label">字</span>
-                    </div>
-                  )
-
-                case 'mode':
-                  return (
-                    <button
-                      key="mode"
-                      type="button"
-                      className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
-                      data-testid="mode-button"
-                      title="切换输入模式：输入法友好 / 纯按键"
-                      aria-pressed={mode === 'ime'}
-                      onClick={() => {
-                        const next = mode === 'ime' ? 'key' : 'ime'
-                        setMode(next)
-                        notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
-                      }}
-                    >
-                      {mode === 'ime' ? '输入法' : '纯按键'}
-                    </button>
-                  )
-
-                case 'import':
-                  return (
-                    <button
-                      key="import"
-                      type="button"
-                      className="wt-btn"
-                      data-testid="btn-import"
-                      title="导入小说 (Ctrl+O)"
-                      onClick={() => onImport()}
-                    >
-                      导入小说
-                    </button>
-                  )
-
-                case 'clear-session':
-                  return (
-                    <button
-                      key="clear-session"
-                      type="button"
-                      className="wt-btn"
-                      data-testid="btn-clear-session"
-                      title="清除阅读记录"
-                      onClick={() => onClearSession()}
-                    >
-                      清除阅读记录
-                    </button>
-                  )
-
-                default: {
-                  const active = Boolean(toggles[item.id])
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`wt-btn ${active ? 'wt-btn--active' : ''}`}
-                      data-testid={`btn-${item.id}`}
-                      title={item.title}
-                      aria-pressed={item.kind === 'toggle' ? active : undefined}
-                      onClick={() => {
-                        if (item.kind === 'toggle') toggle(item.id)
-                        else notify('演示占位功能，未实现')
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  )
-                }
+              if (item.kind === 'settings') {
+                return (
+                  <button
+                    key="settings"
+                    type="button"
+                    className="wt-btn"
+                    data-testid="btn-settings"
+                    title="设置 (⌘/Ctrl + ,)"
+                    onClick={onOpenSettings}
+                  >
+                    设置
+                  </button>
+                )
               }
+
+              const active = Boolean(toggles[item.id])
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`wt-btn ${active ? 'wt-btn--active' : ''}`}
+                  data-testid={`btn-${item.id}`}
+                  title={item.title}
+                  aria-pressed={item.kind === 'toggle' ? active : undefined}
+                  onClick={() => {
+                    if (item.kind === 'toggle') toggle(item.id)
+                    else notify('演示占位功能，未实现')
+                  }}
+                >
+                  {item.label}
+                </button>
+              )
             })}
           </div>
           <div className="wt-group__label">{group.label}</div>
@@ -5103,7 +5121,8 @@ export function Toolbar({ groups }: { groups: ToolbarGroup[] }) {
 - [ ] **Step 4: 写 `src/renderer/src/components/Ribbon.tsx`**
 
 ```tsx
-import { useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { SettingsDialog } from './SettingsDialog'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -5135,15 +5154,13 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
   ]
 }
 
-/** 承载真实功能的控件，挂在「开始」和「视图」两个选项卡下，保证随手可及 */
-const READING_GROUP: ToolbarGroup = {
-  label: '阅读替换',
-  items: [{ kind: 'ratio' }, { kind: 'mode' }]
-}
-
+/**
+ * 【原先这里挂着一个 `READING_GROUP`（比例 + 输入模式），摆在「开始」和「视图」两个选项卡下】
+ * 那是全应用最容易被一眼看穿的地方：假 Word 的工具栏里放着「1 键显示 N 字」。整组连同
+ * 「文件」选项卡里的「小说」组一起搬进了 `SettingsDialog`，工具栏只留一个「设置」按钮。
+ */
 const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   文件: [
-    { label: '小说', items: [{ kind: 'import' }, { kind: 'clear-session' }] },
     {
       label: '文件',
       items: [
@@ -5152,12 +5169,14 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         { kind: 'placeholder', id: 'export-docx', label: '导出 docx', title: '导出为 docx' },
         { kind: 'placeholder', id: 'print', label: '打印', title: '打印' }
       ]
-    }
+    },
+    // 真实功能的唯一入口。排在占位组【后面】——它是整个界面上唯一「有用」的按钮，
+    // 摆在最左边反而显眼。
+    { label: '设置', items: [{ kind: 'settings' }] }
   ],
   开始: [
     FONT_GROUP,
     PARAGRAPH_GROUP,
-    READING_GROUP,
     {
       label: '样式',
       items: [
@@ -5222,8 +5241,7 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺' },
         { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线' }
       ]
-    },
-    READING_GROUP
+    }
   ]
 }
 
@@ -5235,63 +5253,33 @@ export function Ribbon({
   onDocTitleChange: (next: string) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState(docTitle)
-  // Esc 取消时 input 会卸载、进而触发 blur；没有这个标记的话 blur 会把草稿提交上去，
-  // 「按 Esc 取消」就成了「按 Esc 提交」。
-  const cancelTitleRef = useRef(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  const startEditingTitle = (): void => {
-    setTitleDraft(docTitle)
-    cancelTitleRef.current = false
-    setEditingTitle(true)
-  }
-
-  const commitTitle = (): void => {
-    if (cancelTitleRef.current) {
-      cancelTitleRef.current = false
-      setEditingTitle(false)
-      return
+  // 设置对话框的快捷键：⌘/Ctrl + ,（macOS 上「设置」的惯例键）
+  //
+  // 【为什么用 e.code 而不是 e.key】与左侧栏的 ⌘/Ctrl+Shift+H 同理：`e.key` 会随修饰键
+  // 与键盘布局变（按住 Shift 时 ',', 在非 QWERTY 布局下还可能是别的字符），而
+  // `e.code === 'Comma'` 按物理按键位置判定，不受这两件事影响。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.code !== 'Comma') return
+      e.preventDefault()
+      setSettingsOpen(true)
     }
-    const next = titleDraft.trim()
-    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
-    if (next) onDocTitleChange(next)
-    setEditingTitle(false)
-  }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
         <span className="wt-ribbon__title-app">Word</span>
-        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点 */}
-        {editingTitle ? (
-          <input
-            className="wt-ribbon__title-input"
-            data-testid="doc-title-input"
-            aria-label="文档名"
-            value={titleDraft}
-            autoFocus
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitTitle()
-              else if (e.key === 'Escape') {
-                cancelTitleRef.current = true
-                setEditingTitle(false)
-              }
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            className="wt-ribbon__title-doc"
-            data-testid="doc-title"
-            title="点击重命名"
-            onClick={startEditingTitle}
-          >
-            {docTitle}
-          </button>
-        )}
+        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
+            它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
+        <span className="wt-ribbon__title-doc" data-testid="doc-title">
+          {docTitle}
+        </span>
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (
@@ -5308,7 +5296,13 @@ export function Ribbon({
           </button>
         ))}
       </div>
-      <Toolbar groups={TABS[tab]} />
+      <Toolbar groups={TABS[tab]} onOpenSettings={() => setSettingsOpen(true)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        docTitle={docTitle}
+        onDocTitleChange={onDocTitleChange}
+      />
     </div>
   )
 }
@@ -5317,80 +5311,29 @@ export function Ribbon({
 - [ ] **Step 5: 写失败测试 `tests/unit/ribbon.test.tsx`**
 
 ```tsx
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Ribbon, RIBBON_TABS } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
-import type { InputMode } from '../../src/core/types'
 
-function setup(overrides: {
-  ratio?: number
-  mode?: InputMode
-  onRatioChange?: (n: number) => void
-  onModeChange?: (m: InputMode) => void
-  onImport?: () => void
-  onClearSession?: () => void
-} = {}): void {
+function setup(): void {
   render(
-    <ToolbarProvider {...overrides}>
+    <ToolbarProvider>
       <Ribbon docTitle="文档1" onDocTitleChange={() => {}} />
       <Toast />
     </ToolbarProvider>
   )
 }
 
-describe('文档名可改（蓝条上的「文档1」）', () => {
-  function renderRibbon(docTitle: string): ReturnType<typeof vi.fn> {
-    const onDocTitleChange = vi.fn()
-    render(
-      <ToolbarProvider>
-        <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
-      </ToolbarProvider>
-    )
-    return onDocTitleChange
-  }
-
-  it('点文档名变成输入框，回车提交', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
-    expect(input.value).toBe('文档1')
-
-    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
-    expect(screen.queryByTestId('doc-title-input')).toBeNull()
-  })
-
-  it('失焦也提交', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
-    fireEvent.blur(input)
-    // 两侧空白要去掉
-    expect(onChange).toHaveBeenCalledWith('会议纪要')
-  })
-
-  it('Esc 取消：提交不上去，名字也不变', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '改了但不该生效' } })
-    fireEvent.keyDown(input, { key: 'Escape' })
-    fireEvent.blur(input)
-    expect(onChange).not.toHaveBeenCalled()
+describe('蓝条上的文档名', () => {
+  it('是一段静态文本：点它不再变成输入框（改名挪进了设置对话框）', () => {
+    setup()
     expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
-  })
 
-  it('空名不提交（蓝条不能变成一片空白）', () => {
-    const onChange = renderRibbon('文档1')
     fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '   ' } })
-    fireEvent.blur(input)
-    expect(onChange).not.toHaveBeenCalled()
+
+    expect(screen.queryByTestId('doc-title-input')).toBeNull()
     expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
   })
 })
@@ -5410,7 +5353,7 @@ describe('Ribbon 选项卡', () => {
     setup()
     fireEvent.click(screen.getByTestId('tab-文件'))
     expect(screen.getByTestId('tab-文件').getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByTestId('btn-import')).toBeTruthy()
+    expect(screen.getByTestId('btn-settings')).toBeTruthy()
     expect(screen.queryByTestId('btn-bold')).toBeNull()
   })
 })
@@ -5436,56 +5379,30 @@ describe('占位按钮必须可点击且有反馈', () => {
   })
 })
 
-describe('真实功能控件', () => {
-  it('比例输入回车后回调夹紧后的值', () => {
-    const onRatioChange = vi.fn()
-    setup({ ratio: 10, onRatioChange })
-    const input = screen.getByTestId('ratio-input')
-    fireEvent.change(input, { target: { value: '25' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onRatioChange).toHaveBeenCalledWith(25)
-  })
-
-  it('比例超出上限时夹紧到 500 并提示', () => {
-    const onRatioChange = vi.fn()
-    setup({ ratio: 10, onRatioChange })
-    const input = screen.getByTestId('ratio-input')
-    fireEvent.change(input, { target: { value: '9999' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onRatioChange).toHaveBeenCalledWith(500)
-    expect(screen.getByTestId('toast').textContent).toContain('500')
-  })
-
-  it('输入模式按钮真实切换并提示', () => {
-    const onModeChange = vi.fn()
-    setup({ mode: 'ime', onModeChange })
-    expect(screen.getByTestId('mode-button').textContent).toBe('输入法')
-    fireEvent.click(screen.getByTestId('mode-button'))
-    expect(onModeChange).toHaveBeenCalledWith('key')
-    expect(screen.getByTestId('toast').textContent).toContain('纯按键')
-  })
-
-  it('「导入小说」按钮触发真实回调而非占位提示', () => {
-    const onImport = vi.fn()
-    setup({ onImport })
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
-    expect(onImport).toHaveBeenCalledTimes(1)
-    expect(screen.queryByTestId('toast')).toBeNull()
-  })
-
-  it('「清除阅读记录」按钮触发真实回调', () => {
-    const onClearSession = vi.fn()
-    setup({ onClearSession })
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-clear-session'))
-    expect(onClearSession).toHaveBeenCalledTimes(1)
-  })
-
-  it('默认选项卡「开始」下就能看到比例与模式控件', () => {
+describe('真实功能不再摆在工具栏里', () => {
+  it('七个选项卡下都找不到比例/模式/导入/清除（它们整组搬进了设置对话框）', () => {
     setup()
+    for (const name of RIBBON_TABS) {
+      fireEvent.click(screen.getByTestId(`tab-${name}`))
+      expect(screen.queryByTestId('ratio-input')).toBeNull()
+      expect(screen.queryByTestId('mode-button')).toBeNull()
+      expect(screen.queryByTestId('btn-import')).toBeNull()
+      expect(screen.queryByTestId('btn-clear-session')).toBeNull()
+    }
+  })
+
+  it('工具栏里唯一的真实功能入口是「文件」选项卡下的「设置」按钮', () => {
+    setup()
+    // 默认的「开始」选项卡下没有它
+    expect(screen.queryByTestId('btn-settings')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('tab-文件'))
+    expect(screen.getByTestId('btn-settings')).toBeTruthy()
+
+    // 点了它，对话框才出现（这两个控件才算「在界面上」）
+    fireEvent.click(screen.getByTestId('btn-settings'))
+    expect(screen.getByTestId('settings')).toBeTruthy()
     expect(screen.getByTestId('ratio-input')).toBeTruthy()
-    expect(screen.getByTestId('mode-button')).toBeTruthy()
   })
 })
 ```
@@ -5696,7 +5613,7 @@ export function ChapterList({
         </button>
         {novel ? novel.title : '未导入小说'}
         <div className="wt-sidebar__sub">
-          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
+          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 设置 → 导入小说'}
         </div>
       </div>
       <div
@@ -5774,7 +5691,8 @@ describe('ChapterList', () => {
   it('未导入时显示引导文案', () => {
     render(<ChapterList novel={null} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
     expect(screen.getByText('未导入小说')).toBeTruthy()
-    expect(screen.getByText('文件 → 导入小说')).toBeTruthy()
+    // 导入按钮搬进设置对话框之后，这条引导文案跟着改了（旧的指向一个已经不存在的按钮）
+    expect(screen.getByText('文件 → 设置 → 导入小说')).toBeTruthy()
   })
 
   it('显示书名与章节数', () => {
@@ -6043,7 +5961,7 @@ export function Page({
     <div className="wt-page" data-testid="page">
       {empty ? (
         <div className="wt-page__empty" data-testid="page-empty">
-          文件 → 导入小说，或按 Ctrl+O
+          文件 → 设置 → 导入小说，或按 Ctrl+O
           <br />
           导入后在文档区打字，字会按比例从小说里取出来。
         </div>
@@ -6600,12 +6518,34 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
 
     const focusIfNotTextInput = (e: Event): void => {
       // 点在这些控件上时不抢焦点：否则 mousedown 一冒泡到 window 就把焦点抢回隐藏
-      // textarea，它们当场 blur。Toolbar 的比例输入框就是这样废掉的——blur 触发
+      // textarea，它们当场 blur。设置对话框里的比例输入框就是这样废掉的——blur 触发
       // `commitRatio`，把 draft 重置回当前比例，用户看到的是「点一下就弹回原样、
       // 字根本打不进去」。应用里任何接受文字输入的控件都会中这一枪。
       // 隐藏 textarea 自己也是 `textarea`，但那时 `document.activeElement` 已经是它，
       // 跳不跳过都一样。
       if (e.target instanceof Element && e.target.closest(TEXT_INPUT_SELECTOR)) return
+      // 设置对话框开着时**整块**都不抢：焦点待在对话框里是模态的应有之义，抢回来会让用户
+      // 在对话框里敲的键漏进小说——而字出在遮罩后面，用户看不见。上面那条只挡住文字输入
+      // 控件，点对话框的空白处或按钮时仍会中枪。
+      //
+      // 【用 role="dialog" 而不是给这个对话框造一个专用属性】这是 ARIA 的标准语义，以后
+      // 再加进来的模态自动被覆盖；专用属性则每个新对话框都得记得挂一次，漏挂的表现是
+      // 「打字抽到小说里」，与本次这个 bug 一模一样。
+      if (e.target instanceof Element && e.target.closest('[role="dialog"]')) return
+      // 上面那条只看**点击目标**，还不够——「用『设置』按钮打开对话框」这一下会从另一条
+      // 路漏进来：本监听挂在 window 上，而 React 的事件层挂在容器（#root）上，容器在
+      // window 的【里面】，所以冒泡到 window 时 React 的 onClick 已经跑完——对话框挂载、
+      // autoFocus 已经把焦点送进文档名输入框了。此刻 e.target 还是工具栏上那个按钮
+      // （不在对话框里），于是这一下把刚送进去的焦点又抢回隐藏 textarea：对话框开着，
+      // 用户敲的字全抽进小说。
+      // 所以再判一次**当前焦点**：焦点已经在某个对话框里时，同样不抢。
+      // 【两条都要，缺一不可】这条管「焦点还在对话框里」（刚打开的那一下），上一条管
+      // 「焦点已经离开对话框」（点对话框里不可聚焦的空白处时，浏览器会把焦点交给 body）。
+      if (
+        document.activeElement instanceof Element &&
+        document.activeElement.closest('[role="dialog"]')
+      )
+        return
       if (document.activeElement !== el) el.focus({ preventScroll: true })
     }
 
@@ -7267,6 +7207,23 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/**
+ * 走界面导入一本小说：真实功能现在都收在设置对话框里，所以是「文件 → 设置 → 导入小说」，
+ * 导入完再把对话框关掉（对话框不会自己关：`onImport` 是异步的、且用户可能只是取消了选择框）。
+ */
+function importViaSettings(): void {
+  fireEvent.click(screen.getByTestId('tab-文件'))
+  fireEvent.click(screen.getByTestId('btn-settings'))
+  fireEvent.click(screen.getByTestId('btn-import'))
+  fireEvent.click(screen.getByTestId('settings-close'))
+}
+
+/** 打开设置对话框（比例等控件都在里面） */
+function openSettings(): void {
+  fireEvent.click(screen.getByTestId('tab-文件'))
+  fireEvent.click(screen.getByTestId('btn-settings'))
+}
+
 describe('App 端到端（单测层）', () => {
   it('未导入时阅读区是空状态', async () => {
     installApi(null)
@@ -7280,8 +7237,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel)
     render(<App />)
 
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     // 修复前这里是 `novel.title`（= 文件名「测试书」），等于把「在看小说」写在窗口最显眼处
@@ -7294,8 +7250,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel)
     render(<App />)
 
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')
@@ -7310,8 +7265,7 @@ describe('App 端到端（单测层）', () => {
     const originalFlat = novel.flatText
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')
@@ -7327,8 +7281,7 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-1')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('chapter-item-1'))
@@ -7345,18 +7298,17 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
-    // 比例输入框挂在「开始」「视图」两个选项卡下，而导入按钮在「文件」选项卡下——
-    // Ribbon 只渲染当前选项卡的工具组，切回「开始」它才在 DOM 里。
-    fireEvent.click(screen.getByTestId('tab-开始'))
+    // 比例输入框在设置对话框里（原先挂在「开始」「视图」两个选项卡下，已于本次搬走）
+    openSettings()
 
     const ratioInput = screen.getByTestId('ratio-input')
     fireEvent.change(ratioInput, { target: { value: '2' } })
     fireEvent.keyDown(ratioInput, { key: 'Enter' })
     await waitFor(() => expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:2'))
+    fireEvent.click(screen.getByTestId('settings-close'))
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
@@ -7389,21 +7341,37 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
     expect(window.api.clearSession).toHaveBeenCalled()
+  })
+
+  it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    expect(screen.getByTestId('doc-title').textContent).toBe('第 3 季度汇报')
   })
 
   it('打字后会防抖保存会话', async () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')
@@ -7598,14 +7566,56 @@ test('退格只回吐显示，小说内容不受影响', async () => {
 })
 
 test('改比例后同样的击键抽出更多字', async () => {
+  // 比例框现在在设置对话框里（原先挂在「开始」/「视图」两个选项卡的工具栏上）
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
   const ratio = win.locator('[data-testid="ratio-input"]')
   await ratio.fill('3')
   await ratio.press('Enter')
   await expect(win.locator('[data-testid="status-ratio"]')).toContainText('1:3')
+  await win.locator('[data-testid="settings-close"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
 
   await focusEditor()
   await win.keyboard.type('aa')
   await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 6')
+})
+
+/**
+ * 【这条是本次唯一能在真机（真实 Chromium 的焦点语义 + 命中测试）里判的用例】
+ *
+ * jsdom 里测不到的是**后果**：对话框开着时用户敲的键会漏进小说，而字出在遮罩后面，
+ * 用户看不见。单测里那两条守的是 InputCapture 里两条闸的机制，不是这个后果
+ * ——尤其「点对话框里不可聚焦的空白处」这一下：浏览器会把焦点交给 body，而 jsdom 不会，
+ * 单测是手工把那个状态摆出来的。
+ */
+test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字，Esc 关', async () => {
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  // 打开那一瞬间焦点就得在对话框里：浏览器的 click 会先经过 React（对话框挂载 + autoFocus）、
+  // 再冒泡到 window 上那个「点哪儿都把焦点抢回隐形输入框」的监听。少了那条闸，这一下就会
+  // 把焦点抢走，下面的断言当场红。
+  await expect(win.locator('[data-testid="doc-title-input"]')).toBeFocused()
+
+  // 在文档名输入框里敲的字母进输入框，不许抽走小说
+  await win.keyboard.type('aaa')
+  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+
+  // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
+  // 此后键盘没有焦点宿主，更不该被抢回阅读区
+  await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
+  await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
+  await win.keyboard.type('bbb')
+  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+
+  await win.keyboard.press('Escape')
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
+
+  // 快捷键⌘/Ctrl + , 同样能开
+  await win.keyboard.press('Meta+Comma')
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
@@ -7829,6 +7839,641 @@ Expected: 全部 exit 0。把真实输出贴进最终报告。
 git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
 cat > /tmp/wt-commit-msg.txt <<'EOF'
 build: electron-builder 双平台打包配置、CI 工作流与 README
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
+```
+
+---
+
+## Task 16: 设置对话框（把真实功能收进模态）
+
+> **这一节是应用可用之后追加的**（Task 1–14 全部交付、Task 15 那条「建议新增」与它无关），
+> 编号排在 Task 14 之后只是为了不重排前面的任务。
+
+**Files:**
+- Create: `src/renderer/src/components/SettingsDialog.tsx`、`tests/unit/settings.test.tsx`
+- Modify: `src/renderer/src/components/Ribbon.tsx`、`src/renderer/src/components/Toolbar.tsx`、
+  `src/renderer/src/input/InputCapture.tsx`、`src/renderer/src/styles/ribbon.css`、
+  `src/renderer/src/components/ChapterList.tsx`、`src/renderer/src/components/Page.tsx`、
+  `tests/unit/ribbon.test.tsx`、`tests/unit/app.test.tsx`、`tests/unit/chapterList.test.tsx`、
+  `tests/e2e/app.spec.ts`
+- 本任务**没有**动 `src/renderer/src/App.tsx`：对话框归 `Ribbon` 所有——打开它的按钮就在 Ribbon
+  渲染的「文件」选项卡里，文档名本来也已经是 Ribbon 的 prop——所以 App 的接线一字未改。
+
+**Interfaces:**
+- Consumes: Task 8 的 `useToolbar()`、Task 7 的 CSS 类名（本任务新增 10 个 `.wt-modal*`）
+- Produces:
+  - `<SettingsDialog open={boolean} onClose={() => void} docTitle={string} onDocTitleChange={(t: string) => void} />`：
+    居中模态，`role="dialog"` / `aria-modal="true"`
+  - `data-testid` 新增：`settings`（对话框根）、`settings-close`（标题栏 ✕）、
+    `settings-close-footer`（底部「关闭」）、`btn-settings`（「文件」页那个入口）
+  - 搬进对话框的五个 testid **原样不变**：`doc-title-input`、`ratio-input`、`mode-button`、
+    `btn-import`、`btn-clear-session`
+
+**为什么做**：应用的真实功能原先直接摆在假 Word 的界面上——工具栏里一组「阅读替换」放着比例框和
+模式按钮，「文件」页第一组就是「导入小说 / 清除阅读记录」，蓝条上的文档名还能点开改。这些是伪装
+里最容易被一眼看穿的地方。收进一个模态之后界面上只剩两个入口，而两者都是真 Word 也有的东西。
+
+**界面上因此去掉的**：
+1. 「开始」和「视图」两个选项卡里的 `READING_GROUP`（比例 + 输入模式）——整组删除
+2. 「文件」选项卡里的「小说」组 → 换成「设置」组（一个按钮）；同页原有的「文件」组
+   （新建/保存/导出 docx/打印 这些占位）保留
+3. 蓝条上的文档名不再可点，变回静态文本（仍显示 `docTitle`，只是不能就地编辑）
+
+**不动的**：左侧栏的收起按钮（`sidebar-toggle`）与 ⌘/Ctrl+Shift+H 快捷键；阅读区、输入捕获、
+章节列表、状态栏的逻辑。
+
+**顺带改掉的两处文案**（是本任务造成的失实，不是顺手优化）：`Page` 的空状态提示与 `ChapterList`
+的副标题里的「文件 → 导入小说」→「文件 → 设置 → 导入小说」。两个入口点的是同一条路径，而那条
+路径上的按钮已经被本任务删掉了——留着就是把用户指向一个不存在的地方。
+
+**⚠️ 一个必须处理的交互冲突**：`InputCapture` 在 window 上挂了 `mousedown` / `click` 把焦点抢回
+隐藏 textarea（「点哪儿都能继续打字」）。它已经会跳过文字输入类元素，但**点对话框里的空白处或
+按钮时仍会把焦点抢走**，后果是对话框开着、用户随手敲的字全抽进小说（字出在遮罩后面，看不见）。
+
+修法是**两条闸**，都按 ARIA 的标准属性判定（不为此造专用属性）：
+
+1. **点击目标**落在 `[role="dialog"]` 里 → 不抢。管的是「点对话框里不可聚焦的空白处」：那时浏览器
+   已经把焦点交给了 `body`，只看当前焦点是判不出来的。
+2. **当前焦点已经在** `[role="dialog"]` 里 → 不抢。管的是「用『设置』按钮打开」那一下：
+   React 的事件层挂在容器（`#root`）上，而这两个监听挂在 `window` 上——容器在 `window` 的里面，
+   所以冒泡到 window 时 React 的 `onClick` 已经跑完（对话框挂载、`autoFocus` 已把焦点送进文档名
+   输入框），而 `e.target` 仍是工具栏上那个**不在对话框里**的按钮。少了第二条闸，这一下正好把焦点
+   抢回去。
+
+【这两条各自守到哪一层，说清楚】单测守的是**机制**（`tests/unit/settings.test.tsx` 里两条用例，
+各自都能被对应的那条闸单独变红）。「抢回去之后用户的字真的会抽进小说」这个**后果**在 jsdom 里
+求证不了（没有命中测试，也没有「点不可聚焦元素 → 焦点交给 body」这条浏览器行为），它由
+`tests/e2e/app.spec.ts` 里驱动真实 Electron 的那条用例判——那条用例的
+`toBeFocused()` 断言在删掉第二条闸之后实测会红（真机验过，不是推测）。
+
+**Step 1: 写 `src/renderer/src/components/SettingsDialog.tsx`**
+```tsx
+import { useEffect, useState } from 'react'
+import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
+
+export interface SettingsDialogProps {
+  /** 对话框归 Ribbon 所有：打开它的那个按钮就在「文件」选项卡的工具组里 */
+  open: boolean
+  onClose: () => void
+  docTitle: string
+  onDocTitleChange: (next: string) => void
+}
+
+/**
+ * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
+ *
+ * 【为什么要有一个对话框，而不是像原来那样把控件摆在工具栏里】那些控件是伪装的一部分里
+ * 最扎眼的一处：「1 键显示 N 字」「导入小说」摆在假 Word 的工具栏和「文件」页上，任何一个
+ * 瞥见屏幕的人都看得出这不是 Word。收进一个模态之后，界面上只剩一个「设置」按钮和一个
+ * 快捷键——它们本身就是 Word 也有的东西（Word 的「选项」同样是模态框）。
+ *
+ * 【testid 一个都没改】`ratio-input` / `mode-button` / `btn-import` / `btn-clear-session` /
+ * `doc-title-input` 原样搬进来，只是不再同时存在于工具栏里。
+ */
+export function SettingsDialog({ open, onClose, docTitle, onDocTitleChange }: SettingsDialogProps) {
+  const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
+  const [ratioDraft, setRatioDraft] = useState(String(ratio))
+  const [titleDraft, setTitleDraft] = useState(docTitle)
+
+  // 比例在别处变了（会话恢复、其它入口）时把草稿跟回去
+  useEffect(() => {
+    setRatioDraft(String(ratio))
+  }, [ratio])
+
+  // 每次打开都从当前文档名起稿：上次关掉时没提交的草稿不该留到下一次
+  useEffect(() => {
+    if (open) setTitleDraft(docTitle)
+  }, [open, docTitle])
+
+  /**
+   * Esc 关闭。
+   *
+   * 【挂在 window 上收得到】InputCapture 在「纯按键」模式下对 `NON_CHAR_KEYS` 里的键
+   * （Escape 在列）直接放行，输入法模式下更是完全不拦 keydown，所以这个键不会被抽字
+   * 逻辑吃掉。反过来，对话框开着时焦点在对话框里（见下面的 `autoFocus`），隐藏 textarea
+   * 根本收不到这些按键。
+   */
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  /**
+   * 关掉时把键盘焦点还给阅读区的隐形输入框。
+   *
+   * 【少了这一步，关掉对话框之后用户打不出字——而单测一字不差地全绿】：模态期间焦点在
+   * 对话框里，关闭后浏览器把它交还给 `body`，而 InputCapture 只在「挂载时」和「点击
+   * 页面其它地方时」抢焦点（它现在还会跳过整个对话框）——于是用户敲键盘什么都不会发生，
+   * 得先拿鼠标在阅读区点一下。jsdom 没有真实的焦点移交，这条分支在 vitest 里是空转。
+   *
+   * 【用 preventScroll 与 InputCapture 自己一致】：不这样的话浏览器会把光标所在处滚进
+   * 视野，等于关个设置就把用户的阅读位置跳一下。
+   *
+   * 查询用 `[data-testid]` 而不是给 InputCapture 加一个 ref 参数：与 App 里那段跟随
+   * 滚动同样的取舍——不改别人的公开接口。空状态下（没有小说）根本没有这个元素，
+   * 可选链吞掉。
+   */
+  useEffect(() => {
+    if (open) return
+    document.querySelector<HTMLElement>('[data-testid="input-capture"]')?.focus({ preventScroll: true })
+  }, [open])
+
+  const commitRatio = (raw: string): void => {
+    const parsed = Number.parseInt(raw, 10)
+    if (!Number.isFinite(parsed)) {
+      setRatioDraft(String(ratio))
+      return
+    }
+    const next = clampRatioInput(parsed)
+    setRatio(next)
+    setRatioDraft(String(next))
+    if (next !== parsed) notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${next}`)
+  }
+
+  const commitTitle = (): void => {
+    const next = titleDraft.trim()
+    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
+    if (next && next !== docTitle) onDocTitleChange(next)
+    else setTitleDraft(docTitle)
+  }
+
+  if (!open) return null
+
+  return (
+    <div
+      className="wt-modal"
+      data-testid="settings"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="wt-settings-title"
+      // 只有点在遮罩自己身上才关：点在面板（及面板里的空白）上时 target 是面板，不是这里。
+      // 用 click 而不是 mousedown：从面板里按下、拖出遮罩再松开不该算作「点了遮罩」。
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="wt-modal__panel">
+        <div className="wt-modal__header">
+          <span className="wt-modal__title" id="wt-settings-title">
+            选项
+          </span>
+          <button
+            type="button"
+            className="wt-modal__close"
+            data-testid="settings-close"
+            aria-label="关闭"
+            title="关闭 (Esc)"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="wt-modal__body">
+          <div className="wt-modal__row">
+            <span className="wt-modal__label">文档名</span>
+            <input
+              className="wt-modal__text"
+              data-testid="doc-title-input"
+              aria-label="文档名"
+              // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
+              // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
+              autoFocus
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitTitle()
+              }}
+            />
+          </div>
+
+          <div className="wt-modal__row">
+            <span className="wt-modal__label">阅读替换</span>
+            <div className="wt-ratio">
+              <span className="wt-ratio__label">1 键显示</span>
+              <input
+                className="wt-ratio__input"
+                data-testid="ratio-input"
+                aria-label="比例：输入 1 个字显示小说多少字"
+                inputMode="numeric"
+                value={ratioDraft}
+                onChange={(e) => setRatioDraft(e.target.value)}
+                onBlur={(e) => commitRatio(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitRatio(e.currentTarget.value)
+                }}
+              />
+              <span className="wt-ratio__label">字</span>
+            </div>
+          </div>
+
+          <div className="wt-modal__row">
+            <span className="wt-modal__label">输入模式</span>
+            <button
+              type="button"
+              className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
+              data-testid="mode-button"
+              title="切换输入模式：输入法友好 / 纯按键"
+              aria-pressed={mode === 'ime'}
+              onClick={() => {
+                const next = mode === 'ime' ? 'key' : 'ime'
+                setMode(next)
+                notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
+              }}
+            >
+              {mode === 'ime' ? '输入法' : '纯按键'}
+            </button>
+          </div>
+
+          <div className="wt-modal__row">
+            <span className="wt-modal__label">小说</span>
+            <button
+              type="button"
+              className="wt-btn"
+              data-testid="btn-import"
+              title="导入小说 (Ctrl+O)"
+              onClick={() => onImport()}
+            >
+              导入小说
+            </button>
+            <button
+              type="button"
+              className="wt-btn"
+              data-testid="btn-clear-session"
+              title="清除阅读记录"
+              onClick={() => onClearSession()}
+            >
+              清除阅读记录
+            </button>
+          </div>
+        </div>
+
+        <div className="wt-modal__footer">
+          {/* 第二个关闭入口：标题栏那个 ✕ 是给「找关闭」的眼睛用的，这个是给读完设置的人用的 */}
+          <button
+            type="button"
+            className="wt-btn"
+            data-testid="settings-close-footer"
+            onClick={onClose}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+**Step 2: 写 `tests/unit/settings.test.tsx`**
+```tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { Ribbon } from '../../src/renderer/src/components/Ribbon'
+import { Toast } from '../../src/renderer/src/components/Toast'
+import { InputCapture } from '../../src/renderer/src/input/InputCapture'
+import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
+import type { InputMode } from '../../src/core/types'
+
+interface SetupOptions {
+  ratio?: number
+  mode?: InputMode
+  onRatioChange?: (n: number) => void
+  onModeChange?: (m: InputMode) => void
+  onImport?: () => void
+  onClearSession?: () => void
+  /** 额外挂一个 InputCapture：焦点那几条用例需要它来当「被抢的对象」 */
+  capture?: boolean
+  docTitle?: string
+}
+
+function setup(opts: SetupOptions = {}): ReturnType<typeof vi.fn> {
+  const onDocTitleChange = vi.fn()
+  const { capture, docTitle = '文档1', ...provider } = opts
+  render(
+    <ToolbarProvider {...provider}>
+      <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
+      {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
+      <Toast />
+    </ToolbarProvider>
+  )
+  return onDocTitleChange
+}
+
+const settings = (): HTMLElement => screen.getByTestId('settings')
+
+/** 走「文件」选项卡那个按钮——与快捷键是两条独立的路，两边都得能开 */
+function openViaButton(): void {
+  fireEvent.click(screen.getByTestId('tab-文件'))
+  fireEvent.click(screen.getByTestId('btn-settings'))
+}
+
+describe('设置对话框的打开方式', () => {
+  it('「文件」选项卡里的「设置」按钮能打开，且带模态语义', () => {
+    setup()
+    expect(screen.queryByTestId('settings')).toBeNull()
+
+    openViaButton()
+
+    expect(settings().getAttribute('role')).toBe('dialog')
+    expect(settings().getAttribute('aria-modal')).toBe('true')
+  })
+
+  it('⌘/Ctrl + , 都能打开（按物理键位 Comma 判定）', () => {
+    setup()
+    fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true })
+    expect(screen.getByTestId('settings')).toBeTruthy()
+  })
+
+  it('Ctrl + ,（非 mac）同样打开', () => {
+    setup()
+    fireEvent.keyDown(window, { key: ',', code: 'Comma', ctrlKey: true })
+    expect(screen.getByTestId('settings')).toBeTruthy()
+  })
+
+  it('不带修饰键的逗号不打开（那是正文里的标点，不该被吃掉）', () => {
+    setup()
+    fireEvent.keyDown(window, { key: ',', code: 'Comma' })
+    expect(screen.queryByTestId('settings')).toBeNull()
+  })
+})
+
+describe('设置对话框的关闭方式', () => {
+  it('Esc 关闭', () => {
+    setup()
+    openViaButton()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('settings')).toBeNull()
+  })
+
+  it('点遮罩关闭', () => {
+    setup()
+    openViaButton()
+    // 遮罩就是对话框根元素本身：面板盖在它上面，所以要点根元素才算「点在外面」
+    fireEvent.click(settings())
+    expect(screen.queryByTestId('settings')).toBeNull()
+  })
+
+  it('点面板里面不关闭', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByText('选项'))
+    expect(screen.getByTestId('settings')).toBeTruthy()
+  })
+
+  it('标题栏的 ✕ 与底部的「关闭」都能关', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-close'))
+    expect(screen.queryByTestId('settings')).toBeNull()
+
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-close-footer'))
+    expect(screen.queryByTestId('settings')).toBeNull()
+  })
+})
+
+describe('真实功能收在对话框里', () => {
+  it('五个控件的 testid 原样搬了进来，工具栏里一个都没有', () => {
+    setup()
+    openViaButton()
+    for (const id of [
+      'doc-title-input',
+      'ratio-input',
+      'mode-button',
+      'btn-import',
+      'btn-clear-session'
+    ]) {
+      expect(screen.getByTestId(id)).toBeTruthy()
+      // 「在原处」而不是「在别处」：五个都必须落在对话框里
+      expect(settings().contains(screen.getByTestId(id))).toBe(true)
+    }
+
+    // 关掉之后它们跟着消失（说明只在对话框里存在，不是复制了一份）
+    fireEvent.click(screen.getByTestId('settings-close'))
+    expect(screen.queryByTestId('ratio-input')).toBeNull()
+    expect(screen.queryByTestId('mode-button')).toBeNull()
+    expect(screen.queryByTestId('btn-import')).toBeNull()
+    expect(screen.queryByTestId('btn-clear-session')).toBeNull()
+    expect(screen.queryByTestId('doc-title-input')).toBeNull()
+  })
+
+  it('比例输入回车后回调夹紧后的值', () => {
+    const onRatioChange = vi.fn()
+    setup({ ratio: 10, onRatioChange })
+    openViaButton()
+    const input = screen.getByTestId('ratio-input')
+    fireEvent.change(input, { target: { value: '25' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onRatioChange).toHaveBeenCalledWith(25)
+  })
+
+  it('比例超出上限时夹紧到 500 并提示（提示压在遮罩之上，见 .wt-modal 的 z-index）', () => {
+    const onRatioChange = vi.fn()
+    setup({ ratio: 10, onRatioChange })
+    openViaButton()
+    const input = screen.getByTestId('ratio-input')
+    fireEvent.change(input, { target: { value: '9999' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onRatioChange).toHaveBeenCalledWith(500)
+    expect(screen.getByTestId('toast').textContent).toContain('500')
+  })
+
+  it('输入模式按钮真实切换并提示', () => {
+    const onModeChange = vi.fn()
+    setup({ mode: 'ime', onModeChange })
+    openViaButton()
+    expect(screen.getByTestId('mode-button').textContent).toBe('输入法')
+    fireEvent.click(screen.getByTestId('mode-button'))
+    expect(onModeChange).toHaveBeenCalledWith('key')
+    expect(screen.getByTestId('toast').textContent).toContain('纯按键')
+  })
+
+  it('「导入小说」按钮触发真实回调而非占位提示', () => {
+    const onImport = vi.fn()
+    setup({ onImport })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('btn-import'))
+    expect(onImport).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('toast')).toBeNull()
+  })
+
+  it('「清除阅读记录」按钮触发真实回调', () => {
+    const onClearSession = vi.fn()
+    setup({ onClearSession })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('btn-clear-session'))
+    expect(onClearSession).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('对话框里改文档名', () => {
+  it('回车提交，两侧空白去掉', () => {
+    const onChange = setup({ docTitle: '文档1' })
+    openViaButton()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+
+    fireEvent.change(input, { target: { value: '  第 3 季度汇报  ' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
+  })
+
+  it('失焦也提交（鼠标用户点「关闭」时就是这样）', () => {
+    const onChange = setup({ docTitle: '文档1' })
+    openViaButton()
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '会议纪要' } })
+    fireEvent.blur(input)
+    expect(onChange).toHaveBeenCalledWith('会议纪要')
+  })
+
+  it('空名不提交（蓝条不能变成一片空白）', () => {
+    const onChange = setup({ docTitle: '文档1' })
+    openViaButton()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input.value).toBe('文档1')
+  })
+
+  it('Esc 关掉对话框不算提交：草稿丢掉，名字不变', () => {
+    const onChange = setup({ docTitle: '文档1' })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '不该生效' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 模态与「点哪儿都能继续打字」的冲突。
+ *
+ * 【这些用例守到哪一层，说清楚】它们守的是 InputCapture 里那两条闸的**机制**（点击目标
+ * 在对话框里 / 焦点已经在对话框里 → 不抢）。「抢回去之后用户的字真的会抽进小说」这个
+ * **后果**在 jsdom 里求证不了：jsdom 没有命中测试，也没有「点不可聚焦元素 → 焦点交给
+ * body」这条浏览器行为（下面第二条用例是手工把它摆出来的）。那条只能由
+ * tests/e2e/app.spec.ts 里驱动真实 Electron 的用例判。
+ */
+describe('对话框开着时，键盘焦点不会被抢回阅读区', () => {
+  it('打开时焦点就落在对话框里（autoFocus），不在隐形输入框上', () => {
+    setup({ capture: true })
+    const capture = screen.getByTestId('input-capture')
+    // 前提自检：InputCapture 挂载时真的抢了焦点。少了这行，下面那个断言在「它压根没抢过」
+    // 的世界里也照样绿。
+    expect(document.activeElement).toBe(capture)
+
+    openViaButton()
+    expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
+  })
+
+  it('点对话框里不可聚焦的空白处，焦点不会被抢走', () => {
+    setup({ capture: true })
+    openViaButton()
+    const capture = screen.getByTestId('input-capture')
+    const input = screen.getByTestId('doc-title-input')
+    // 浏览器里点不可聚焦的空白处会把焦点交给 body（jsdom 不会，这里手工摆出来）。
+    // 这正是「点击目标」那条闸要拦的形态：target 在对话框里、而焦点已经不在。
+    input.blur()
+    expect(document.activeElement).not.toBe(capture)
+
+    const panel = settings().querySelector('.wt-modal__panel') as HTMLElement
+    fireEvent.mouseDown(panel)
+    fireEvent.click(panel)
+
+    expect(document.activeElement).not.toBe(capture)
+  })
+
+  it('对话框开着、焦点在对话框里时，点对话框【外】的东西也不抢焦点', () => {
+    // 这条守的是**第二条**闸（`document.activeElement` 在对话框里 → 不抢）。
+    //
+    // 它对应的真实时序是「用『设置』按钮打开对话框」那一下：本监听挂在 window 上，而
+    // React 的事件层挂在容器（#root）上——容器在 window 的【里面】，所以真机上冒泡到
+    // window 时 React 的 onClick 已经跑完：对话框挂载、autoFocus 已经把焦点送进文档名
+    // 输入框，而 `e.target` 仍是工具栏上那个按钮（不在对话框里）。少了第二条闸，正好在
+    // 这一下把焦点抢回隐藏 textarea。
+    //
+    // 【为什么不直接断言「点一次按钮就够了」】jsdom 侧 testing-library 把 React 的 flush
+    // 推到 act 结束，也就是整个事件派发（含 window 上那个监听）之后——于是那一下派发时
+    // 对话框还没挂载、焦点还没进对话框，两条闸都拦不住也都不需要拦，**用例在两条闸都在
+    // 和都不在的世界里一样绿**（实测：把第二条闸删掉，41 条用例全过）。所以这里按真机的
+    // 形态把状态摆出来：对话框已开、焦点已在里面，再派发一次「点击」——此时 window 上那个
+    // 监听看到的与真机上完全一致。
+    setup({ capture: true })
+    openViaButton()
+    const titleInput = screen.getByTestId('doc-title-input')
+    expect(document.activeElement).toBe(titleInput)
+
+    const settingsButton = screen.getByTestId('btn-settings')
+    fireEvent.mouseDown(settingsButton)
+    fireEvent.click(settingsButton)
+
+    expect(document.activeElement).toBe(titleInput)
+  })
+
+  it('关掉对话框后，焦点交还给隐形输入框（否则用户不打字就再也敲不进正文）', () => {
+    setup({ capture: true })
+    const capture = screen.getByTestId('input-capture')
+    openViaButton()
+    expect(document.activeElement).not.toBe(capture)
+
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    expect(screen.queryByTestId('settings')).toBeNull()
+    expect(document.activeElement).toBe(capture)
+  })
+})
+```
+
+**Step 3: 就地更新的围栏**（本任务改了这些文件，围栏已在**原处**替换成当前内容；本节的表只是
+索引，不是第二份副本）：
+
+| 文件 | 围栏位置 |
+|---|---|
+| `src/renderer/src/styles/ribbon.css` | Task 7 Step 2 |
+| `src/renderer/src/components/Toolbar.tsx` | Task 8 Step 3 |
+| `src/renderer/src/components/Ribbon.tsx` | Task 8 Step 4 |
+| `tests/unit/ribbon.test.tsx` | Task 8 Step 5 |
+| `src/renderer/src/components/ChapterList.tsx` | Task 9 Step 1 |
+| `tests/unit/chapterList.test.tsx` | Task 9 Step 2 |
+| `src/renderer/src/components/Page.tsx` | Task 10 Step 1 |
+| `src/renderer/src/input/InputCapture.tsx` | Task 11 Step 3 |
+| `tests/unit/app.test.tsx` | Task 12 Step 4 |
+| `tests/e2e/app.spec.ts` | Task 13 Step 2 |
+
+`tests/unit/ribbon.test.tsx` 里那 4 条「点文档名就地改名」的用例整体搬进了
+`tests/unit/settings.test.tsx`（判据一字未改），原处换成一条「点它不再变成输入框」；
+比例/模式/导入/清除那几条同样搬了过去，前面统一加一步「打开设置」。
+
+**Step 4: 跑门禁**
+
+Run: `pnpm test && pnpm typecheck && pnpm build && pnpm test:e2e`
+Expected: 四个命令全部 exit 0。
+
+**Step 5: 真机看一眼**
+
+`pnpm build` 之后用 Playwright `_electron` 起一次真的（给一个 mkdtemp 出来的空 `WT_USER_DATA`），
+导入 `books/诡秘之主（整理版）.txt`，按 ⌘/Ctrl + , 打开对话框，截图确认三件事：设置能打开、
+「开始」选项卡下没有「阅读替换」那一组、蓝条上是 `文档1` 而不是小说名。
+
+**Step 6: Commit**
+
+```bash
+git add src/renderer/src/components/SettingsDialog.tsx src/renderer/src/components/Ribbon.tsx src/renderer/src/components/Toolbar.tsx src/renderer/src/components/ChapterList.tsx src/renderer/src/components/Page.tsx src/renderer/src/input/InputCapture.tsx src/renderer/src/styles/ribbon.css tests/unit/settings.test.tsx tests/unit/ribbon.test.tsx tests/unit/app.test.tsx tests/unit/chapterList.test.tsx tests/e2e/app.spec.ts docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(renderer): 真实功能收进设置对话框（⌘/Ctrl + , 或「文件 → 设置」）
 EOF
 git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```

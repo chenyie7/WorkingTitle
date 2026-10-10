@@ -70,14 +70,56 @@ test('退格只回吐显示，小说内容不受影响', async () => {
 })
 
 test('改比例后同样的击键抽出更多字', async () => {
+  // 比例框现在在设置对话框里（原先挂在「开始」/「视图」两个选项卡的工具栏上）
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
   const ratio = win.locator('[data-testid="ratio-input"]')
   await ratio.fill('3')
   await ratio.press('Enter')
   await expect(win.locator('[data-testid="status-ratio"]')).toContainText('1:3')
+  await win.locator('[data-testid="settings-close"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
 
   await focusEditor()
   await win.keyboard.type('aa')
   await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 6')
+})
+
+/**
+ * 【这条是本次唯一能在真机（真实 Chromium 的焦点语义 + 命中测试）里判的用例】
+ *
+ * jsdom 里测不到的是**后果**：对话框开着时用户敲的键会漏进小说，而字出在遮罩后面，
+ * 用户看不见。单测里那两条守的是 InputCapture 里两条闸的机制，不是这个后果
+ * ——尤其「点对话框里不可聚焦的空白处」这一下：浏览器会把焦点交给 body，而 jsdom 不会，
+ * 单测是手工把那个状态摆出来的。
+ */
+test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字，Esc 关', async () => {
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  // 打开那一瞬间焦点就得在对话框里：浏览器的 click 会先经过 React（对话框挂载 + autoFocus）、
+  // 再冒泡到 window 上那个「点哪儿都把焦点抢回隐形输入框」的监听。少了那条闸，这一下就会
+  // 把焦点抢走，下面的断言当场红。
+  await expect(win.locator('[data-testid="doc-title-input"]')).toBeFocused()
+
+  // 在文档名输入框里敲的字母进输入框，不许抽走小说
+  await win.keyboard.type('aaa')
+  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+
+  // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
+  // 此后键盘没有焦点宿主，更不该被抢回阅读区
+  await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
+  await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
+  await win.keyboard.type('bbb')
+  await expect(win.locator('[data-testid="status-chars"]')).toContainText('已显示 0')
+
+  await win.keyboard.press('Escape')
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
+
+  // 快捷键⌘/Ctrl + , 同样能开
+  await win.keyboard.press('Meta+Comma')
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {

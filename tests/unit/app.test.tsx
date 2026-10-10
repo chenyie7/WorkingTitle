@@ -34,6 +34,23 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/**
+ * 走界面导入一本小说：真实功能现在都收在设置对话框里，所以是「文件 → 设置 → 导入小说」，
+ * 导入完再把对话框关掉（对话框不会自己关：`onImport` 是异步的、且用户可能只是取消了选择框）。
+ */
+function importViaSettings(): void {
+  fireEvent.click(screen.getByTestId('tab-文件'))
+  fireEvent.click(screen.getByTestId('btn-settings'))
+  fireEvent.click(screen.getByTestId('btn-import'))
+  fireEvent.click(screen.getByTestId('settings-close'))
+}
+
+/** 打开设置对话框（比例等控件都在里面） */
+function openSettings(): void {
+  fireEvent.click(screen.getByTestId('tab-文件'))
+  fireEvent.click(screen.getByTestId('btn-settings'))
+}
+
 describe('App 端到端（单测层）', () => {
   it('未导入时阅读区是空状态', async () => {
     installApi(null)
@@ -47,8 +64,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel)
     render(<App />)
 
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     // 修复前这里是 `novel.title`（= 文件名「测试书」），等于把「在看小说」写在窗口最显眼处
@@ -61,8 +77,7 @@ describe('App 端到端（单测层）', () => {
     installApi(novel)
     render(<App />)
 
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')
@@ -77,8 +92,7 @@ describe('App 端到端（单测层）', () => {
     const originalFlat = novel.flatText
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')
@@ -94,8 +108,7 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-1')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('chapter-item-1'))
@@ -112,18 +125,17 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
-    // 比例输入框挂在「开始」「视图」两个选项卡下，而导入按钮在「文件」选项卡下——
-    // Ribbon 只渲染当前选项卡的工具组，切回「开始」它才在 DOM 里。
-    fireEvent.click(screen.getByTestId('tab-开始'))
+    // 比例输入框在设置对话框里（原先挂在「开始」「视图」两个选项卡下，已于本次搬走）
+    openSettings()
 
     const ratioInput = screen.getByTestId('ratio-input')
     fireEvent.change(ratioInput, { target: { value: '2' } })
     fireEvent.keyDown(ratioInput, { key: 'Enter' })
     await waitFor(() => expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:2'))
+    fireEvent.click(screen.getByTestId('settings-close'))
 
     const capture = screen.getByTestId('input-capture')
     fireEvent.input(capture, { target: { value: 'x' } })
@@ -156,21 +168,37 @@ describe('App 端到端（单测层）', () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
     expect(window.api.clearSession).toHaveBeenCalled()
+  })
+
+  it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    expect(screen.getByTestId('doc-title').textContent).toBe('第 3 季度汇报')
   })
 
   it('打字后会防抖保存会话', async () => {
     const novel = makeNovel()
     installApi(novel)
     render(<App />)
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
+    importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
     const capture = screen.getByTestId('input-capture')

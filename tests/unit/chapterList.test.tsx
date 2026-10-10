@@ -30,7 +30,8 @@ describe('ChapterList', () => {
   it('未导入时显示引导文案', () => {
     render(<ChapterList novel={null} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
     expect(screen.getByText('未导入小说')).toBeTruthy()
-    expect(screen.getByText('文件 → 导入小说')).toBeTruthy()
+    // 导入按钮搬进设置对话框之后，这条引导文案跟着改了（旧的指向一个已经不存在的按钮）
+    expect(screen.getByText('文件 → 设置 → 导入小说')).toBeTruthy()
   })
 
   it('显示书名与章节数', () => {
