@@ -3856,6 +3856,69 @@ export type WtApi = typeof api
 
 > 此前这里写的是「在 sandboxed preload 里 `ipcMain` 不可用，会导致运行时错误」——**约束对、机制错**。`ipcMain` 只是从 `require('electron')` 上读的一个属性，**读一个 undefined 属性不会抛**；真正在加载期抛的是 Node 内建模块。**照错误的机制去防，人会去防 `ipcMain` 而漏掉 `node:fs`**，所以这条必须按实测写。
 
+
+**本步之后 `src/main/ipc.ts` 的最终全文**（`fence#2` 去掉本地 `CH` / `MENU_COMMANDS` / `MenuCommand` 三个定义，换成上面那两行，外加一段注释）：
+
+```ts
+import { dialog, ipcMain, type BrowserWindow } from 'electron'
+import { loadNovelFromFile } from './loadNovel'
+import { getStore } from './session'
+// 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
+// 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
+// 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
+import { CH } from './channels'
+import type { Novel, PersistedSession } from '../core/types'
+
+export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
+
+/** 打开小说：命中缓存则复用，避免重复解码与重新检测编码。 */
+export function openNovel(filePath: string): Novel {
+  const store = getStore()
+  const cached = store.readNovelCache(filePath)
+  if (cached) return cached
+  const novel = loadNovelFromFile(filePath)
+  store.writeNovelCache(novel)
+  return novel
+}
+
+export interface IpcDeps {
+  getWindow: () => BrowserWindow | null
+  getInitialNovelPath: () => string | null
+}
+
+export function registerIpc(deps: IpcDeps): void {
+  ipcMain.handle(CH.importNovel, async (): Promise<Novel | null> => {
+    const win = deps.getWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '导入小说',
+      buttonLabel: '导入',
+      filters: [
+        { name: '文本文件', extensions: ['txt'] },
+        { name: '所有文件', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return openNovel(result.filePaths[0])
+  })
+
+  ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
+
+  ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
+
+  ipcMain.handle(CH.loadSession, (): PersistedSession | null => getStore().readSession())
+
+  ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
+    getStore().writeSession(session)
+  })
+
+  ipcMain.handle(CH.clearSession, (): void => {
+    getStore().clearAll()
+  })
+}
+```
+
 - [ ] **Step 7: 拆出 `src/main/channels.ts`，修正上面的隐患**
 
 `src/main/channels.ts`：
@@ -3893,6 +3956,33 @@ export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 `src/preload/index.ts` 的 import 改为：
 ```ts
 import { CH } from '../main/channels'
+```
+
+**本步之后 `src/preload/index.ts` 的最终全文**（上面那份只改了一行 import）：
+
+```ts
+import { contextBridge, ipcRenderer } from 'electron'
+import { CH } from '../main/channels'
+
+const api = {
+  importNovel: () => ipcRenderer.invoke(CH.importNovel),
+  openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
+  initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
+  loadSession: () => ipcRenderer.invoke(CH.loadSession),
+  saveSession: (session: unknown) => ipcRenderer.invoke(CH.saveSession, session),
+  clearSession: () => ipcRenderer.invoke(CH.clearSession),
+  onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
+    const listener = (_e: unknown, cmd: string): void => cb(cmd)
+    ipcRenderer.on(CH.menuCommand, listener)
+    return () => {
+      ipcRenderer.removeListener(CH.menuCommand, listener)
+    }
+  }
+}
+
+contextBridge.exposeInMainWorld('api', api)
+
+export type WtApi = typeof api
 ```
 
 - [ ] **Step 8: 重写 `src/main/index.ts`**
@@ -4036,7 +4126,8 @@ git commit -m "feat(main): IPC 通道、会话绑定、原生菜单与启动流�
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：`.wt-app` `.wt-ribbon` `.wt-tabs` `.wt-tab` `.wt-tab--active` `.wt-toolbar` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-btn` `.wt-btn--active` `.wt-body` `.wt-sidebar` `.wt-canvas` `.wt-page` `.wt-statusbar` `.wt-toast`
+  - CSS 类名契约（后续任务依赖）：**下面 34 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
+    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
   - `App.tsx` 渲染出 `.wt-app` 骨架，含 `data-testid="app-root"`
 
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
@@ -6011,6 +6102,22 @@ git commit -m "feat(renderer): InputCapture 双模式输入捕获（输入法友
 **Interfaces:**
 - Consumes: 前面全部任务
 - Produces: 完整可用的应用；`window.api` 的渲染进程类型声明
+
+> **开工前必读（Task 7 期间实测，不是推测）：`window.api` 可能在渲染进程里根本不存在，而本任务的代码假定它一定在。**
+>
+> 可达性有实测依据：Task 6 量到 sandboxed preload 加载失败时（`Error: module not found: node:fs`）**页面照常渲染，而 `window.api === undefined`**。
+>
+> 两条具体的炸点，两种失败形态（下面的复现都是跑出来的）：
+> 1. 下面 Step 6 的 `useEffect` 里 `window.api.onMenuCommand(...)` —— **同步抛** `TypeError`，`render(<App/>)` 当场抛，测试文件直接红。可见，好办。
+> 2. 下面 Step 5 的 `boot()` 第一行 `await window.api.initialNovelPath()` —— 在 `void boot()` 里变成 **unhandled rejection**。形态更阴：用例行仍报 `passed`，但汇总行是 `Errors 1 error`，**`vitest` 的 exit code 是 1**。只看「Tests N passed」会以为没事。
+>
+> 而且**本任务一落地，Task 7 的 `tests/unit/layout.test.tsx` 就会红**：它 `render(<App/>)`，而 `tests/setup.ts` 至今**没有任何 `window.api` 桩**（`vitest.config.ts` 的 `setupFiles` 只做了 `cleanup()`）。`ribbon.test.tsx` 不受影响——它渲染的是 `<ToolbarProvider><Ribbon/><Toast/></ToolbarProvider>`，不经过 `App`。
+>
+> 类型层面**不会**提醒你：`global.d.ts` 里写的是 `api: WtApi`（非可选），`tsc` 认为它恒存在。
+>
+> 所以本任务要同时做两件事，缺一不可：
+> - 给 `tests/setup.ts` 加一个**良性**（no-op async）的 `window.api` 桩，让渲染层测试能 `render(<App/>)`；
+> - 决定 `App` 在缺 api 时怎么降级。倾向「渲染出外壳 + 不抛」，因为 preload 失败在用户侧就是「伪装成 Word 的窗口一片空白」，比显式报错更糟。
 
 - [ ] **Step 1: 写 `src/renderer/src/types/global.d.ts`**
 
