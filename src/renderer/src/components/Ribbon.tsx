@@ -1,6 +1,42 @@
 import { useEffect, useState } from 'react'
 import { SettingsDialog } from './SettingsDialog'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
+import {
+  IconAlignCenter,
+  IconAlignJustify,
+  IconAlignLeft,
+  IconAlignRight,
+  IconBold,
+  IconBullets,
+  IconColumns,
+  IconComment,
+  IconExport,
+  IconFootnote,
+  IconFormatPainter,
+  IconGrid,
+  IconItalic,
+  IconLineSpacing,
+  IconMargins,
+  IconNew,
+  IconNumbering,
+  IconOrientation,
+  IconPageBreak,
+  IconPicture,
+  IconPrint,
+  IconReadingView,
+  IconRedo,
+  IconRuler,
+  IconSave,
+  IconSearch,
+  IconShape,
+  IconSpellCheck,
+  IconStrike,
+  IconTable,
+  IconToc,
+  IconUnderline,
+  IconUndo,
+  IconWordCount
+} from './icons'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
 export type RibbonTab = (typeof RIBBON_TABS)[number]
@@ -8,26 +44,29 @@ export type RibbonTab = (typeof RIBBON_TABS)[number]
 const FONT_GROUP: ToolbarGroup = {
   label: '字体',
   items: [
-    { kind: 'toggle', id: 'bold', label: 'B', title: '加粗' },
-    { kind: 'toggle', id: 'italic', label: 'I', title: '斜体' },
-    { kind: 'toggle', id: 'underline', label: 'U', title: '下划线' },
-    { kind: 'toggle', id: 'strike', label: 'S', title: '删除线' },
+    // 字体名与字号在真 Word 里是下拉框，这里是文字按钮——**刻意不给它们图标**：
+    // 有图标的非大按钮会把标签藏起来（见 Toolbar 的 `--icon-only`），而这两项的
+    // 可读文字本身就是它的样子。
     { kind: 'placeholder', id: 'font-family', label: '宋体', title: '字体' },
     { kind: 'placeholder', id: 'font-size', label: '五号', title: '字号' },
-    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷' }
+    { kind: 'toggle', id: 'bold', label: '加粗', title: '加粗', icon: IconBold },
+    { kind: 'toggle', id: 'italic', label: '斜体', title: '斜体', icon: IconItalic },
+    { kind: 'toggle', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
+    { kind: 'toggle', id: 'strike', label: '删除线', title: '删除线', icon: IconStrike },
+    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter, large: true }
   ]
 }
 
 const PARAGRAPH_GROUP: ToolbarGroup = {
   label: '段落',
   items: [
-    { kind: 'placeholder', id: 'bullets', label: '•≡', title: '项目符号' },
-    { kind: 'placeholder', id: 'numbering', label: '1≡', title: '编号' },
-    { kind: 'toggle', id: 'align-left', label: '左', title: '左对齐' },
-    { kind: 'toggle', id: 'align-center', label: '中', title: '居中' },
-    { kind: 'toggle', id: 'align-right', label: '右', title: '右对齐' },
-    { kind: 'toggle', id: 'align-justify', label: '两', title: '两端对齐' },
-    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距' }
+    { kind: 'placeholder', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
+    { kind: 'placeholder', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    { kind: 'toggle', id: 'align-left', label: '左对齐', title: '左对齐', icon: IconAlignLeft },
+    { kind: 'toggle', id: 'align-center', label: '居中', title: '居中', icon: IconAlignCenter },
+    { kind: 'toggle', id: 'align-right', label: '右对齐', title: '右对齐', icon: IconAlignRight },
+    { kind: 'toggle', id: 'align-justify', label: '两端对齐', title: '两端对齐', icon: IconAlignJustify },
+    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距', icon: IconLineSpacing }
   ]
 }
 
@@ -35,21 +74,32 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
  * 【原先这里挂着一个 `READING_GROUP`（比例 + 输入模式），摆在「开始」和「视图」两个选项卡下】
  * 那是全应用最容易被一眼看穿的地方：假 Word 的工具栏里放着「1 键显示 N 字」。整组连同
  * 「文件」选项卡里的「小说」组一起搬进了 `SettingsDialog`，工具栏只留一个「设置」按钮。
+ *
+ * 【`large` 的用法照抄真 Word 的取舍】文件/插入/布局这些页里的项基本都是大按钮（图标在上、
+ * 标签在下），因为它们数量少、辨识靠图标；「开始」页里的格式与对齐是一排小按钮，
+ * 因为只有并排才看得出对比。
  */
 const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   文件: [
     {
       label: '文件',
       items: [
-        { kind: 'placeholder', id: 'new', label: '新建', title: '新建' },
-        { kind: 'placeholder', id: 'save', label: '保存', title: '保存' },
-        { kind: 'placeholder', id: 'export-docx', label: '导出 docx', title: '导出为 docx' },
-        { kind: 'placeholder', id: 'print', label: '打印', title: '打印' }
+        { kind: 'placeholder', id: 'new', label: '新建', title: '新建', icon: IconNew, large: true },
+        { kind: 'placeholder', id: 'save', label: '保存', title: '保存', icon: IconSave, large: true },
+        {
+          kind: 'placeholder',
+          id: 'export-docx',
+          label: '导出 docx',
+          title: '导出为 docx',
+          icon: IconExport,
+          large: true
+        },
+        { kind: 'placeholder', id: 'print', label: '打印', title: '打印', icon: IconPrint, large: true }
       ]
     },
     // 真实功能的唯一入口。排在占位组【后面】——它是整个界面上唯一「有用」的按钮，
     // 摆在最左边反而显眼。
-    { label: '设置', items: [{ kind: 'settings' }] }
+    { label: '设置', items: [{ kind: 'settings', large: true }] }
   ],
   开始: [
     FONT_GROUP,
@@ -64,9 +114,9 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '编辑',
       items: [
-        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换' },
-        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销' },
-        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做' }
+        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换', icon: IconSearch, large: true },
+        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销', icon: IconUndo },
+        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做', icon: IconRedo }
       ]
     }
   ],
@@ -74,10 +124,17 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '插入',
       items: [
-        { kind: 'placeholder', id: 'table', label: '表格', title: '表格' },
-        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片' },
-        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状' },
-        { kind: 'placeholder', id: 'pagebreak', label: '分页', title: '分页符' }
+        { kind: 'placeholder', id: 'table', label: '表格', title: '表格', icon: IconTable, large: true },
+        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片', icon: IconPicture, large: true },
+        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状', icon: IconShape, large: true },
+        {
+          kind: 'placeholder',
+          id: 'pagebreak',
+          label: '分页',
+          title: '分页符',
+          icon: IconPageBreak,
+          large: true
+        }
       ]
     }
   ],
@@ -85,9 +142,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '页面设置',
       items: [
-        { kind: 'placeholder', id: 'margin', label: '页边距', title: '页边距' },
-        { kind: 'placeholder', id: 'orientation', label: '纸张方向', title: '纸张方向' },
-        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏' }
+        { kind: 'placeholder', id: 'margin', label: '页边距', title: '页边距', icon: IconMargins, large: true },
+        {
+          kind: 'placeholder',
+          id: 'orientation',
+          label: '纸张方向',
+          title: '纸张方向',
+          icon: IconOrientation,
+          large: true
+        },
+        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏', icon: IconColumns, large: true }
       ]
     }
   ],
@@ -95,8 +159,8 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '引用',
       items: [
-        { kind: 'placeholder', id: 'toc', label: '目录', title: '目录' },
-        { kind: 'placeholder', id: 'footnote', label: '脚注', title: '插入脚注' }
+        { kind: 'placeholder', id: 'toc', label: '目录', title: '目录', icon: IconToc, large: true },
+        { kind: 'placeholder', id: 'footnote', label: '脚注', title: '插入脚注', icon: IconFootnote, large: true }
       ]
     }
   ],
@@ -104,9 +168,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '审阅',
       items: [
-        { kind: 'placeholder', id: 'comment', label: '新建批注', title: '新建批注' },
-        { kind: 'placeholder', id: 'spellcheck', label: '拼写检查', title: '拼写检查' },
-        { kind: 'placeholder', id: 'wordcount', label: '字数统计', title: '字数统计' }
+        { kind: 'placeholder', id: 'comment', label: '新建批注', title: '新建批注', icon: IconComment, large: true },
+        {
+          kind: 'placeholder',
+          id: 'spellcheck',
+          label: '拼写检查',
+          title: '拼写检查',
+          icon: IconSpellCheck,
+          large: true
+        },
+        { kind: 'placeholder', id: 'wordcount', label: '字数统计', title: '字数统计', icon: IconWordCount, large: true }
       ]
     }
   ],
@@ -114,9 +185,16 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     {
       label: '视图',
       items: [
-        { kind: 'placeholder', id: 'read-mode', label: '阅读视图', title: '阅读视图' },
-        { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺' },
-        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线' }
+        {
+          kind: 'placeholder',
+          id: 'read-mode',
+          label: '阅读视图',
+          title: '阅读视图',
+          icon: IconReadingView,
+          large: true
+        },
+        { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺', icon: IconRuler, large: true },
+        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线', icon: IconGrid, large: true }
       ]
     }
   ]

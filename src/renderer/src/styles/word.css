@@ -1,11 +1,44 @@
+/**
+ * 设计 token + 外壳骨架。
+ *
+ * 【这一版是往「今天的 Word」靠，不是往「好看的通用应用」靠】这个应用的全部价值在于
+ * 看起来像大家熟悉的 Word。所以改了观感，但**没有改结构**：还是标题条 + 选项卡 + 功能区，
+ * 还是灰底上一张白纸。变的只是"哪一代的 Word"——从 2013 那版（发灰的蓝、发丝边、
+ * 中灰画布、极小字号）挪到 M365 / Fluent 2 那一版。
+ *
+ * 【色值是照着实机观感挑的，不是微软的设计 token】下面这些十六进制值是我按"看起来对"
+ * 定的，没有从 Fluent 的设计规范里抄。要再调就照观感调，别把它们当成权威值引用。
+ */
 :root {
-  --wt-blue: #2b579a;
-  --wt-blue-dark: #1e3f73;
-  --wt-blue-light: #e8eef7;
-  --wt-chrome: #f3f3f3;
-  --wt-chrome-border: #d4d4d4;
-  --wt-text: #333333;
-  --wt-statusbar: #2b579a;
+  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和 */
+  --wt-blue: #185abd;
+  --wt-blue-dark: #0f4a9e;
+  --wt-blue-light: #eaf1fb;
+  --wt-accent: #185abd;
+
+  /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
+  --wt-chrome: #f7f7f8;
+  --wt-chrome-border: #e3e3e5;
+  --wt-chrome-border-strong: #d2d2d6;
+  --wt-text: #242424;
+  --wt-text-muted: #616161;
+
+  --wt-statusbar: #185abd;
+
+  /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
+  --wt-canvas: #e9e9ec;
+  --wt-page-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 8px 28px rgba(0, 0, 0, 0.1);
+
+  --wt-radius: 4px;
+  --wt-radius-lg: 6px;
+
+  /* macOS 上 Segoe UI 不存在，会落到 PingFang SC（中文）与 -apple-system（拉丁）；
+     Windows 上则命中 Segoe UI Variable。两边都拿到本机的现代系统字体。 */
+  --wt-font:
+    -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
 }
 
 * {
@@ -21,12 +54,13 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--wt-font);
   font-size: 13px;
   color: var(--wt-text);
   background: var(--wt-chrome);
   overflow: hidden;
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 .wt-app {
@@ -44,8 +78,8 @@ body {
 .wt-canvas {
   flex: 1;
   overflow: auto;
-  background: #9e9e9e;
-  padding: 24px 0 48px;
+  background: var(--wt-canvas);
+  padding: 28px 0 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -55,7 +89,7 @@ body {
 .wt-sidebar {
   width: 240px;
   flex: 0 0 240px;
-  background: #fafafa;
+  background: #fbfbfc;
   border-right: 1px solid var(--wt-chrome-border);
   display: flex;
   flex-direction: column;
@@ -65,31 +99,39 @@ body {
 .wt-sidebar__header {
   position: relative;
   /* 右侧留出收起按钮的位置，免得书名长的时候文字压到按钮底下 */
-  padding: 10px 28px 10px 12px;
+  padding: 12px 32px 12px 14px;
   border-bottom: 1px solid var(--wt-chrome-border);
   font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+.wt-sidebar__toggle,
+.wt-sidebar__rail {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--wt-text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--wt-radius);
 }
 
 .wt-sidebar__toggle {
   position: absolute;
-  top: 3px;
-  right: 5px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: #888888;
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
+  top: 8px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
 }
 
-.wt-sidebar__toggle:hover {
-  background: #e4e4e4;
-  color: #333333;
+.wt-sidebar__toggle:hover,
+.wt-sidebar__rail:hover {
+  background: #e8e8ea;
+  color: var(--wt-text);
 }
 
 /* 收起后整条侧栏只剩这条 12px 的细缝：颜色很淡、视觉上近乎不存在，但鼠标用户得有入口
@@ -97,26 +139,20 @@ body {
 .wt-sidebar__rail {
   flex: 0 0 12px;
   width: 12px;
-  padding: 0;
-  border: none;
   border-right: 1px solid var(--wt-chrome-border);
-  background: #fafafa;
-  color: #c4c4c4;
-  font-family: inherit;
-  font-size: 8px;
-  line-height: 1;
-  cursor: pointer;
+  background: #fbfbfc;
+  color: #c8c8cc;
 }
 
 .wt-sidebar__rail:hover {
-  background: #e4e4e4;
-  color: #333333;
+  color: var(--wt-text);
 }
 
 .wt-sidebar__sub {
   font-weight: 400;
-  color: #777;
+  color: var(--wt-text-muted);
   font-size: 11px;
+  margin-top: 2px;
 }
 
 .wt-sidebar__list {
@@ -128,14 +164,15 @@ body {
 .wt-statusbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 24px;
-  flex: 0 0 24px;
-  padding: 0 12px;
+  gap: 18px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 14px;
   background: var(--wt-statusbar);
   color: #ffffff;
   font-size: 11px;
   white-space: nowrap;
+  letter-spacing: 0.01em;
 }
 
 .wt-statusbar__spacer {
@@ -145,14 +182,22 @@ body {
 .wt-toast {
   position: fixed;
   left: 50%;
-  bottom: 56px;
+  bottom: 60px;
   transform: translateX(-50%);
-  background: rgba(32, 32, 32, 0.92);
+  background: rgba(28, 28, 30, 0.94);
   color: #ffffff;
-  padding: 9px 18px;
-  border-radius: 4px;
+  padding: 10px 18px;
+  border-radius: var(--wt-radius-lg);
   font-size: 12px;
   z-index: 999;
   pointer-events: none;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
+/* 侧栏那两个三角形按钮的图标尺寸：Fluent 图标默认 1em，这里显式定死，
+   免得受父级 font-size 影响（rail 的 font-size 与 toggle 不同）。 */
+.wt-sidebar__toggle-icon,
+.wt-sidebar__rail-icon {
+  width: 12px;
+  height: 12px;
 }
