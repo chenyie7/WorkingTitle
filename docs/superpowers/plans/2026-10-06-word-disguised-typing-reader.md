@@ -6098,6 +6098,21 @@ describe('输入法友好模式', () => {
     fireEvent.input(el)
     expect(engine.pump).not.toHaveBeenCalled()
   })
+
+  it('合成态的 input 也绝不清空 textarea（清空会打断输入法合成）', () => {
+    // 这条是【真机 bug 的回归用例】，抓的是上一条抓不到的东西：
+    // 上一条只断言「没抽字」，而当初的实现正是「跳过抽字、但照常清空」——
+    // 清空 textarea 会打断输入法的合成会话，真机表现为候选框闪一下就没、
+    // 拼音永远上不了屏、正文一个字都不出。用户实测报的就是这个。
+    // jsdom 里清空 value 不会取消任何东西，所以只有直接断言 value 才守得住。
+    const engine = setup('ime')
+    const el = input()
+    fireEvent.compositionStart(el)
+    el.value = 'nihao'
+    fireEvent.input(el)
+    expect(el.value).toBe('nihao')
+    expect(engine.pump).not.toHaveBeenCalled()
+  })
 })
 
 describe('纯按键模式', () => {
@@ -6288,8 +6303,20 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
 
   const handleInput = (e: FormEvent<HTMLTextAreaElement>): void => {
     const el = e.currentTarget
-    // 合成中的输入交给 compositionend 处理，避免重复计数
-    if (!composing.current && modeRef.current === 'ime') {
+    // 合成中的输入交给 compositionend 处理，避免重复计数。
+    //
+    // 【这里必须直接 return，绝不能只是跳过 pump 然后照常清空】——清空 textarea 会
+    // 打断输入法的合成会话。真机现象（用户实测）：候选框闪一下就消失、拼音永远上不了屏、
+    // 正文一个字都不出（`compositionend` 再也不会带着内容触发）。
+    // 单测抓不到：`fireEvent` 造的合成事件在 jsdom 里清空 value 不会取消任何东西，
+    // 所以「合成态的 input 不抽字」这条用例在修复前后都是绿的。
+    //
+    // 【两种浏览器顺序都对，别改成只认 `e.nativeEvent.isComposing`】：若上屏时浏览器先发
+    // `input` 再发 `compositionend`，那一刻 `composing.current` 仍为真 → 这里跳过（不计入、
+    // 不清空），随后由 `compositionend` 计数并清空；若顺序相反，`compositionend` 先计数并
+    // 清空，这里看到空串、`inserted` 为 0，也不会重复计。
+    if (composing.current) return
+    if (modeRef.current === 'ime') {
       const inserted = el.value.length
       if (inserted > 0) engineRef.current.pump(inserted)
     }
