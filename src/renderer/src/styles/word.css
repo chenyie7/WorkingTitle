@@ -44,6 +44,12 @@
   --wt-font:
     -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui,
     sans-serif;
+
+  /* 告诉 Chromium「本页按浅色渲染原生控件」。
+     这一条同时管住：滚动条、`<input type="checkbox">` 这类原生控件、以及默认底色。
+     不设的话深色外观下侧栏与画布的滚动条仍是浅色（用户实测报的就是这个），
+     而设置里那个复选框也会是一块刺眼的白。 */
+  color-scheme: light;
 }
 
 * {
@@ -217,6 +223,11 @@ body {
  * 浅色是默认：`data-theme="light"` 或没有这个属性时都走上面 :root 那套。
  */
 [data-theme='dark'] {
+  /* 深色下把原生控件也切过去：滚动条、复选框、默认底色一起变。
+     这是修「滚动条没做深色适配」的正解——比手写 ::-webkit-scrollbar 覆盖面广得多，
+     而且滚动条会跟系统一致（macOS 上就是那条半透明的浮层滚动条）。 */
+  color-scheme: dark;
+
   /* 强调色在深色下要【提亮】——原色 #185abd 压在深灰上几乎看不见 */
   --wt-blue: #6cb0ff;
   --wt-blue-dark: #a5cfff;
