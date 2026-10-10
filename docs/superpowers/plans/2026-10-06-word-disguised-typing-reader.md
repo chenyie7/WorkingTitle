@@ -4529,15 +4529,27 @@ body {
   user-select: none;
 }
 
+/* 隐形输入框只占「阅读光标那一点」，【绝不铺满整张纸】。
+   铺满（原来的 `inset: 0`）在真机上有两个后果，都是用户实测报上来的：
+   (1) 输入法候选框跟着「textarea 自己的文本光标」定位，而铺满纸的 textarea 光标恒在纸的
+       左上角；纸被滚上去之后那个点远在视野上方，系统把候选框钳到窗口顶部——「输入框跑到
+       页面顶部」。
+   (2) 更糟：Chromium 会把「获得焦点的可编辑元素的光标」滚进视野，于是每次击键都把
+       `.wt-canvas` 按回页首。`App` 里那段 rAF 补滚是在跟这次原生滚动赛跑，实测会输。
+   位置由 `InputCapture` 在每次渲染后按 `.wt-caret` 的 `offsetLeft` / `offsetTop` 写成
+   行内样式；下面这组值同时是「没有阅读光标时」的兜底（纸张左上角）。 */
 .wt-input {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1.15em; /* 与 .wt-caret 同高；JS 会按实测到的光标高度覆盖 */
   opacity: 0;
+  overflow: hidden;
   border: none;
   resize: none;
   padding: 0;
+  margin: 0;
   font: inherit;
   color: transparent;
   background: transparent;
@@ -6204,7 +6216,14 @@ Expected: FAIL —— 无法解析 `InputCapture`。
 - [ ] **Step 3: 写 `src/renderer/src/input/InputCapture.tsx`**
 
 ```tsx
-import { useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { InputMode } from '../../../core/types'
 
 export interface InputEngine {
@@ -6278,6 +6297,57 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
       window.removeEventListener('click', focus)
     }
   }, [])
+
+  /**
+   * 把隐形输入框摆到阅读光标（`.wt-caret`）所在处——见 `page.css` 里 `.wt-input` 的注释，
+   * 那是为什么必须这么做（候选框跑到页面顶部 + 小说被顶回页首，两个用户实测现象）。
+   *
+   * 【用 `offsetLeft` / `offsetTop`，不用 `getBoundingClientRect`】：`.wt-caret` 是
+   * `display: inline-block`，`.wt-page__text` 是 static，所以它的 `offsetParent` 就是
+   * `position: relative` 的 `.wt-page`；而绝对定位的 `left` / `top` 也是相对包含块（同一个
+   * `.wt-page`）的。两者同一坐标系，于是【滚动 `.wt-canvas` 不影响相对位置，不需要在滚动时
+   * 重算】。实测校验过两者确实可换：`caret.rect.x - page.rect.x == caret.offsetLeft`
+   * （800 − 356 = 444）、y 同理（2233 − 132 = 2101）——`.wt-page` 没有 border，它的
+   * border box 与 padding box 同原点。
+   *
+   * 【从自己的父节点往下找，不查 `document`】：`Page` 先渲染 `.wt-page__text`、后渲染
+   * children，所以 `.wt-caret` 与本 textarea 同属一个 `.wt-page`。锚点用 `[data-testid]`
+   * 而不是 `.wt-caret` 类名，跟单测/端到端用的是同一个。
+   */
+  const placeAtCaret = useCallback((): void => {
+    const el = ref.current
+    if (!el) return
+    const caret = el.parentElement?.querySelector<HTMLElement>('[data-testid="caret"]') ?? null
+    if (!caret) {
+      // 空状态：`Page` 渲染的是 `.wt-page__empty`，没有阅读光标。退回纸张左上角——输入框
+      // 仍在纸内、仍可聚焦，用户点一下照样能开始打字。【不能让输入框消失或抛错。】
+      el.style.left = '0px'
+      el.style.top = '0px'
+      return
+    }
+    el.style.left = `${caret.offsetLeft}px`
+    el.style.top = `${caret.offsetTop}px`
+    el.style.height = `${caret.offsetHeight}px`
+  }, [])
+
+  /**
+   * 【刻意不写依赖数组，每次渲染后都跑】：本组件只拿得到 `engine`（稳定引用）与 `mode`，
+   * 没有任何 prop 会在阅读光标移动时变化——光标动不动是 `App` 那边 `visibleText` 的事。
+   * 好在 `App` 每次引擎状态变化都会重渲染，而本组件没有 `memo`，所以「本组件重渲染」恰好
+   * 就是「阅读光标可能移动了」的时刻。写了依赖数组反而会漏掉真正该跑的那些渲染。
+   *
+   * 用 `useLayoutEffect` 而不是 `useEffect`：它在 React 提交完 DOM、浏览器绘制之前同步跑，
+   * 所以不会先画一帧停在旧位置的输入框。读 `offsetLeft` 会强制同步重排，量到的一定是提交
+   * 之后的布局。
+   */
+  useLayoutEffect(placeAtCaret)
+
+  // 窗口尺寸变化会让文字重排 → 阅读光标换位置 → 输入框得跟着挪。这条不靠重渲染
+  // （resize 不会让 `App` 重渲染），所以单独立一个监听，并在卸载时摘掉。
+  useEffect(() => {
+    window.addEventListener('resize', placeAtCaret)
+    return () => window.removeEventListener('resize', placeAtCaret)
+  }, [placeAtCaret])
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Backspace') {
@@ -6398,7 +6468,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 > （jsdom 没有布局，这个断言在单测里没有意义，别写在 vitest 里假装测了）。
 >
 > **落地时才量出来的、比上面更要紧的一条（Task 12 实施期实测）：光在 effect 里滚一次是不够的，真机上等于没修。**
-> Chromium 会在**真实按键**之后把「焦点里那个 textarea 的光标」滚进视野——`.wt-input` 是盖满整张纸的
+> Chromium 会在**真实按键**之后把「焦点里那个 textarea 的光标」滚进视野——那时的 `.wt-input` 是盖满整张纸的
 > 隐形输入框（`inset: 0; height: 100%`），它自己的光标在纸的左上角，于是浏览器每次都把画布按回页首。
 > 实测（140 键，每键采样）：effect 里同步设成 `1414`，**同一个 effect 里再量已经是 `30`**；只在 effect 里
 > 同步滚一版，连敲 120 键后末尾 `scrollTop` 仍是 `30`、光标在 `1976px` 处（画布只有 667px 高）。
@@ -6406,7 +6476,14 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 > 它落在回滚之后、这一帧画出来之前。**那次 rAF 刻意不 cancel**（cancel 会让快速连打时上一键排的那一帧
 > 被下一键的 effect 清掉，实测 k70 之后全程停在页首）。
 >
-> 还有一条**测法**上的坑，别用它证明「滚动没用」：**合成事件测不出这个回滚**。用
+> **⚠️ 上面那条的【前提】已经不作数了（后续修复，不是本节落地时的事）：`.wt-input` 不再铺满整张纸。**
+> 用户真机报的两个现象同源，都出在这个铺满纸的隐形输入框上：(1) 候选框跟着「textarea 自己的文本光标」
+> 跑到页面顶部；(2) Chromium 每次击键把画布按回页首——也就是上面那段 rAF 一直在赛跑的那个回滚。
+> 修法是把输入框摆到阅读光标 `.wt-caret` 上（见 `InputCapture.tsx` 的 `placeAtCaret` 与 `page.css` 里
+> `.wt-input` 的注释）。摆对之后 Chromium 要滚进来的那个光标本来就在视野里，原生回滚变成空操作。
+> 那段 rAF 补滚此后是否还承重，实测结论记在 Task 12 的交付说明里，**别照抄本节上面的旧叙述**。
+>
+> 还有一条**测法**上的坑（前提虽已变，这条仍然成立）：**合成事件测不出原生回滚**。用
 > `el.dispatchEvent(new Event('input'))` 派发（哪怕焦点还在 textarea 上）浏览器根本不做这次回滚，
 > 滚动看起来完全正常——只有真实的 `keyboard.press` 才复现。真机验证必须真敲键。
 
