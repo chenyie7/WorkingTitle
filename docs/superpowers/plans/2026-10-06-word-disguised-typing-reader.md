@@ -4551,6 +4551,8 @@ createRoot(document.getElementById('root')!).render(
 
 此步只验证布局与样式，功能在后续任务接入。
 
+> **这是 Task 7 时期的版本，已经过期。** Task 8 的 Step 7 把 Ribbon 接进了 `ToolbarProvider` 并在末尾渲染 `Toast`，Task 12 的 Step 3 又整体重写了它。**当前有效的是 Task 12 Step 3 的围栏**；Task 8 那一版留在 Task 8 Step 7 里备查。
+
 ```tsx
 export default function App() {
   return (
@@ -5240,16 +5242,63 @@ Expected: 全部 PASS。
 
 - [ ] **Step 7: 接进 App 并手动验证**
 
-把 `App.tsx` 的 `.wt-ribbon` 骨架替换为 `<ToolbarProvider><Ribbon docTitle="文档1" /></ToolbarProvider>`，并在 `App` 末尾渲染 `<Toast />`。
+把 `App.tsx` 里写死的 `div.wt-ribbon` 整块（标题条 + 两个假选项卡 + 空的 `.wt-toolbar`）换成 `<Ribbon docTitle="文档1" />`，并在 `App` 末尾渲染 `<Toast />`。
+
+**`ToolbarProvider` 必须包住整个 `App`，不能只包 `Ribbon`。** `Toast` 内部调用 `useToolbar()`，落在 Provider 之外会抛 `useToolbar 必须在 ToolbarProvider 内使用`，`layout.test.tsx` 的 `render(<App />)` 会当场变红——所以「替换 `.wt-ribbon` 骨架为 `<ToolbarProvider><Ribbon/></ToolbarProvider>`」这句要读成「Ribbon 必须处于 Provider 之内」，而不是「Provider 的范围就到此为止」。
 
 Run: `pnpm dev`
 Expected: 点「文件」「插入」等选项卡能切换工具组；点「B」会高亮；点「导出 docx」右下弹出提示；比例框能改。
 
+本步之后 `src/renderer/src/App.tsx` 的最终全文：
+
+```tsx
+import { Ribbon } from './components/Ribbon'
+import { Toast } from './components/Toast'
+import { ToolbarProvider } from './state/ToolbarContext'
+
+export default function App() {
+  return (
+    <ToolbarProvider>
+      <div className="wt-app" data-testid="app-root">
+        <Ribbon docTitle="文档1" />
+
+        <div className="wt-body">
+          <aside className="wt-sidebar">
+            <div className="wt-sidebar__header">章节</div>
+            <div className="wt-sidebar__list" />
+          </aside>
+          <main className="wt-canvas">
+            <div className="wt-page">
+              <div className="wt-page__empty">
+                文件 → 导入小说，或按 Ctrl+O
+                <br />
+                导入后在文档区打字，字会按比例从小说里取出来。
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <div className="wt-statusbar">
+          <span>就绪</span>
+        </div>
+        <Toast />
+      </div>
+    </ToolbarProvider>
+  )
+}
+```
+
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): Ribbon 选项卡、工具栏按钮与 Toast 反馈"
+git add src/renderer/src/state/ToolbarContext.tsx \
+        src/renderer/src/components/Toast.tsx \
+        src/renderer/src/components/Toolbar.tsx \
+        src/renderer/src/components/Ribbon.tsx \
+        src/renderer/src/App.tsx \
+        tests/unit/ribbon.test.tsx \
+        docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md
+git commit -F /tmp/task8-msg.txt   # 切勿用内联 -m：ASCII 引号会静默截断提交信息
 ```
 
 ---
