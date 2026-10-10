@@ -5502,7 +5502,110 @@ describe('ChapterList', () => {
     expect(ROW_HEIGHT).toBe(32)
   })
 })
+
+// —— 以下为 Task 9 实现者补的用例：计划里那 7 条从未触发过 scroll ——
+// 也就是说「滚动 → 重算可视窗口 → 换出不同的行」这条组件的核心机制零覆盖，
+// 把 onScroll 回调改成空函数，上面 7 条全绿。
+
+// 组件内部的 overscan 行数（ChapterList.tsx 的 OVERSCAN）与 jsdom 下的视口兜底值：
+// jsdom 没有布局，clientHeight 恒为 0，mount 时的 measure() 会退回 400px。
+// 两个数字都与组件实现保持一致，改组件时必须同步改这里。
+const OVERSCAN = 6
+const VIEWPORT_FALLBACK = 400
+
+describe('ChapterList 虚拟滚动', () => {
+  it('滚动后重算可视窗口，换出不同的行', () => {
+    const novel = makeNovel(3000)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+    expect(screen.queryByTestId('chapter-item-2000')).toBeNull()
+
+    const el = screen.getByTestId('chapter-list') as HTMLDivElement
+    el.scrollTop = 2000 * ROW_HEIGHT
+    fireEvent.scroll(el)
+
+    // 2000 行进了可视区，0 行被换出去 —— 这两条只有在 onScroll 真的把 scrollTop
+    // 写进 state、组件因此重算窗口时才会同时成立。
+    expect(screen.getByTestId('chapter-item-2000')).toBeTruthy()
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+  })
+
+  it('窗口在可视区两端各多渲染 OVERSCAN 行（滚动时不闪白）', () => {
+    const novel = makeNovel(3000)
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    const el = screen.getByTestId('chapter-list') as HTMLDivElement
+    el.scrollTop = 2000 * ROW_HEIGHT
+    fireEvent.scroll(el)
+
+    // 可视区从第 2000 行开始，高度 400px ≈ 12.5 行，所以可视区末端（不含）是第 2013 行；
+    // 窗口再向两端各扩 OVERSCAN 行 —— 实际渲染 1994..2018。
+    // 少了这个 overscan，快速滚动时刚进视口的那几行会来不及渲染（闪白）。
+    const topRow = 2000
+    const bottomRow = topRow + Math.ceil(VIEWPORT_FALLBACK / ROW_HEIGHT)
+    expect(screen.getByTestId(`chapter-item-${topRow - OVERSCAN}`)).toBeTruthy()
+    expect(screen.queryByTestId(`chapter-item-${topRow - OVERSCAN - 1}`)).toBeNull()
+    expect(screen.getByTestId(`chapter-item-${bottomRow + OVERSCAN - 1}`)).toBeTruthy()
+    expect(screen.queryByTestId(`chapter-item-${bottomRow + OVERSCAN}`)).toBeNull()
+  })
+
+  it('chapterPos 比章节数短时，缺项按 0 计（不显示 NaN%）', () => {
+    const novel = makeNovel(5)
+    // 快照里的 chapterPos 长度恒等于 chapters.length，但只有第 0 章有进度
+    render(
+      <ChapterList
+        novel={novel}
+        activeChapter={0}
+        chapterPos={[novel.chapters[0].charCount]}
+        onJump={() => {}}
+      />
+    )
+    expect(screen.getByTestId('chapter-pct-0').textContent).toBe('100%')
+    expect(screen.getByTestId('chapter-pct-4').textContent).toBe('0%')
+  })
+
+  it('进度超过该章长度时百分比封顶 100', () => {
+    const novel = makeNovel(3)
+    // 存档是旧正文、当前是重新导入的新正文时，pos 可以超过 charCount
+    const stale = novel.chapters[0].charCount * 2
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[stale, 0, 0]} onJump={() => {}} />)
+    expect(screen.getByTestId('chapter-pct-0').textContent).toBe('100%')
+  })
+})
+
+describe('ChapterList 当前章节自动滚进可视区', () => {
+  it('当前章节在视口下方时滚到行底对齐，在上方时滚到行顶对齐', () => {
+    const novel = makeNovel(200)
+    const { rerender } = render(
+      <ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />
+    )
+    const el = screen.getByTestId('chapter-list') as HTMLDivElement
+    // jsdom 没有布局，clientHeight 恒为 0。不补一个真实视口高度，「目标行是否已在
+    // 可视区内」这个判断就只剩 clientHeight === 0 的退化分支（挂载时会把 scrollTop
+    // 顶到目标行底边），所以这里在实例上覆盖掉它，测的是带视口高度时真正会跑的那条式子。
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 400 })
+    el.scrollTop = 0
+
+    // 第 30 行（top=960, bottom=992）在视口 0..400 之外 → 滚到行底贴着视口下沿
+    rerender(<ChapterList novel={novel} activeChapter={30} chapterPos={[]} onJump={() => {}} />)
+    expect(el.scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 400)
+
+    // 第 25 行（top=800, bottom=832）已落在 592..992 里 → 不该动列表
+    rerender(<ChapterList novel={novel} activeChapter={25} chapterPos={[]} onJump={() => {}} />)
+    expect(el.scrollTop).toBe(30 * ROW_HEIGHT + ROW_HEIGHT - 400)
+
+    // 第 2 行（top=64）在视口上方 → 滚到行顶对齐
+    rerender(<ChapterList novel={novel} activeChapter={2} chapterPos={[]} onJump={() => {}} />)
+    expect(el.scrollTop).toBe(2 * ROW_HEIGHT)
+  })
+})
 ```
+
+> **实施者补记（Task 9）**：上面这段测试是计划原样。但它 7 条用例**从未触发过 `scroll`**——把 `onScroll`
+> 回调改成空函数，7 条全绿，也就是说「滚动 → 重算可视窗口 → 换出不同的行」这条核心机制零覆盖。
+> 实际交付的 `tests/unit/chapterList.test.tsx` 在此之后追加了 5 条：滚动换行、窗口两端 overscan 边界、
+> `chapterPos` 缺项按 0 计、百分比封顶 100、`activeChapter` 变化时的自动滚动。**围栏里就是交付的文件**（12 条）。
+> 注意：自动滚动那条依赖 `clientHeight`，而 jsdom 里它恒为 0，用例是在元素实例上 `Object.defineProperty`
+> 覆盖成 400 才走到「目标行是否已在可视区内」的真实分支；不覆盖时只会走 clientHeight === 0 的退化分支。
 
 - [ ] **Step 3: 运行测试并修复**
 
@@ -5512,8 +5615,10 @@ Expected: PASS。若虚拟滚动用例失败，多半是 jsdom 里 `clientHeight
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): 左侧章节列表（虚拟滚动 + 跳转 + 阅读进度）"
+git add src/renderer/src/components/ChapterList.tsx \
+        tests/unit/chapterList.test.tsx \
+        docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md
+git commit -F /tmp/task9-msg.txt   # 切勿用内联 -m：ASCII 引号会静默截断提交信息
 ```
 
 ---
