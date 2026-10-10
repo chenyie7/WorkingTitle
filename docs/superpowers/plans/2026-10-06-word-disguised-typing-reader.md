@@ -4178,9 +4178,10 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 **Interfaces:**
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
-  - CSS 类名契约（后续任务依赖）：**下面 36 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
-    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__rail` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+  - CSS 类名契约（后续任务依赖）：**下面 37 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
+    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-ribbon__title-input` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__rail` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
   - `App.tsx` 渲染出 `.wt-app` 骨架，含 `data-testid="app-root"`
+  - `<Ribbon docTitle={string} onDocTitleChange={(t: string) => void} />`：蓝条上的文档名，**由用户自己定、与 `novel.title` 无关**；`data-testid="doc-title"`（按钮）、`doc-title-input`（就地编辑的输入框）
 
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
 
@@ -4369,8 +4370,39 @@ body {
   font-weight: 600;
 }
 
+/* 文档名是个按钮：点它就地改名。做成 button 而不是 span，键盘也能到达，
+   而且不需要额外的「编辑」图标占位置。 */
 .wt-ribbon__title-doc {
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
   opacity: 0.85;
+  cursor: pointer;
+}
+
+.wt-ribbon__title-doc:hover {
+  background: rgba(255, 255, 255, 0.18);
+  opacity: 1;
+}
+
+.wt-ribbon__title-input {
+  width: 170px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1a1a1a;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.wt-ribbon__title-input:focus {
+  outline: 1px solid #ffffff;
 }
 
 .wt-tabs {
@@ -5071,7 +5103,7 @@ export function Toolbar({ groups }: { groups: ToolbarGroup[] }) {
 - [ ] **Step 4: 写 `src/renderer/src/components/Ribbon.tsx`**
 
 ```tsx
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -5195,14 +5227,71 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ]
 }
 
-export function Ribbon({ docTitle }: { docTitle: string }) {
+export function Ribbon({
+  docTitle,
+  onDocTitleChange
+}: {
+  docTitle: string
+  onDocTitleChange: (next: string) => void
+}) {
   const [tab, setTab] = useState<RibbonTab>('开始')
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(docTitle)
+  // Esc 取消时 input 会卸载、进而触发 blur；没有这个标记的话 blur 会把草稿提交上去，
+  // 「按 Esc 取消」就成了「按 Esc 提交」。
+  const cancelTitleRef = useRef(false)
+
+  const startEditingTitle = (): void => {
+    setTitleDraft(docTitle)
+    cancelTitleRef.current = false
+    setEditingTitle(true)
+  }
+
+  const commitTitle = (): void => {
+    if (cancelTitleRef.current) {
+      cancelTitleRef.current = false
+      setEditingTitle(false)
+      return
+    }
+    const next = titleDraft.trim()
+    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
+    if (next) onDocTitleChange(next)
+    setEditingTitle(false)
+  }
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
         <span className="wt-ribbon__title-app">Word</span>
-        <span className="wt-ribbon__title-doc">{docTitle}</span>
+        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点 */}
+        {editingTitle ? (
+          <input
+            className="wt-ribbon__title-input"
+            data-testid="doc-title-input"
+            aria-label="文档名"
+            value={titleDraft}
+            autoFocus
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitTitle()
+              else if (e.key === 'Escape') {
+                cancelTitleRef.current = true
+                setEditingTitle(false)
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="wt-ribbon__title-doc"
+            data-testid="doc-title"
+            title="点击重命名"
+            onClick={startEditingTitle}
+          >
+            {docTitle}
+          </button>
+        )}
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (
@@ -5245,11 +5334,66 @@ function setup(overrides: {
 } = {}): void {
   render(
     <ToolbarProvider {...overrides}>
-      <Ribbon docTitle="文档1" />
+      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} />
       <Toast />
     </ToolbarProvider>
   )
 }
+
+describe('文档名可改（蓝条上的「文档1」）', () => {
+  function renderRibbon(docTitle: string): ReturnType<typeof vi.fn> {
+    const onDocTitleChange = vi.fn()
+    render(
+      <ToolbarProvider>
+        <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
+      </ToolbarProvider>
+    )
+    return onDocTitleChange
+  }
+
+  it('点文档名变成输入框，回车提交', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+
+    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
+    expect(screen.queryByTestId('doc-title-input')).toBeNull()
+  })
+
+  it('失焦也提交', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
+    fireEvent.blur(input)
+    // 两侧空白要去掉
+    expect(onChange).toHaveBeenCalledWith('会议纪要')
+  })
+
+  it('Esc 取消：提交不上去，名字也不变', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '改了但不该生效' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.blur(input)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+
+  it('空名不提交（蓝条不能变成一片空白）', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+})
 
 describe('Ribbon 选项卡', () => {
   it('渲染七个选项卡，默认选中「开始」', () => {
@@ -6838,6 +6982,12 @@ export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
   const [engine, setEngine] = useState<TypingEngine | null>(null)
   const [expanded, setExpanded] = useState(false)
+  /**
+   * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
+   * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
+   * 默认取一个中性的 `文档1`。
+   */
+  const [docTitle, setDocTitle] = useState('文档1')
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -7035,7 +7185,7 @@ export default function App() {
   return (
     <ToolbarProvider {...toolbarProps}>
       <div className="wt-app" data-testid="app-root">
-        <Ribbon docTitle={novel ? novel.title : '文档1'} />
+        <Ribbon docTitle={docTitle} onDocTitleChange={setDocTitle} />
 
         <div className="wt-body">
           <ChapterList
@@ -7123,6 +7273,20 @@ describe('App 端到端（单测层）', () => {
     render(<App />)
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
     expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+  })
+
+  it('导入后蓝条上不出现小说文件名（那是导入唯一的泄露点）', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+
+    fireEvent.click(screen.getByTestId('tab-文件'))
+    fireEvent.click(screen.getByTestId('btn-import'))
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 修复前这里是 `novel.title`（= 文件名「测试书」），等于把「在看小说」写在窗口最显眼处
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+    expect(screen.getByTestId('ribbon').textContent).not.toContain('测试书')
   })
 
   it('导入小说后可打字，阅读区按比例增长', async () => {

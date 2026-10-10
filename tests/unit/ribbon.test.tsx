@@ -15,11 +15,66 @@ function setup(overrides: {
 } = {}): void {
   render(
     <ToolbarProvider {...overrides}>
-      <Ribbon docTitle="文档1" />
+      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} />
       <Toast />
     </ToolbarProvider>
   )
 }
+
+describe('文档名可改（蓝条上的「文档1」）', () => {
+  function renderRibbon(docTitle: string): ReturnType<typeof vi.fn> {
+    const onDocTitleChange = vi.fn()
+    render(
+      <ToolbarProvider>
+        <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
+      </ToolbarProvider>
+    )
+    return onDocTitleChange
+  }
+
+  it('点文档名变成输入框，回车提交', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+
+    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
+    expect(screen.queryByTestId('doc-title-input')).toBeNull()
+  })
+
+  it('失焦也提交', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
+    fireEvent.blur(input)
+    // 两侧空白要去掉
+    expect(onChange).toHaveBeenCalledWith('会议纪要')
+  })
+
+  it('Esc 取消：提交不上去，名字也不变', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '改了但不该生效' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.blur(input)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+
+  it('空名不提交（蓝条不能变成一片空白）', () => {
+    const onChange = renderRibbon('文档1')
+    fireEvent.click(screen.getByTestId('doc-title'))
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.blur(input)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+})
 
 describe('Ribbon 选项卡', () => {
   it('渲染七个选项卡，默认选中「开始」', () => {

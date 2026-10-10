@@ -19,8 +19,39 @@
   font-weight: 600;
 }
 
+/* 文档名是个按钮：点它就地改名。做成 button 而不是 span，键盘也能到达，
+   而且不需要额外的「编辑」图标占位置。 */
 .wt-ribbon__title-doc {
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
   opacity: 0.85;
+  cursor: pointer;
+}
+
+.wt-ribbon__title-doc:hover {
+  background: rgba(255, 255, 255, 0.18);
+  opacity: 1;
+}
+
+.wt-ribbon__title-input {
+  width: 170px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1a1a1a;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.wt-ribbon__title-input:focus {
+  outline: 1px solid #ffffff;
 }
 
 .wt-tabs {
