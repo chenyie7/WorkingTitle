@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 命令
 
 ```bash
+pnpm install      # 会跑 postinstall 把 Electron 二进制下下来，见下
 pnpm dev          # electron-vite dev（渲染层热更新）
 pnpm build        # 构建到 out/ —— 手动跑 _electron 之前必须先跑这个，见下
 pnpm typecheck    # 跑【两个】tsconfig，缺一不可（第二个是 core 纯净性的门禁）
@@ -24,6 +25,23 @@ pnpm vitest run -t '合成中的 input'          # 按用例名筛
 pnpm test:e2e     # 先 build 再 playwright（跑真 Electron 进程）
 pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 ```
+
+**Electron 二进制不会被自动下下来，`pnpm dev` 会报 `Error: Electron uninstall`。** electron 44 起
+**取消了 `postinstall`**，二进制改由 `electron/index.js` 在**首次 `require('electron')` 时惰性下载**；
+而 electron-vite 的 `getElectronPath()` 只做 `require.resolve('electron')` + 直接读 `electron/path.txt`，
+**从不 `require` 它**，所以那次下载永远不触发，读不到 `path.txt` 就抛这个错。
+本仓库靠根 `postinstall: install-electron` 兜住（`install-electron` 是 electron 自己声明的 bin，幂等，
+已装则 `exit 0`）。
+
+这个坑**在装了 node_modules 的机器上完全看不见**（早先某次 e2e 已经把它下下来了），
+**只有全新 clone 才炸**——所以别用「我这儿是好的」判断它。两件事别搞混：
+
+- `pnpm-workspace.yaml` 的 `allowBuilds` 与它**无关**（名单里的 `esbuild` / `electron-winstaller` 是
+  真有构建脚本的）；electron 本身没有构建脚本，加进去也没用。
+- 根 `postinstall` 只在**真正执行安装**时跑。`node_modules` 已就绪时 `pnpm install` 会打印
+  `Already up to date` 并**跳过全部生命周期脚本**——想复验得换一个空的目录装。
+
+国内下载慢/失败时设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
 **验收一律看 exit code，别只 grep 摘要行。** 本仓库出现过两类「摘要行看着是绿的」形态：
 - unhandled rejection：用例行照旧 `passed`，只有汇总行多一条 `Errors 1 error`，而 exit code 是 1；
