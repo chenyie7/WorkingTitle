@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { SettingsDialog } from './SettingsDialog'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -30,15 +31,13 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
   ]
 }
 
-/** 承载真实功能的控件，挂在「开始」和「视图」两个选项卡下，保证随手可及 */
-const READING_GROUP: ToolbarGroup = {
-  label: '阅读替换',
-  items: [{ kind: 'ratio' }, { kind: 'mode' }]
-}
-
+/**
+ * 【原先这里挂着一个 `READING_GROUP`（比例 + 输入模式），摆在「开始」和「视图」两个选项卡下】
+ * 那是全应用最容易被一眼看穿的地方：假 Word 的工具栏里放着「1 键显示 N 字」。整组连同
+ * 「文件」选项卡里的「小说」组一起搬进了 `SettingsDialog`，工具栏只留一个「设置」按钮。
+ */
 const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   文件: [
-    { label: '小说', items: [{ kind: 'import' }, { kind: 'clear-session' }] },
     {
       label: '文件',
       items: [
@@ -47,12 +46,14 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         { kind: 'placeholder', id: 'export-docx', label: '导出 docx', title: '导出为 docx' },
         { kind: 'placeholder', id: 'print', label: '打印', title: '打印' }
       ]
-    }
+    },
+    // 真实功能的唯一入口。排在占位组【后面】——它是整个界面上唯一「有用」的按钮，
+    // 摆在最左边反而显眼。
+    { label: '设置', items: [{ kind: 'settings' }] }
   ],
   开始: [
     FONT_GROUP,
     PARAGRAPH_GROUP,
-    READING_GROUP,
     {
       label: '样式',
       items: [
@@ -117,8 +118,7 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺' },
         { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线' }
       ]
-    },
-    READING_GROUP
+    }
   ]
 }
 
@@ -130,63 +130,33 @@ export function Ribbon({
   onDocTitleChange: (next: string) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState(docTitle)
-  // Esc 取消时 input 会卸载、进而触发 blur；没有这个标记的话 blur 会把草稿提交上去，
-  // 「按 Esc 取消」就成了「按 Esc 提交」。
-  const cancelTitleRef = useRef(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  const startEditingTitle = (): void => {
-    setTitleDraft(docTitle)
-    cancelTitleRef.current = false
-    setEditingTitle(true)
-  }
-
-  const commitTitle = (): void => {
-    if (cancelTitleRef.current) {
-      cancelTitleRef.current = false
-      setEditingTitle(false)
-      return
+  // 设置对话框的快捷键：⌘/Ctrl + ,（macOS 上「设置」的惯例键）
+  //
+  // 【为什么用 e.code 而不是 e.key】与左侧栏的 ⌘/Ctrl+Shift+H 同理：`e.key` 会随修饰键
+  // 与键盘布局变（按住 Shift 时 ',', 在非 QWERTY 布局下还可能是别的字符），而
+  // `e.code === 'Comma'` 按物理按键位置判定，不受这两件事影响。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.code !== 'Comma') return
+      e.preventDefault()
+      setSettingsOpen(true)
     }
-    const next = titleDraft.trim()
-    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
-    if (next) onDocTitleChange(next)
-    setEditingTitle(false)
-  }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
         <span className="wt-ribbon__title-app">Word</span>
-        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点 */}
-        {editingTitle ? (
-          <input
-            className="wt-ribbon__title-input"
-            data-testid="doc-title-input"
-            aria-label="文档名"
-            value={titleDraft}
-            autoFocus
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitTitle()
-              else if (e.key === 'Escape') {
-                cancelTitleRef.current = true
-                setEditingTitle(false)
-              }
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            className="wt-ribbon__title-doc"
-            data-testid="doc-title"
-            title="点击重命名"
-            onClick={startEditingTitle}
-          >
-            {docTitle}
-          </button>
-        )}
+        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
+            它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
+        <span className="wt-ribbon__title-doc" data-testid="doc-title">
+          {docTitle}
+        </span>
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (
@@ -203,7 +173,13 @@ export function Ribbon({
           </button>
         ))}
       </div>
-      <Toolbar groups={TABS[tab]} />
+      <Toolbar groups={TABS[tab]} onOpenSettings={() => setSettingsOpen(true)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        docTitle={docTitle}
+        onDocTitleChange={onDocTitleChange}
+      />
     </div>
   )
 }

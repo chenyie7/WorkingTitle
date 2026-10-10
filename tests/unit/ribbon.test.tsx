@@ -1,77 +1,26 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Ribbon, RIBBON_TABS } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
-import type { InputMode } from '../../src/core/types'
 
-function setup(overrides: {
-  ratio?: number
-  mode?: InputMode
-  onRatioChange?: (n: number) => void
-  onModeChange?: (m: InputMode) => void
-  onImport?: () => void
-  onClearSession?: () => void
-} = {}): void {
+function setup(): void {
   render(
-    <ToolbarProvider {...overrides}>
+    <ToolbarProvider>
       <Ribbon docTitle="文档1" onDocTitleChange={() => {}} />
       <Toast />
     </ToolbarProvider>
   )
 }
 
-describe('文档名可改（蓝条上的「文档1」）', () => {
-  function renderRibbon(docTitle: string): ReturnType<typeof vi.fn> {
-    const onDocTitleChange = vi.fn()
-    render(
-      <ToolbarProvider>
-        <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
-      </ToolbarProvider>
-    )
-    return onDocTitleChange
-  }
-
-  it('点文档名变成输入框，回车提交', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
-    expect(input.value).toBe('文档1')
-
-    fireEvent.change(input, { target: { value: '第 3 季度汇报' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
-    expect(screen.queryByTestId('doc-title-input')).toBeNull()
-  })
-
-  it('失焦也提交', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
-    fireEvent.blur(input)
-    // 两侧空白要去掉
-    expect(onChange).toHaveBeenCalledWith('会议纪要')
-  })
-
-  it('Esc 取消：提交不上去，名字也不变', () => {
-    const onChange = renderRibbon('文档1')
-    fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '改了但不该生效' } })
-    fireEvent.keyDown(input, { key: 'Escape' })
-    fireEvent.blur(input)
-    expect(onChange).not.toHaveBeenCalled()
+describe('蓝条上的文档名', () => {
+  it('是一段静态文本：点它不再变成输入框（改名挪进了设置对话框）', () => {
+    setup()
     expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
-  })
 
-  it('空名不提交（蓝条不能变成一片空白）', () => {
-    const onChange = renderRibbon('文档1')
     fireEvent.click(screen.getByTestId('doc-title'))
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '   ' } })
-    fireEvent.blur(input)
-    expect(onChange).not.toHaveBeenCalled()
+
+    expect(screen.queryByTestId('doc-title-input')).toBeNull()
     expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
   })
 })
@@ -91,7 +40,7 @@ describe('Ribbon 选项卡', () => {
     setup()
     fireEvent.click(screen.getByTestId('tab-文件'))
     expect(screen.getByTestId('tab-文件').getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByTestId('btn-import')).toBeTruthy()
+    expect(screen.getByTestId('btn-settings')).toBeTruthy()
     expect(screen.queryByTestId('btn-bold')).toBeNull()
   })
 })
@@ -117,55 +66,29 @@ describe('占位按钮必须可点击且有反馈', () => {
   })
 })
 
-describe('真实功能控件', () => {
-  it('比例输入回车后回调夹紧后的值', () => {
-    const onRatioChange = vi.fn()
-    setup({ ratio: 10, onRatioChange })
-    const input = screen.getByTestId('ratio-input')
-    fireEvent.change(input, { target: { value: '25' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onRatioChange).toHaveBeenCalledWith(25)
-  })
-
-  it('比例超出上限时夹紧到 500 并提示', () => {
-    const onRatioChange = vi.fn()
-    setup({ ratio: 10, onRatioChange })
-    const input = screen.getByTestId('ratio-input')
-    fireEvent.change(input, { target: { value: '9999' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onRatioChange).toHaveBeenCalledWith(500)
-    expect(screen.getByTestId('toast').textContent).toContain('500')
-  })
-
-  it('输入模式按钮真实切换并提示', () => {
-    const onModeChange = vi.fn()
-    setup({ mode: 'ime', onModeChange })
-    expect(screen.getByTestId('mode-button').textContent).toBe('输入法')
-    fireEvent.click(screen.getByTestId('mode-button'))
-    expect(onModeChange).toHaveBeenCalledWith('key')
-    expect(screen.getByTestId('toast').textContent).toContain('纯按键')
-  })
-
-  it('「导入小说」按钮触发真实回调而非占位提示', () => {
-    const onImport = vi.fn()
-    setup({ onImport })
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-import'))
-    expect(onImport).toHaveBeenCalledTimes(1)
-    expect(screen.queryByTestId('toast')).toBeNull()
-  })
-
-  it('「清除阅读记录」按钮触发真实回调', () => {
-    const onClearSession = vi.fn()
-    setup({ onClearSession })
-    fireEvent.click(screen.getByTestId('tab-文件'))
-    fireEvent.click(screen.getByTestId('btn-clear-session'))
-    expect(onClearSession).toHaveBeenCalledTimes(1)
-  })
-
-  it('默认选项卡「开始」下就能看到比例与模式控件', () => {
+describe('真实功能不再摆在工具栏里', () => {
+  it('七个选项卡下都找不到比例/模式/导入/清除（它们整组搬进了设置对话框）', () => {
     setup()
+    for (const name of RIBBON_TABS) {
+      fireEvent.click(screen.getByTestId(`tab-${name}`))
+      expect(screen.queryByTestId('ratio-input')).toBeNull()
+      expect(screen.queryByTestId('mode-button')).toBeNull()
+      expect(screen.queryByTestId('btn-import')).toBeNull()
+      expect(screen.queryByTestId('btn-clear-session')).toBeNull()
+    }
+  })
+
+  it('工具栏里唯一的真实功能入口是「文件」选项卡下的「设置」按钮', () => {
+    setup()
+    // 默认的「开始」选项卡下没有它
+    expect(screen.queryByTestId('btn-settings')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('tab-文件'))
+    expect(screen.getByTestId('btn-settings')).toBeTruthy()
+
+    // 点了它，对话框才出现（这两个控件才算「在界面上」）
+    fireEvent.click(screen.getByTestId('btn-settings'))
+    expect(screen.getByTestId('settings')).toBeTruthy()
     expect(screen.getByTestId('ratio-input')).toBeTruthy()
-    expect(screen.getByTestId('mode-button')).toBeTruthy()
   })
 })

@@ -19,39 +19,11 @@
   font-weight: 600;
 }
 
-/* 文档名是个按钮：点它就地改名。做成 button 而不是 span，键盘也能到达，
-   而且不需要额外的「编辑」图标占位置。 */
+/* 蓝条上的文档名。**一段静态文本**：改名搬进了设置对话框，这里不再可点——
+   一个能点开输入框的「文档1」正是伪装里最显眼的那类破绽。
+   仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid。 */
 .wt-ribbon__title-doc {
-  padding: 0 4px;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: inherit;
   opacity: 0.85;
-  cursor: pointer;
-}
-
-.wt-ribbon__title-doc:hover {
-  background: rgba(255, 255, 255, 0.18);
-  opacity: 1;
-}
-
-.wt-ribbon__title-input {
-  width: 170px;
-  padding: 0 4px;
-  border: none;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #1a1a1a;
-  font-family: inherit;
-  font-size: inherit;
-}
-
-.wt-ribbon__title-input:focus {
-  outline: 1px solid #ffffff;
 }
 
 .wt-tabs {
@@ -189,4 +161,109 @@
 .wt-ratio__input:focus {
   outline: 2px solid #7ea6d8;
   outline-offset: -1px;
+}
+
+/* ---- 设置对话框 ---- */
+
+/* 遮罩铺满窗口。z-index 刻意【低于】.wt-toast 的 999：比例夹紧的提示是从对话框里发出来
+   的，压在遮罩上才看得见；反过来就被遮罩盖住了。 */
+.wt-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.wt-modal__panel {
+  width: 420px;
+  max-width: calc(100% - 48px);
+  background: #ffffff;
+  border: 1px solid #b8b8b8;
+  border-radius: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+}
+
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
+.wt-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  background: var(--wt-blue);
+  color: #ffffff;
+  font-size: 12px;
+  border-radius: 3px 3px 0 0;
+}
+
+.wt-modal__title {
+  font-weight: 600;
+}
+
+.wt-modal__close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wt-modal__close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.wt-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.wt-modal__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wt-modal__label {
+  flex: 0 0 64px;
+  font-size: 12px;
+  color: #555555;
+}
+
+.wt-modal__text {
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #b8b8b8;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.wt-modal__text:focus {
+  outline: 2px solid #7ea6d8;
+  outline-offset: -1px;
+}
+
+.wt-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 14px;
+}
+
+/* 面板里的按钮要有实边框：`.wt-btn` 在工具栏里靠 hover 才有轮廓，放到白底上会像纯文本 */
+.wt-modal__body .wt-btn,
+.wt-modal__footer .wt-btn {
+  border-color: #b8b8b8;
+  padding: 0 12px;
 }

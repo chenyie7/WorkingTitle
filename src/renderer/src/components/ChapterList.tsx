@@ -115,7 +115,7 @@ export function ChapterList({
         </button>
         {novel ? novel.title : '未导入小说'}
         <div className="wt-sidebar__sub">
-          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
+          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 设置 → 导入小说'}
         </div>
       </div>
       <div

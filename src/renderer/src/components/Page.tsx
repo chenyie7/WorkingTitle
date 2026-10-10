@@ -23,7 +23,7 @@ export function Page({
     <div className="wt-page" data-testid="page">
       {empty ? (
         <div className="wt-page__empty" data-testid="page-empty">
-          文件 → 导入小说，或按 Ctrl+O
+          文件 → 设置 → 导入小说，或按 Ctrl+O
           <br />
           导入后在文档区打字，字会按比例从小说里取出来。
         </div>
