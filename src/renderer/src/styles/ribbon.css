@@ -13,8 +13,8 @@
   gap: 10px;
   height: 32px;
   padding: 0 14px;
-  background: var(--wt-blue);
-  color: #ffffff;
+  background: var(--wt-titlebar);
+  color: var(--wt-titlebar-text);
   font-size: 12px;
   letter-spacing: 0.01em;
 }
@@ -258,8 +258,8 @@
   justify-content: space-between;
   height: 38px;
   padding: 0 8px 0 16px;
-  background: var(--wt-blue);
-  color: #ffffff;
+  background: var(--wt-titlebar);
+  color: var(--wt-titlebar-text);
   font-size: 13px;
 }
 
@@ -339,4 +339,81 @@
 .wt-modal__body .wt-btn:hover,
 .wt-modal__footer .wt-btn:hover {
   border-color: #c4d9f5;
+}
+
+/* ================= 深色外观 =================
+   这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
+[data-theme='dark'] .wt-tabs {
+  background: #191919;
+}
+
+[data-theme='dark'] .wt-tab:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* 选中页签仍靠「与下方功能区连成一片」表达：两边用同一个底色 */
+[data-theme='dark'] .wt-tab--active {
+  background: #202024;
+  color: var(--wt-accent);
+}
+
+[data-theme='dark'] .wt-toolbar {
+  background: #202024;
+}
+
+[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+  background: #2a2a31;
+}
+
+[data-theme='dark'] .wt-btn:hover {
+  border-color: #3d4d66;
+}
+
+[data-theme='dark'] .wt-btn:active,
+[data-theme='dark'] .wt-btn--active {
+  background: #2c3a52;
+  border-color: #405a80;
+}
+
+[data-theme='dark'] .wt-modal {
+  background: rgba(0, 0, 0, 0.52);
+}
+
+[data-theme='dark'] .wt-modal__panel {
+  background: #26262b;
+}
+
+[data-theme='dark'] .wt-modal__close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme='dark'] .wt-ratio__input,
+[data-theme='dark'] .wt-modal__text {
+  background: #1c1c20;
+  color: var(--wt-text);
+}
+
+[data-theme='dark'] .wt-modal__body .wt-btn:hover,
+[data-theme='dark'] .wt-modal__footer .wt-btn:hover {
+  border-color: #3d4d66;
+}
+
+/* 复选框那行 */
+.wt-modal__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wt-modal__check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--wt-accent);
+  cursor: pointer;
+}
+
+[data-theme='dark'] .wt-modal__check input {
+  accent-color: var(--wt-accent);
 }

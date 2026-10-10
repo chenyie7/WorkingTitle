@@ -1,4 +1,4 @@
-import { dialog, ipcMain, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
 import { loadNovelFromFile } from './loadNovel'
 import { getStore } from './session'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
@@ -54,4 +54,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.clearSession, (): void => {
     getStore().clearAll()
   })
+
+  // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
+  ipcMain.handle(CH.getTheme, (): boolean => nativeTheme.shouldUseDarkColors)
 }

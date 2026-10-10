@@ -1,10 +1,21 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
 import { buildAppMenu } from './menu'
 import { resetStore } from './session'
 import { applyUserDataOverride, resolveInitialNovelPath } from './startup'
+import { CH } from './channels'
+
+/**
+ * 窗口自身的底色（不是网页内容的底色，是它【画出来之前】那一层）。
+ *
+ * 必须跟着系统外观走：macOS 在深色外观下画的是深色的原生标题栏，而窗口底色若仍是浅色，
+ * 启动的一瞬间会闪一块白，之后网页内容再把浅色铺满——用户看到的就是「红绿灯那块是黑的、
+ * 旁边却是白的」。网页内容本身由渲染层按 data-theme 上色，这一层只负责别闪。
+ */
+const WINDOW_BG_LIGHT = '#f7f7f8'
+const WINDOW_BG_DARK = '#1f1f22'
 
 applyUserDataOverride(process.env, (name, path) => app.setPath(name, path))
 resetStore()
@@ -20,7 +31,7 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     title: '文档1 - Word',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG_DARK : WINDOW_BG_LIGHT,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -91,6 +102,17 @@ app.whenReady().then(() => {
   })
   buildAppMenu(() => win)
   win = createWindow()
+
+  // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
+  // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
+  // 在这个应用里恒为浅色，主进程不推它就没人知道。
+  nativeTheme.on('updated', () => {
+    const dark = nativeTheme.shouldUseDarkColors
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
+      w.webContents.send(CH.themeChanged, dark)
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) win = createWindow()

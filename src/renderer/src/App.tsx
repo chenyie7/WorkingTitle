@@ -7,6 +7,7 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useDarkPaper, useSystemTheme } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { WtApi } from './types/global'
@@ -40,6 +41,11 @@ export default function App() {
    * 默认取一个中性的 `文档1`。
    */
   const [docTitle, setDocTitle] = useState('文档1')
+  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
+  const [darkPaper, setDarkPaper] = useState(false)
+
+  useSystemTheme()
+  useDarkPaper(darkPaper)
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -237,7 +243,12 @@ export default function App() {
   return (
     <ToolbarProvider {...toolbarProps}>
       <div className="wt-app" data-testid="app-root">
-        <Ribbon docTitle={docTitle} onDocTitleChange={setDocTitle} />
+        <Ribbon
+          docTitle={docTitle}
+          onDocTitleChange={setDocTitle}
+          darkPaper={darkPaper}
+          onDarkPaperChange={setDarkPaper}
+        />
 
         <div className="wt-body">
           <ChapterList

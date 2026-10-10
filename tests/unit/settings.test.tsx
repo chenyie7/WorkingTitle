@@ -16,19 +16,29 @@ interface SetupOptions {
   /** 额外挂一个 InputCapture：焦点那几条用例需要它来当「被抢的对象」 */
   capture?: boolean
   docTitle?: string
+  darkPaper?: boolean
 }
 
-function setup(opts: SetupOptions = {}): ReturnType<typeof vi.fn> {
+function setup(opts: SetupOptions = {}): {
+  onDocTitleChange: ReturnType<typeof vi.fn>
+  onDarkPaperChange: ReturnType<typeof vi.fn>
+} {
   const onDocTitleChange = vi.fn()
-  const { capture, docTitle = '文档1', ...provider } = opts
+  const onDarkPaperChange = vi.fn()
+  const { capture, docTitle = '文档1', darkPaper = false, ...provider } = opts
   render(
     <ToolbarProvider {...provider}>
-      <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
+      <Ribbon
+        docTitle={docTitle}
+        onDocTitleChange={onDocTitleChange}
+        darkPaper={darkPaper}
+        onDarkPaperChange={onDarkPaperChange}
+      />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
     </ToolbarProvider>
   )
-  return onDocTitleChange
+  return { onDocTitleChange, onDarkPaperChange }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -180,7 +190,7 @@ describe('真实功能收在对话框里', () => {
 
 describe('对话框里改文档名', () => {
   it('回车提交，两侧空白去掉', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     expect(input.value).toBe('文档1')
@@ -191,7 +201,7 @@ describe('对话框里改文档名', () => {
   })
 
   it('失焦也提交（鼠标用户点「关闭」时就是这样）', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input')
     fireEvent.change(input, { target: { value: '会议纪要' } })
@@ -200,7 +210,7 @@ describe('对话框里改文档名', () => {
   })
 
   it('空名不提交（蓝条不能变成一片空白）', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '   ' } })
@@ -209,8 +219,20 @@ describe('对话框里改文档名', () => {
     expect(input.value).toBe('文档1')
   })
 
+  it('「纸张也变暗」是个复选框，勾选时回调 true', () => {
+    const { onDarkPaperChange } = setup()
+    openViaButton()
+    const box = screen.getByTestId('dark-paper') as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    // 默认关：真 Word 的深色模式里纸张仍然是白的，保持这一点伪装才完整
+    expect(box.checked).toBe(false)
+
+    fireEvent.click(box)
+    expect(onDarkPaperChange).toHaveBeenCalledWith(true)
+  })
+
   it('Esc 关掉对话框不算提交：草稿丢掉，名字不变', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '不该生效' } })
     fireEvent.keyDown(window, { key: 'Escape' })

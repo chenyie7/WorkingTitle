@@ -8,6 +8,8 @@ export interface WtApi {
   saveSession: (session: PersistedSession) => Promise<void>
   clearSession: () => Promise<void>
   onMenuCommand: (cb: (cmd: string) => void) => () => void
+  getTheme: () => Promise<boolean>
+  onThemeChange: (cb: (dark: boolean) => void) => () => void
 }
 
 declare global {
