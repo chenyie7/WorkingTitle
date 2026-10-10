@@ -4711,7 +4711,13 @@ body {
 
 /* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
    真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。 */
-.wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+/* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
+   真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。
+ *
+ * 【`:not(.wt-btn--active)` 不能省】这条规则的特异性是 (0,4,0)（三个 `:not()` 各自都算），
+ * 压得过 `.wt-btn--active` 的 (0,1,0)。少了这个 `:not`，选中态的背景会被它整个吃掉——
+ * 实测过：设置里「外观」那三个按钮的 aria-pressed 正确切换、而三个背景色一模一样。 */
+.wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
   border-color: var(--wt-chrome-border-strong);
   background: #fbfbfc;
   padding: 0 10px;
@@ -4899,7 +4905,7 @@ body {
   background: #202024;
 }
 
-[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
   background: #2a2a31;
 }
 
@@ -4991,8 +4997,20 @@ body {
   border-left: 1px solid var(--wt-chrome-border-strong);
 }
 
-[data-theme='dark'] .wt-seg .wt-btn--active {
-  background: #2c3a52;
+/* 分段控件的选中态用**实心强调色**，而不是在浅底上再压一层浅底——
+   后者在两种主题下都几乎看不出来（实测：深色下未选/已选分别是 #2a2a31 与 #2c3a52，
+   人眼分不出）。这是设置里唯一需要「一眼看出选了哪个」的控件。 */
+.wt-seg .wt-btn--active,
+.wt-seg .wt-btn--active:hover {
+  background: var(--wt-accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .wt-seg .wt-btn--active,
+[data-theme='dark'] .wt-seg .wt-btn--active:hover {
+  /* 深色下强调色是浅蓝，配深字对比最强 */
+  color: #10141a;
 }
 ```
 
