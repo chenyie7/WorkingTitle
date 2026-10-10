@@ -5,7 +5,9 @@ export const CH = {
   saveSession: 'wt:save-session',
   clearSession: 'wt:clear-session',
   initialNovelPath: 'wt:initial-novel-path',
-  menuCommand: 'wt:menu-command'
+  menuCommand: 'wt:menu-command',
+  getTheme: 'wt:get-theme',
+  themeChanged: 'wt:theme-changed'
 } as const
 
 export const MENU_COMMANDS = [

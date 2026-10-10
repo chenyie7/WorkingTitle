@@ -8,6 +8,9 @@ export interface SettingsDialogProps {
   onClose: () => void
   docTitle: string
   onDocTitleChange: (next: string) => void
+  /** 「深色模式下纸张也变暗」。默认关（真 Word 深色模式下纸张仍是白的）。 */
+  darkPaper: boolean
+  onDarkPaperChange: (next: boolean) => void
 }
 
 /**
@@ -21,7 +24,14 @@ export interface SettingsDialogProps {
  * 【testid 一个都没改】`ratio-input` / `mode-button` / `btn-import` / `btn-clear-session` /
  * `doc-title-input` 原样搬进来，只是不再同时存在于工具栏里。
  */
-export function SettingsDialog({ open, onClose, docTitle, onDocTitleChange }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onClose,
+  docTitle,
+  onDocTitleChange,
+  darkPaper,
+  onDarkPaperChange
+}: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
   const [ratioDraft, setRatioDraft] = useState(String(ratio))
   const [titleDraft, setTitleDraft] = useState(docTitle)
@@ -180,6 +190,24 @@ export function SettingsDialog({ open, onClose, docTitle, onDocTitleChange }: Se
             >
               {mode === 'ime' ? '输入法' : '纯按键'}
             </button>
+          </div>
+
+          <div className="wt-modal__row">
+            {/*
+              默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
+              勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
+              只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
+            */}
+            <span className="wt-modal__label">深色外观</span>
+            <label className="wt-modal__check">
+              <input
+                type="checkbox"
+                data-testid="dark-paper"
+                checked={darkPaper}
+                onChange={(e) => onDarkPaperChange(e.target.checked)}
+              />
+              纸张也变暗
+            </label>
           </div>
 
           <div className="wt-modal__row">

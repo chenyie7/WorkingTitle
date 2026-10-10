@@ -202,10 +202,14 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
 
 export function Ribbon({
   docTitle,
-  onDocTitleChange
+  onDocTitleChange,
+  darkPaper,
+  onDarkPaperChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
+  darkPaper: boolean
+  onDarkPaperChange: (next: boolean) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -257,6 +261,8 @@ export function Ribbon({
         onClose={() => setSettingsOpen(false)}
         docTitle={docTitle}
         onDocTitleChange={onDocTitleChange}
+        darkPaper={darkPaper}
+        onDarkPaperChange={onDarkPaperChange}
       />
     </div>
   )

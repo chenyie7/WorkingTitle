@@ -10,11 +10,15 @@
  * 定的，没有从 Fluent 的设计规范里抄。要再调就照观感调，别把它们当成权威值引用。
  */
 :root {
-  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和 */
+  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和。
+     `--wt-blue` 是【强调色】（选中态、焦点环、进度条…），`--wt-titlebar` 是标题条底色——
+     两者在浅色下同一个值，但深色下必须分开：真 Word 的深色模式里标题条是深灰的，
+     强调色反而要提亮，共用一个变量就没法同时满足。 */
   --wt-blue: #185abd;
   --wt-blue-dark: #0f4a9e;
   --wt-blue-light: #eaf1fb;
   --wt-accent: #185abd;
+  --wt-titlebar: #185abd;
 
   /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
   --wt-chrome: #f7f7f8;
@@ -24,6 +28,7 @@
   --wt-text-muted: #616161;
 
   --wt-statusbar: #185abd;
+  --wt-titlebar-text: #ffffff;
 
   /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
   --wt-canvas: #e9e9ec;
@@ -169,7 +174,7 @@ body {
   flex: 0 0 26px;
   padding: 0 14px;
   background: var(--wt-statusbar);
-  color: #ffffff;
+  color: var(--wt-titlebar-text);
   font-size: 11px;
   white-space: nowrap;
   letter-spacing: 0.01em;
@@ -200,4 +205,52 @@ body {
 .wt-sidebar__rail-icon {
   width: 12px;
   height: 12px;
+}
+
+/* ================= 深色外观 =================
+ *
+ * 【为什么不写 @media (prefers-color-scheme: dark)】实测过：这个应用里那条 media query
+ * **恒不命中**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、`themeSource` 手动设成
+ * 'dark' 之后连整窗重载都仍然是 false（见 preload 与 state/theme.ts 里的说明）。
+ * 所以主题由主进程经 IPC 递过来，写成 `<html data-theme="dark">`，这里按属性选择器取。
+ *
+ * 浅色是默认：`data-theme="light"` 或没有这个属性时都走上面 :root 那套。
+ */
+[data-theme='dark'] {
+  /* 强调色在深色下要【提亮】——原色 #185abd 压在深灰上几乎看不见 */
+  --wt-blue: #6cb0ff;
+  --wt-blue-dark: #a5cfff;
+  --wt-blue-light: #2b2b34;
+  --wt-accent: #6cb0ff;
+
+  /* 标题条与状态条在真 Word 的深色模式里是深灰，不是品牌蓝——两者在浅色下同值，
+     所以上面 :root 里拆成了两个变量。 */
+  --wt-titlebar: #1f1f22;
+  --wt-titlebar-text: #f0f0f2;
+  --wt-statusbar: #1f1f22;
+
+  --wt-chrome: #202024;
+  --wt-chrome-border: #33333a;
+  --wt-chrome-border-strong: #45454e;
+  --wt-text: #e6e6ea;
+  --wt-text-muted: #9c9ca6;
+
+  --wt-canvas: #151518;
+  --wt-page-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme='dark'] .wt-sidebar {
+  background: #1c1c20;
+}
+
+[data-theme='dark'] .wt-sidebar__toggle:hover,
+[data-theme='dark'] .wt-sidebar__rail:hover {
+  background: #2e2e35;
+}
+
+[data-theme='dark'] .wt-sidebar__rail {
+  background: #1c1c20;
+  color: #55555e;
 }

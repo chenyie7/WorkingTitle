@@ -3663,7 +3663,9 @@ describe('IPC 契约', () => {
       saveSession: 'wt:save-session',
       clearSession: 'wt:clear-session',
       initialNovelPath: 'wt:initial-novel-path',
-      menuCommand: 'wt:menu-command'
+      menuCommand: 'wt:menu-command',
+      getTheme: 'wt:get-theme',
+      themeChanged: 'wt:theme-changed'
     })
   })
 
@@ -3909,7 +3911,7 @@ export type WtApi = typeof api
 **本步之后 `src/main/ipc.ts` 的最终全文**（`fence#2` 去掉本地 `CH` / `MENU_COMMANDS` / `MenuCommand` 三个定义，换成上面那两行，外加一段注释）：
 
 ```ts
-import { dialog, ipcMain, type BrowserWindow } from 'electron'
+import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
 import { loadNovelFromFile } from './loadNovel'
 import { getStore } from './session'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
@@ -3965,6 +3967,9 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.clearSession, (): void => {
     getStore().clearAll()
   })
+
+  // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
+  ipcMain.handle(CH.getTheme, (): boolean => nativeTheme.shouldUseDarkColors)
 }
 ```
 
@@ -3979,7 +3984,9 @@ export const CH = {
   saveSession: 'wt:save-session',
   clearSession: 'wt:clear-session',
   initialNovelPath: 'wt:initial-novel-path',
-  menuCommand: 'wt:menu-command'
+  menuCommand: 'wt:menu-command',
+  getTheme: 'wt:get-theme',
+  themeChanged: 'wt:theme-changed'
 } as const
 
 export const MENU_COMMANDS = [
@@ -4026,6 +4033,23 @@ const api = {
     return () => {
       ipcRenderer.removeListener(CH.menuCommand, listener)
     }
+  },
+  /**
+   * 系统是不是深色外观。
+   *
+   * 【为什么必须走 IPC，而不是在 CSS 里写 `@media (prefers-color-scheme: dark)`】
+   * 实测（Electron 44 / macOS 深色系统）：渲染层的 `matchMedia('(prefers-color-scheme: dark)')`
+   * **恒为 false**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、`themeSource` 设成 'dark'
+   * 之后重载整窗也仍是 false。也就是说那条 media query 在本应用里**永远不会命中**，
+   * 只能由主进程把值显式递过来。别把它"简化"回 CSS 媒体查询。
+   */
+  getTheme: (): Promise<boolean> => ipcRenderer.invoke(CH.getTheme),
+  onThemeChange: (cb: (dark: boolean) => void): (() => void) => {
+    const listener = (_e: unknown, dark: boolean): void => cb(dark)
+    ipcRenderer.on(CH.themeChanged, listener)
+    return () => {
+      ipcRenderer.removeListener(CH.themeChanged, listener)
+    }
   }
 }
 
@@ -4037,13 +4061,24 @@ export type WtApi = typeof api
 - [ ] **Step 8: 重写 `src/main/index.ts`**
 
 ```ts
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
 import { buildAppMenu } from './menu'
 import { resetStore } from './session'
 import { applyUserDataOverride, resolveInitialNovelPath } from './startup'
+import { CH } from './channels'
+
+/**
+ * 窗口自身的底色（不是网页内容的底色，是它【画出来之前】那一层）。
+ *
+ * 必须跟着系统外观走：macOS 在深色外观下画的是深色的原生标题栏，而窗口底色若仍是浅色，
+ * 启动的一瞬间会闪一块白，之后网页内容再把浅色铺满——用户看到的就是「红绿灯那块是黑的、
+ * 旁边却是白的」。网页内容本身由渲染层按 data-theme 上色，这一层只负责别闪。
+ */
+const WINDOW_BG_LIGHT = '#f7f7f8'
+const WINDOW_BG_DARK = '#1f1f22'
 
 applyUserDataOverride(process.env, (name, path) => app.setPath(name, path))
 resetStore()
@@ -4059,7 +4094,7 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     title: '文档1 - Word',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG_DARK : WINDOW_BG_LIGHT,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -4130,6 +4165,17 @@ app.whenReady().then(() => {
   })
   buildAppMenu(() => win)
   win = createWindow()
+
+  // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
+  // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
+  // 在这个应用里恒为浅色，主进程不推它就没人知道。
+  nativeTheme.on('updated', () => {
+    const dark = nativeTheme.shouldUseDarkColors
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
+      w.webContents.send(CH.themeChanged, dark)
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
@@ -4203,11 +4249,15 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
  * 定的，没有从 Fluent 的设计规范里抄。要再调就照观感调，别把它们当成权威值引用。
  */
 :root {
-  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和 */
+  /* Word 的品牌蓝。2013 那版是 #2b579a（偏灰、偏暗）；今天更亮、更饱和。
+     `--wt-blue` 是【强调色】（选中态、焦点环、进度条…），`--wt-titlebar` 是标题条底色——
+     两者在浅色下同一个值，但深色下必须分开：真 Word 的深色模式里标题条是深灰的，
+     强调色反而要提亮，共用一个变量就没法同时满足。 */
   --wt-blue: #185abd;
   --wt-blue-dark: #0f4a9e;
   --wt-blue-light: #eaf1fb;
   --wt-accent: #185abd;
+  --wt-titlebar: #185abd;
 
   /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
   --wt-chrome: #f7f7f8;
@@ -4217,6 +4267,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
   --wt-text-muted: #616161;
 
   --wt-statusbar: #185abd;
+  --wt-titlebar-text: #ffffff;
 
   /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
   --wt-canvas: #e9e9ec;
@@ -4362,7 +4413,7 @@ body {
   flex: 0 0 26px;
   padding: 0 14px;
   background: var(--wt-statusbar);
-  color: #ffffff;
+  color: var(--wt-titlebar-text);
   font-size: 11px;
   white-space: nowrap;
   letter-spacing: 0.01em;
@@ -4394,6 +4445,54 @@ body {
   width: 12px;
   height: 12px;
 }
+
+/* ================= 深色外观 =================
+ *
+ * 【为什么不写 @media (prefers-color-scheme: dark)】实测过：这个应用里那条 media query
+ * **恒不命中**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、`themeSource` 手动设成
+ * 'dark' 之后连整窗重载都仍然是 false（见 preload 与 state/theme.ts 里的说明）。
+ * 所以主题由主进程经 IPC 递过来，写成 `<html data-theme="dark">`，这里按属性选择器取。
+ *
+ * 浅色是默认：`data-theme="light"` 或没有这个属性时都走上面 :root 那套。
+ */
+[data-theme='dark'] {
+  /* 强调色在深色下要【提亮】——原色 #185abd 压在深灰上几乎看不见 */
+  --wt-blue: #6cb0ff;
+  --wt-blue-dark: #a5cfff;
+  --wt-blue-light: #2b2b34;
+  --wt-accent: #6cb0ff;
+
+  /* 标题条与状态条在真 Word 的深色模式里是深灰，不是品牌蓝——两者在浅色下同值，
+     所以上面 :root 里拆成了两个变量。 */
+  --wt-titlebar: #1f1f22;
+  --wt-titlebar-text: #f0f0f2;
+  --wt-statusbar: #1f1f22;
+
+  --wt-chrome: #202024;
+  --wt-chrome-border: #33333a;
+  --wt-chrome-border-strong: #45454e;
+  --wt-text: #e6e6ea;
+  --wt-text-muted: #9c9ca6;
+
+  --wt-canvas: #151518;
+  --wt-page-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme='dark'] .wt-sidebar {
+  background: #1c1c20;
+}
+
+[data-theme='dark'] .wt-sidebar__toggle:hover,
+[data-theme='dark'] .wt-sidebar__rail:hover {
+  background: #2e2e35;
+}
+
+[data-theme='dark'] .wt-sidebar__rail {
+  background: #1c1c20;
+  color: #55555e;
+}
 ```
 
 - [ ] **Step 2: 写 `src/renderer/src/styles/ribbon.css`**
@@ -4414,8 +4513,8 @@ body {
   gap: 10px;
   height: 32px;
   padding: 0 14px;
-  background: var(--wt-blue);
-  color: #ffffff;
+  background: var(--wt-titlebar);
+  color: var(--wt-titlebar-text);
   font-size: 12px;
   letter-spacing: 0.01em;
 }
@@ -4659,8 +4758,8 @@ body {
   justify-content: space-between;
   height: 38px;
   padding: 0 8px 0 16px;
-  background: var(--wt-blue);
-  color: #ffffff;
+  background: var(--wt-titlebar);
+  color: var(--wt-titlebar-text);
   font-size: 13px;
 }
 
@@ -4740,6 +4839,83 @@ body {
 .wt-modal__body .wt-btn:hover,
 .wt-modal__footer .wt-btn:hover {
   border-color: #c4d9f5;
+}
+
+/* ================= 深色外观 =================
+   这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
+[data-theme='dark'] .wt-tabs {
+  background: #191919;
+}
+
+[data-theme='dark'] .wt-tab:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* 选中页签仍靠「与下方功能区连成一片」表达：两边用同一个底色 */
+[data-theme='dark'] .wt-tab--active {
+  background: #202024;
+  color: var(--wt-accent);
+}
+
+[data-theme='dark'] .wt-toolbar {
+  background: #202024;
+}
+
+[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(:has(.wt-btn__icon)) {
+  background: #2a2a31;
+}
+
+[data-theme='dark'] .wt-btn:hover {
+  border-color: #3d4d66;
+}
+
+[data-theme='dark'] .wt-btn:active,
+[data-theme='dark'] .wt-btn--active {
+  background: #2c3a52;
+  border-color: #405a80;
+}
+
+[data-theme='dark'] .wt-modal {
+  background: rgba(0, 0, 0, 0.52);
+}
+
+[data-theme='dark'] .wt-modal__panel {
+  background: #26262b;
+}
+
+[data-theme='dark'] .wt-modal__close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme='dark'] .wt-ratio__input,
+[data-theme='dark'] .wt-modal__text {
+  background: #1c1c20;
+  color: var(--wt-text);
+}
+
+[data-theme='dark'] .wt-modal__body .wt-btn:hover,
+[data-theme='dark'] .wt-modal__footer .wt-btn:hover {
+  border-color: #3d4d66;
+}
+
+/* 复选框那行 */
+.wt-modal__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wt-modal__check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--wt-accent);
+  cursor: pointer;
+}
+
+[data-theme='dark'] .wt-modal__check input {
+  accent-color: var(--wt-accent);
 }
 ```
 
@@ -4876,6 +5052,43 @@ body {
   color: #999999;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+
+/* ================= 深色外观 ================= */
+[data-theme='dark'] .chapter-item:hover {
+  background: #26262d;
+}
+
+[data-theme='dark'] .wt-page__empty {
+  color: #63636c;
+}
+
+[data-theme='dark'] .wt-page__fold {
+  background: #24242b;
+  border-color: #34343d;
+}
+
+[data-theme='dark'] .wt-page__fold:hover {
+  background: #2b2b34;
+}
+
+/* ---- 「纸也变暗」 ----
+ *
+ * 只在 **系统深色 + 用户在设置里勾了那个开关** 同时成立时生效。
+ * 默认不勾：真 Word 的深色模式里纸张仍然是白的，保持这一点伪装才完整；
+ * 勾上是为了夜里看书不刺眼，代价是不再像 Word。
+ */
+[data-theme='dark'][data-paper='dark'] .wt-page {
+  background: #1b1b1f;
+  color: #cfcfd6;
+}
+
+[data-theme='dark'][data-paper='dark'] .wt-caret {
+  background: #cfcfd6;
+}
+
+[data-theme='dark'][data-paper='dark'] .wt-page__empty {
+  color: #63636c;
 }
 ```
 
@@ -5468,10 +5681,14 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
 
 export function Ribbon({
   docTitle,
-  onDocTitleChange
+  onDocTitleChange,
+  darkPaper,
+  onDarkPaperChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
+  darkPaper: boolean
+  onDarkPaperChange: (next: boolean) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -5523,6 +5740,8 @@ export function Ribbon({
         onClose={() => setSettingsOpen(false)}
         docTitle={docTitle}
         onDocTitleChange={onDocTitleChange}
+        darkPaper={darkPaper}
+        onDarkPaperChange={onDarkPaperChange}
       />
     </div>
   )
@@ -5541,7 +5760,7 @@ import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 function setup(): void {
   render(
     <ToolbarProvider>
-      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} />
+      <Ribbon docTitle="文档1" onDocTitleChange={() => {}} darkPaper={false} onDarkPaperChange={() => {}} />
       <Toast />
     </ToolbarProvider>
   )
@@ -7026,7 +7245,10 @@ const benignApi: WtApi = {
   loadSession: async () => null,
   saveSession: async () => {},
   clearSession: async () => {},
-  onMenuCommand: () => () => {}
+  onMenuCommand: () => () => {},
+  // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
+  getTheme: async () => false,
+  onThemeChange: () => () => {}
 }
 
 function installBenignApi(): void {
@@ -7080,6 +7302,8 @@ export interface WtApi {
   saveSession: (session: PersistedSession) => Promise<void>
   clearSession: () => Promise<void>
   onMenuCommand: (cb: (cmd: string) => void) => () => void
+  getTheme: () => Promise<boolean>
+  onThemeChange: (cb: (dark: boolean) => void) => () => void
 }
 
 declare global {
@@ -7117,6 +7341,7 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useDarkPaper, useSystemTheme } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { WtApi } from './types/global'
@@ -7150,6 +7375,11 @@ export default function App() {
    * 默认取一个中性的 `文档1`。
    */
   const [docTitle, setDocTitle] = useState('文档1')
+  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
+  const [darkPaper, setDarkPaper] = useState(false)
+
+  useSystemTheme()
+  useDarkPaper(darkPaper)
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -7347,7 +7577,12 @@ export default function App() {
   return (
     <ToolbarProvider {...toolbarProps}>
       <div className="wt-app" data-testid="app-root">
-        <Ribbon docTitle={docTitle} onDocTitleChange={setDocTitle} />
+        <Ribbon
+          docTitle={docTitle}
+          onDocTitleChange={setDocTitle}
+          darkPaper={darkPaper}
+          onDarkPaperChange={setDarkPaper}
+        />
 
         <div className="wt-body">
           <ChapterList
@@ -7418,7 +7653,9 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
       saved = s
     }),
     clearSession: vi.fn(async () => {}),
-    onMenuCommand: vi.fn(() => () => {})
+    onMenuCommand: vi.fn(() => () => {}),
+    getTheme: vi.fn(async () => false),
+    onThemeChange: vi.fn(() => () => {})
   }
 }
 
@@ -8141,6 +8378,9 @@ export interface SettingsDialogProps {
   onClose: () => void
   docTitle: string
   onDocTitleChange: (next: string) => void
+  /** 「深色模式下纸张也变暗」。默认关（真 Word 深色模式下纸张仍是白的）。 */
+  darkPaper: boolean
+  onDarkPaperChange: (next: boolean) => void
 }
 
 /**
@@ -8154,7 +8394,14 @@ export interface SettingsDialogProps {
  * 【testid 一个都没改】`ratio-input` / `mode-button` / `btn-import` / `btn-clear-session` /
  * `doc-title-input` 原样搬进来，只是不再同时存在于工具栏里。
  */
-export function SettingsDialog({ open, onClose, docTitle, onDocTitleChange }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onClose,
+  docTitle,
+  onDocTitleChange,
+  darkPaper,
+  onDarkPaperChange
+}: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
   const [ratioDraft, setRatioDraft] = useState(String(ratio))
   const [titleDraft, setTitleDraft] = useState(docTitle)
@@ -8316,6 +8563,24 @@ export function SettingsDialog({ open, onClose, docTitle, onDocTitleChange }: Se
           </div>
 
           <div className="wt-modal__row">
+            {/*
+              默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
+              勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
+              只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
+            */}
+            <span className="wt-modal__label">深色外观</span>
+            <label className="wt-modal__check">
+              <input
+                type="checkbox"
+                data-testid="dark-paper"
+                checked={darkPaper}
+                onChange={(e) => onDarkPaperChange(e.target.checked)}
+              />
+              纸张也变暗
+            </label>
+          </div>
+
+          <div className="wt-modal__row">
             <span className="wt-modal__label">小说</span>
             <button
               type="button"
@@ -8375,19 +8640,29 @@ interface SetupOptions {
   /** 额外挂一个 InputCapture：焦点那几条用例需要它来当「被抢的对象」 */
   capture?: boolean
   docTitle?: string
+  darkPaper?: boolean
 }
 
-function setup(opts: SetupOptions = {}): ReturnType<typeof vi.fn> {
+function setup(opts: SetupOptions = {}): {
+  onDocTitleChange: ReturnType<typeof vi.fn>
+  onDarkPaperChange: ReturnType<typeof vi.fn>
+} {
   const onDocTitleChange = vi.fn()
-  const { capture, docTitle = '文档1', ...provider } = opts
+  const onDarkPaperChange = vi.fn()
+  const { capture, docTitle = '文档1', darkPaper = false, ...provider } = opts
   render(
     <ToolbarProvider {...provider}>
-      <Ribbon docTitle={docTitle} onDocTitleChange={onDocTitleChange} />
+      <Ribbon
+        docTitle={docTitle}
+        onDocTitleChange={onDocTitleChange}
+        darkPaper={darkPaper}
+        onDarkPaperChange={onDarkPaperChange}
+      />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
     </ToolbarProvider>
   )
-  return onDocTitleChange
+  return { onDocTitleChange, onDarkPaperChange }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -8539,7 +8814,7 @@ describe('真实功能收在对话框里', () => {
 
 describe('对话框里改文档名', () => {
   it('回车提交，两侧空白去掉', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     expect(input.value).toBe('文档1')
@@ -8550,7 +8825,7 @@ describe('对话框里改文档名', () => {
   })
 
   it('失焦也提交（鼠标用户点「关闭」时就是这样）', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input')
     fireEvent.change(input, { target: { value: '会议纪要' } })
@@ -8559,7 +8834,7 @@ describe('对话框里改文档名', () => {
   })
 
   it('空名不提交（蓝条不能变成一片空白）', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '   ' } })
@@ -8568,8 +8843,20 @@ describe('对话框里改文档名', () => {
     expect(input.value).toBe('文档1')
   })
 
+  it('「纸张也变暗」是个复选框，勾选时回调 true', () => {
+    const { onDarkPaperChange } = setup()
+    openViaButton()
+    const box = screen.getByTestId('dark-paper') as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    // 默认关：真 Word 的深色模式里纸张仍然是白的，保持这一点伪装才完整
+    expect(box.checked).toBe(false)
+
+    fireEvent.click(box)
+    expect(onDarkPaperChange).toHaveBeenCalledWith(true)
+  })
+
   it('Esc 关掉对话框不算提交：草稿丢掉，名字不变', () => {
-    const onChange = setup({ docTitle: '文档1' })
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '不该生效' } })
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -8903,3 +9190,74 @@ export const IconClose = bundleIcon(DismissFilled, DismissRegular)
 
 **CSS 类名契约同步为 51 个**（新增 `.wt-btn__icon` `.wt-btn__label` `.wt-btn--icon-only` `.wt-btn--large`
 `.wt-sidebar__rail-icon` `.wt-sidebar__toggle-icon` 与一组 `.wt-modal__*`；删掉已无人使用的 `.wt-btn--icon`）。
+
+
+---
+
+## Task 18: 深色外观
+
+**背景**：用户发现 macOS 红绿灯那块是黑的（原生标题栏跟随系统），而网页内容永远是浅色。
+
+**根因（实测，不是推测）**：Electron 的渲染层**读不到系统外观**——
+`nativeTheme.shouldUseDarkColors` 在主进程里是 true，但渲染层的
+`matchMedia('(prefers-color-scheme: dark)')` **恒为 false**；把 `themeSource` 手动设成 `'dark'`
+、甚至**整窗重载**之后仍然是 false。所以 `@media (prefers-color-scheme: dark)` 在本应用里
+**永远不会命中**，纯 CSS 方案不成立，主题只能由主进程经 IPC 递过来。
+**别把它"简化"回媒体查询**——preload 与 state/theme.ts 两处都写了这条实测。
+
+**做法**：主进程 `nativeTheme` → IPC（`wt:get-theme` / `wt:theme-changed`）→
+渲染层写 `<html data-theme="dark">`，CSS 按属性选择器取。窗口自身的 `backgroundColor` 也跟着走
+（否则启动会闪一块白）。
+
+**纸张默认仍是白的**：真 Word 的深色模式里纸张保持白色，保持这一点伪装才完整。
+设置对话框里有一个「纸张也变暗」的复选框，勾上后写 `<html data-paper="dark">`，
+阅读区才跟着暗——那是为了夜里看书不刺眼，代价是不再像 Word。
+
+```ts
+import { useEffect } from 'react'
+import type { WtApi } from '../types/global'
+
+/**
+ * 把系统外观写到 `<html data-theme>`，并在它变化时跟着更新。
+ *
+ * 【为什么不用 `@media (prefers-color-scheme: dark)`】实测（Electron 44 / macOS 深色系统）：
+ * 这个应用里那条 media query **恒不命中**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、
+ * `themeSource` 手动设成 'dark' 之后**重载整窗**也仍然是 false。所以主题只能由主进程经 IPC 递过来
+ * （见 `src/preload/index.ts` 里的说明）。别把这里"简化"回 CSS 媒体查询。
+ */
+export function useSystemTheme(): void {
+  useEffect(() => {
+    const el = document.documentElement
+    const apply = (dark: boolean): void => {
+      el.dataset.theme = dark ? 'dark' : 'light'
+    }
+    const api = (window as unknown as { api?: WtApi }).api
+    if (!api) return
+
+    void api.getTheme().then(apply)
+    return api.onThemeChange(apply)
+  }, [])
+}
+
+/**
+ * 「深色模式下纸张也变暗」这个开关。
+ *
+ * 默认【关】：真 Word 的深色模式里纸张仍然是白的，保持这一点伪装才完整。
+ * 打开之后阅读区整块也跟着暗下来——那是为了夜里看书不刺眼，代价是不再像 Word。
+ *
+ * 单独写一个 data 属性而不是塞进 data-theme：两者是正交的，
+ * 深色纸只在深色外观下才有意义，浅色外观下开了也没用（CSS 里按组合选择器处理）。
+ */
+export function useDarkPaper(enabled: boolean): void {
+  useEffect(() => {
+    document.documentElement.dataset.paper = enabled ? 'dark' : 'light'
+  }, [enabled])
+}
+```
+
+**同批改动的文件**（围栏均已就地同步，用 `git show HEAD:<路径>` 的旧内容精确定位）：
+`channels.ts`（+2 条通道）、`ipc.ts`（+`getTheme` handler）、`main/index.ts`
+（窗口底色跟主题走 + `nativeTheme.on('updated')` 广播）、`preload/index.ts`（+`getTheme`/`onThemeChange`）、
+`global.d.ts`、`App.tsx`、`Ribbon.tsx`、`SettingsDialog.tsx`（+复选框）、三份 CSS
+（`--wt-titlebar` 从 `--wt-blue` 拆出来：深色下标题条是深灰而强调色要提亮，共用一个变量做不到）、
+`tests/setup.ts` 与四个测试文件。
