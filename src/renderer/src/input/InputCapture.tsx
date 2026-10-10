@@ -18,6 +18,15 @@ export interface InputCaptureProps {
   mode: InputMode
 }
 
+/**
+ * 「本身就要接收文字」的控件。焦点抢回必须跳过它们——见挂载 effect 里的 `focusIfNotTextInput`。
+ *
+ * 【`button` 刻意不在列】：工具栏按钮点完，焦点要回到阅读区，否则接下来的击键进不去
+ * 输入接收器。只有真正吃文字的元素才跳过。
+ */
+const TEXT_INPUT_SELECTOR =
+  'input, textarea, select, [contenteditable=""], [contenteditable="true"]'
+
 /** 功能键与修饰键组合不参与抽字 */
 const NON_CHAR_KEYS = new Set([
   'Shift',
@@ -66,17 +75,26 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
     const el = ref.current
     if (!el) return
 
-    const focus = (): void => {
+    const focusIfNotTextInput = (e: Event): void => {
+      // 点在这些控件上时不抢焦点：否则 mousedown 一冒泡到 window 就把焦点抢回隐藏
+      // textarea，它们当场 blur。Toolbar 的比例输入框就是这样废掉的——blur 触发
+      // `commitRatio`，把 draft 重置回当前比例，用户看到的是「点一下就弹回原样、
+      // 字根本打不进去」。应用里任何接受文字输入的控件都会中这一枪。
+      // 隐藏 textarea 自己也是 `textarea`，但那时 `document.activeElement` 已经是它，
+      // 跳不跳过都一样。
+      if (e.target instanceof Element && e.target.closest(TEXT_INPUT_SELECTOR)) return
       if (document.activeElement !== el) el.focus({ preventScroll: true })
     }
-    focus()
+
+    // 挂载时先聚焦一次。不走上面那条闸（`e.target` 是隐藏 textarea 自己）。
+    if (document.activeElement !== el) el.focus({ preventScroll: true })
 
     // 点击阅读区任意位置都要把按键接回接收器
-    window.addEventListener('mousedown', focus)
-    window.addEventListener('click', focus)
+    window.addEventListener('mousedown', focusIfNotTextInput)
+    window.addEventListener('click', focusIfNotTextInput)
     return () => {
-      window.removeEventListener('mousedown', focus)
-      window.removeEventListener('click', focus)
+      window.removeEventListener('mousedown', focusIfNotTextInput)
+      window.removeEventListener('click', focusIfNotTextInput)
     }
   }, [])
 
