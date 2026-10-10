@@ -22,8 +22,8 @@ export function ChapterList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /** 书名信息（小说名 + 章节数/编码）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
-  const [headerHidden, setHeaderHidden] = useState(false)
+  /** 整条左栏（书名信息 + 章节列表）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -33,7 +33,10 @@ export function ChapterList({
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+    // 依赖 collapsed 而不是 []：收起时整条 aside 不渲染、scrollRef.current 是 null，
+    // 这个 effect 会直接返回；重新展开后必须【再跑一次】去量真实高度，否则 viewport
+    // 会一直停在默认的 400，虚拟滚动按错误的视口高度算窗口。
+  }, [collapsed])
 
   // 打字推进时，让当前章节滚进可视区域
   useEffect(() => {
@@ -43,9 +46,10 @@ export function ChapterList({
     const bottom = top + ROW_HEIGHT
     if (top < el.scrollTop) el.scrollTop = top
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
-  }, [activeChapter, novel])
+    // 带上 collapsed：重新展开时列表是刚挂载的，需要把当前章节滚回可视区
+  }, [activeChapter, novel, collapsed])
 
-  // 书名信息的显示/隐藏快捷键：⌘/Ctrl + Shift + H
+  // 左侧栏的显示/隐藏快捷键：⌘/Ctrl + Shift + H
   //
   // 【为什么挂在 window 上还能收到】InputCapture 在「纯按键」模式下对**带修饰键的组合键**
   // 是直接放行的（它的 handleKeyDown 里 `if (e.ctrlKey || e.metaKey || e.altKey) return`），
@@ -62,7 +66,7 @@ export function ChapterList({
       if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return
       if (e.code !== 'KeyH') return
       e.preventDefault()
-      setHeaderHidden((v) => !v)
+      setCollapsed((v) => !v)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -74,31 +78,45 @@ export function ChapterList({
   const last = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
   const visible = chapters.slice(first, last)
 
+  // 收起时整条 aside 都不渲染，只留一条细缝（下面那个按钮）。
+  //
+  // 【为什么还留一条缝，而不是干脆什么都不留】那个快捷键是新用户不会知道的；全无入口的话，
+  // 鼠标用户一旦收起就再也调不回来（只能重启）。细缝只有 12px、颜色很淡，视觉上近乎不存在，
+  // 但鼠标总能找回来。
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="wt-sidebar__rail"
+        data-testid="sidebar-toggle"
+        aria-expanded={false}
+        aria-label="显示章节栏"
+        title="显示章节栏（⌘/Ctrl + Shift + H）"
+        onClick={() => setCollapsed(false)}
+      >
+        ▶
+      </button>
+    )
+  }
+
   return (
     <aside className="wt-sidebar">
-      <div
-        className={`wt-sidebar__header${headerHidden ? ' wt-sidebar__header--collapsed' : ''}`}
-        data-testid="sidebar-header"
-      >
-        {!headerHidden && (
-          <>
-            {novel ? novel.title : '未导入小说'}
-            <div className="wt-sidebar__sub">
-              {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
-            </div>
-          </>
-        )}
+      <div className="wt-sidebar__header">
         <button
           type="button"
           className="wt-sidebar__toggle"
-          data-testid="sidebar-header-toggle"
-          aria-pressed={!headerHidden}
-          aria-label={headerHidden ? '显示书名信息' : '隐藏书名信息'}
-          title={`${headerHidden ? '显示' : '隐藏'}书名信息（⌘/Ctrl + Shift + H）`}
-          onClick={() => setHeaderHidden((v) => !v)}
+          data-testid="sidebar-toggle"
+          aria-expanded
+          aria-label="隐藏章节栏"
+          title="隐藏章节栏（⌘/Ctrl + Shift + H）"
+          onClick={() => setCollapsed(true)}
         >
-          {headerHidden ? '▸' : '▴'}
+          ◀
         </button>
+        {novel ? novel.title : '未导入小说'}
+        <div className="wt-sidebar__sub">
+          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
+        </div>
       </div>
       <div
         className="wt-sidebar__list"

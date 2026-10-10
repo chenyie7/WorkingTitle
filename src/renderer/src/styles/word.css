@@ -70,13 +70,6 @@ body {
   font-weight: 600;
 }
 
-/* 收起后只剩一条细带。按钮必须还留在里面——否则鼠标用户没有把书名调回来的入口
-   （那个快捷键是新用户不会知道的）。 */
-.wt-sidebar__header--collapsed {
-  padding: 0;
-  min-height: 20px;
-}
-
 .wt-sidebar__toggle {
   position: absolute;
   top: 3px;
@@ -95,6 +88,27 @@ body {
 }
 
 .wt-sidebar__toggle:hover {
+  background: #e4e4e4;
+  color: #333333;
+}
+
+/* 收起后整条侧栏只剩这条 12px 的细缝：颜色很淡、视觉上近乎不存在，但鼠标用户得有入口
+   把它调回来——那个快捷键是新用户不会知道的，全无入口等于收起即锁死。 */
+.wt-sidebar__rail {
+  flex: 0 0 12px;
+  width: 12px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--wt-chrome-border);
+  background: #fafafa;
+  color: #c4c4c4;
+  font-family: inherit;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wt-sidebar__rail:hover {
   background: #e4e4e4;
   color: #333333;
 }

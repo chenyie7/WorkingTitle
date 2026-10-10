@@ -4179,7 +4179,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 - Consumes: 无（纯样式与布局骨架）
 - Produces:
   - CSS 类名契约（后续任务依赖）：**下面 36 个是三份 CSS 里实际定义的全部 `.wt-*` 选择器**，Task 8–14 用到的每一个都在其中，且后续任务不再新建 CSS 文件——所以这些名字是公共契约，改名会静默打断后面的任务（而渲染层测试多半看不见）。本清单由 Task 7 交付后实测补全（原先是 17 个，漏了后半）：
-    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__header--collapsed` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
+    `.wt-app` `.wt-body` `.wt-btn` `.wt-btn--active` `.wt-btn--icon` `.wt-canvas` `.wt-caret` `.wt-group` `.wt-group__body` `.wt-group__label` `.wt-input` `.wt-page` `.wt-page__empty` `.wt-page__fold` `.wt-page__text` `.wt-ratio` `.wt-ratio__input` `.wt-ratio__label` `.wt-ribbon` `.wt-ribbon__title` `.wt-ribbon__title-app` `.wt-ribbon__title-doc` `.wt-sep` `.wt-sidebar` `.wt-sidebar__header` `.wt-sidebar__rail` `.wt-sidebar__list` `.wt-sidebar__sub` `.wt-sidebar__toggle` `.wt-statusbar` `.wt-statusbar__spacer` `.wt-tab` `.wt-tab--active` `.wt-tabs` `.wt-toast` `.wt-toolbar`
   - `App.tsx` 渲染出 `.wt-app` 骨架，含 `data-testid="app-root"`
 
 - [ ] **Step 1: 写 `src/renderer/src/styles/word.css`**
@@ -4257,13 +4257,6 @@ body {
   font-weight: 600;
 }
 
-/* 收起后只剩一条细带。按钮必须还留在里面——否则鼠标用户没有把书名调回来的入口
-   （那个快捷键是新用户不会知道的）。 */
-.wt-sidebar__header--collapsed {
-  padding: 0;
-  min-height: 20px;
-}
-
 .wt-sidebar__toggle {
   position: absolute;
   top: 3px;
@@ -4282,6 +4275,27 @@ body {
 }
 
 .wt-sidebar__toggle:hover {
+  background: #e4e4e4;
+  color: #333333;
+}
+
+/* 收起后整条侧栏只剩这条 12px 的细缝：颜色很淡、视觉上近乎不存在，但鼠标用户得有入口
+   把它调回来——那个快捷键是新用户不会知道的，全无入口等于收起即锁死。 */
+.wt-sidebar__rail {
+  flex: 0 0 12px;
+  width: 12px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--wt-chrome-border);
+  background: #fafafa;
+  color: #c4c4c4;
+  font-family: inherit;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wt-sidebar__rail:hover {
   background: #e4e4e4;
   color: #333333;
 }
@@ -5415,7 +5429,7 @@ git commit -F /tmp/task8-msg.txt   # 切勿用内联 -m：ASCII 引号会静默�
 - Consumes: `Novel` / `Chapter` 类型；Task 7 的 `.chapter-item` 样式
 - Produces: `<ChapterList novel={Novel | null} activeChapter={number} chapterPos={readonly number[]} onJump={(i: number) => void} />`
   - `data-testid="chapter-list"`、`chapter-item-${i}`、`chapter-pct-${i}`
-  - `data-testid="sidebar-header"`、`sidebar-header-toggle`（书名信息的收起开关；另有 ⌘/Ctrl+Shift+H 快捷键）
+  - `data-testid="sidebar-toggle"`（收起/展开整条左侧栏；收起后它是左边那条 12px 细缝上的按钮，另有 ⌘/Ctrl+Shift+H 快捷键）
   - 行高常量 `ROW_HEIGHT = 32`
 
 - [ ] **Step 1: 写 `src/renderer/src/components/ChapterList.tsx`**
@@ -5445,8 +5459,8 @@ export function ChapterList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /** 书名信息（小说名 + 章节数/编码）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
-  const [headerHidden, setHeaderHidden] = useState(false)
+  /** 整条左栏（书名信息 + 章节列表）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -5456,7 +5470,10 @@ export function ChapterList({
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+    // 依赖 collapsed 而不是 []：收起时整条 aside 不渲染、scrollRef.current 是 null，
+    // 这个 effect 会直接返回；重新展开后必须【再跑一次】去量真实高度，否则 viewport
+    // 会一直停在默认的 400，虚拟滚动按错误的视口高度算窗口。
+  }, [collapsed])
 
   // 打字推进时，让当前章节滚进可视区域
   useEffect(() => {
@@ -5466,9 +5483,10 @@ export function ChapterList({
     const bottom = top + ROW_HEIGHT
     if (top < el.scrollTop) el.scrollTop = top
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
-  }, [activeChapter, novel])
+    // 带上 collapsed：重新展开时列表是刚挂载的，需要把当前章节滚回可视区
+  }, [activeChapter, novel, collapsed])
 
-  // 书名信息的显示/隐藏快捷键：⌘/Ctrl + Shift + H
+  // 左侧栏的显示/隐藏快捷键：⌘/Ctrl + Shift + H
   //
   // 【为什么挂在 window 上还能收到】InputCapture 在「纯按键」模式下对**带修饰键的组合键**
   // 是直接放行的（它的 handleKeyDown 里 `if (e.ctrlKey || e.metaKey || e.altKey) return`），
@@ -5485,7 +5503,7 @@ export function ChapterList({
       if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return
       if (e.code !== 'KeyH') return
       e.preventDefault()
-      setHeaderHidden((v) => !v)
+      setCollapsed((v) => !v)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -5497,31 +5515,45 @@ export function ChapterList({
   const last = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
   const visible = chapters.slice(first, last)
 
+  // 收起时整条 aside 都不渲染，只留一条细缝（下面那个按钮）。
+  //
+  // 【为什么还留一条缝，而不是干脆什么都不留】那个快捷键是新用户不会知道的；全无入口的话，
+  // 鼠标用户一旦收起就再也调不回来（只能重启）。细缝只有 12px、颜色很淡，视觉上近乎不存在，
+  // 但鼠标总能找回来。
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="wt-sidebar__rail"
+        data-testid="sidebar-toggle"
+        aria-expanded={false}
+        aria-label="显示章节栏"
+        title="显示章节栏（⌘/Ctrl + Shift + H）"
+        onClick={() => setCollapsed(false)}
+      >
+        ▶
+      </button>
+    )
+  }
+
   return (
     <aside className="wt-sidebar">
-      <div
-        className={`wt-sidebar__header${headerHidden ? ' wt-sidebar__header--collapsed' : ''}`}
-        data-testid="sidebar-header"
-      >
-        {!headerHidden && (
-          <>
-            {novel ? novel.title : '未导入小说'}
-            <div className="wt-sidebar__sub">
-              {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
-            </div>
-          </>
-        )}
+      <div className="wt-sidebar__header">
         <button
           type="button"
           className="wt-sidebar__toggle"
-          data-testid="sidebar-header-toggle"
-          aria-pressed={!headerHidden}
-          aria-label={headerHidden ? '显示书名信息' : '隐藏书名信息'}
-          title={`${headerHidden ? '显示' : '隐藏'}书名信息（⌘/Ctrl + Shift + H）`}
-          onClick={() => setHeaderHidden((v) => !v)}
+          data-testid="sidebar-toggle"
+          aria-expanded
+          aria-label="隐藏章节栏"
+          title="隐藏章节栏（⌘/Ctrl + Shift + H）"
+          onClick={() => setCollapsed(true)}
         >
-          {headerHidden ? '▸' : '▴'}
+          ◀
         </button>
+        {novel ? novel.title : '未导入小说'}
+        <div className="wt-sidebar__sub">
+          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 导入小说'}
+        </div>
       </div>
       <div
         className="wt-sidebar__list"
@@ -5608,29 +5640,36 @@ describe('ChapterList', () => {
     expect(screen.getByText(/共 5 章/)).toBeTruthy()
   })
 
-  it('点按钮收起书名信息，再点一次展开', () => {
+  it('点按钮收起整条左栏，章节列表一起消失；再点一次展开', () => {
     const novel = makeNovel(5)
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
-    const toggle = screen.getByTestId('sidebar-header-toggle')
+    expect(screen.getByText('大书')).toBeTruthy()
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
 
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    // 书名、【章节列表本身】、以及里面的行，都要没
     expect(screen.queryByText('大书')).toBeNull()
     expect(screen.queryByText(/共 5 章/)).toBeNull()
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+    expect(screen.queryByTestId('chapter-pct-0')).toBeNull()
 
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
     expect(screen.getByText('大书')).toBeTruthy()
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
   })
 
-  it('收起后按钮仍在（鼠标用户得有入口把它调回来）', () => {
+  it('收起后细缝按钮仍在，且真的能把它调回来', () => {
     const novel = makeNovel(5)
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
-    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
-    // 只断言「还在」不够——要断言它真的还能把它切回来，否则一个 disabled 的残留按钮也能过
-    fireEvent.click(screen.getByTestId('sidebar-header-toggle'))
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    // 只断言「按钮还在」不够——一个点不动的残留按钮也能过。要断言它真的切回来了。
+    const rail = screen.getByTestId('sidebar-toggle')
+    expect(rail.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(rail)
     expect(screen.getByText('大书')).toBeTruthy()
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
   })
 
   it('⌘/Ctrl + Shift + H 与按钮等效', () => {
@@ -5638,10 +5677,10 @@ describe('ChapterList', () => {
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
 
     fireEvent.keyDown(window, { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
-    expect(screen.queryByText('大书')).toBeNull()
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
 
     fireEvent.keyDown(window, { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
-    expect(screen.getByText('大书')).toBeTruthy()
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
   })
 
   it('少了 Shift 或修饰键时不触发（别把正常打字吃掉）', () => {
