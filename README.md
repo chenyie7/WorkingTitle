@@ -51,9 +51,26 @@ pnpm dev          # electron-vite dev（渲染层热更新）
 
 ```bash
 pnpm dist:dir     # 免安装目录
-pnpm dist:mac     # macOS .dmg（arm64 + x64）
-pnpm dist:win     # Windows NSIS .exe —— 在 macOS 上需要 wine
+pnpm dist:mac     # macOS .dmg + .zip（arm64 + x64）
+pnpm dist:win     # Windows NSIS .exe + .zip —— 在 macOS 上需要 wine
 ```
+
+**不想跑安装程序就用 `.zip`**：解开即用，不经安装器、不写注册表、不需要管理员权限。
+
+- **Windows**：解开后是 `WorkingTitle.exe` 与它的依赖文件，双击即运行
+- **macOS**：解开后是 `WorkingTitle.app`，拖到「应用程序」或就地双击
+
+两个注意点：
+
+- macOS 的 `.app` 里有符号链接，**必须用访达自带的「归档实用工具」解压**（或 `ditto -x -k`）。
+  某些第三方解压工具不保留符号链接与权限位，解出来的 `.app` 会启动不了。Windows 上用资源管理器
+  自带的解压即可。
+- zip 版同样**没有签名**，所以首次打开仍会被 Gatekeeper / SmartScreen 拦（macOS 右键 → 打开，
+  Windows 点「更多信息」→「仍要运行」）。
+
+阅读进度按**用户账户**存，不在解压目录旁边（Windows 在 `%APPDATA%\WorkingTitle`，
+macOS 在 `~/Library/Application Support/WorkingTitle`）。所以删掉解压目录不会丢进度；
+反过来说，想做到「整个应用连数据一起塞进 U 盘」，给它设 `WT_USER_DATA` 环境变量指到 U 盘上。
 
 macOS 上打出的 `.dmg` 实测可用（起打包后的 `.app`、导入真实小说、打字正常）。
 

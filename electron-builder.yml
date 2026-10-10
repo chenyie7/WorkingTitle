@@ -19,6 +19,11 @@ mac:
       arch:
         - arm64
         - x64
+    # zip 是「解压即用」那条路：解开就是 WorkingTitle.app，不经过安装器。
+    - target: zip
+      arch:
+        - arm64
+        - x64
 
 dmg:
   title: ${productName}
@@ -26,6 +31,10 @@ dmg:
 win:
   target:
     - target: nsis
+      arch:
+        - x64
+    # 同上。win 的 zip 解开来是 WorkingTitle.exe 与它的依赖文件，绿色版。
+    - target: zip
       arch:
         - x64
 

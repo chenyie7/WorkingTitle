@@ -14,10 +14,14 @@ jobs:
         include:
           - os: macos-latest
             script: dist:mac
-            artifact: release/*.dmg
+            artifact: |
+              release/*.dmg
+              release/*.zip
           - os: windows-latest
             script: dist:win
-            artifact: release/*.exe
+            artifact: |
+              release/*.exe
+              release/*.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
