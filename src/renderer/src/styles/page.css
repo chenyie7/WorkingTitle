@@ -58,15 +58,27 @@
   user-select: none;
 }
 
+/* 隐形输入框只占「阅读光标那一点」，【绝不铺满整张纸】。
+   铺满（原来的 `inset: 0`）在真机上有两个后果，都是用户实测报上来的：
+   (1) 输入法候选框跟着「textarea 自己的文本光标」定位，而铺满纸的 textarea 光标恒在纸的
+       左上角；纸被滚上去之后那个点远在视野上方，系统把候选框钳到窗口顶部——「输入框跑到
+       页面顶部」。
+   (2) 更糟：Chromium 会把「获得焦点的可编辑元素的光标」滚进视野，于是每次击键都把
+       `.wt-canvas` 按回页首。`App` 里那段 rAF 补滚是在跟这次原生滚动赛跑，实测会输。
+   位置由 `InputCapture` 在每次渲染后按 `.wt-caret` 的 `offsetLeft` / `offsetTop` 写成
+   行内样式；下面这组值同时是「没有阅读光标时」的兜底（纸张左上角）。 */
 .wt-input {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1.15em; /* 与 .wt-caret 同高；JS 会按实测到的光标高度覆盖 */
   opacity: 0;
+  overflow: hidden;
   border: none;
   resize: none;
   padding: 0;
+  margin: 0;
   font: inherit;
   color: transparent;
   background: transparent;

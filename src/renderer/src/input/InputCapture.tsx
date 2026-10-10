@@ -1,4 +1,11 @@
-import { useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { InputMode } from '../../../core/types'
 
 export interface InputEngine {
@@ -72,6 +79,57 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
       window.removeEventListener('click', focus)
     }
   }, [])
+
+  /**
+   * 把隐形输入框摆到阅读光标（`.wt-caret`）所在处——见 `page.css` 里 `.wt-input` 的注释，
+   * 那是为什么必须这么做（候选框跑到页面顶部 + 小说被顶回页首，两个用户实测现象）。
+   *
+   * 【用 `offsetLeft` / `offsetTop`，不用 `getBoundingClientRect`】：`.wt-caret` 是
+   * `display: inline-block`，`.wt-page__text` 是 static，所以它的 `offsetParent` 就是
+   * `position: relative` 的 `.wt-page`；而绝对定位的 `left` / `top` 也是相对包含块（同一个
+   * `.wt-page`）的。两者同一坐标系，于是【滚动 `.wt-canvas` 不影响相对位置，不需要在滚动时
+   * 重算】。实测校验过两者确实可换：`caret.rect.x - page.rect.x == caret.offsetLeft`
+   * （800 − 356 = 444）、y 同理（2233 − 132 = 2101）——`.wt-page` 没有 border，它的
+   * border box 与 padding box 同原点。
+   *
+   * 【从自己的父节点往下找，不查 `document`】：`Page` 先渲染 `.wt-page__text`、后渲染
+   * children，所以 `.wt-caret` 与本 textarea 同属一个 `.wt-page`。锚点用 `[data-testid]`
+   * 而不是 `.wt-caret` 类名，跟单测/端到端用的是同一个。
+   */
+  const placeAtCaret = useCallback((): void => {
+    const el = ref.current
+    if (!el) return
+    const caret = el.parentElement?.querySelector<HTMLElement>('[data-testid="caret"]') ?? null
+    if (!caret) {
+      // 空状态：`Page` 渲染的是 `.wt-page__empty`，没有阅读光标。退回纸张左上角——输入框
+      // 仍在纸内、仍可聚焦，用户点一下照样能开始打字。【不能让输入框消失或抛错。】
+      el.style.left = '0px'
+      el.style.top = '0px'
+      return
+    }
+    el.style.left = `${caret.offsetLeft}px`
+    el.style.top = `${caret.offsetTop}px`
+    el.style.height = `${caret.offsetHeight}px`
+  }, [])
+
+  /**
+   * 【刻意不写依赖数组，每次渲染后都跑】：本组件只拿得到 `engine`（稳定引用）与 `mode`，
+   * 没有任何 prop 会在阅读光标移动时变化——光标动不动是 `App` 那边 `visibleText` 的事。
+   * 好在 `App` 每次引擎状态变化都会重渲染，而本组件没有 `memo`，所以「本组件重渲染」恰好
+   * 就是「阅读光标可能移动了」的时刻。写了依赖数组反而会漏掉真正该跑的那些渲染。
+   *
+   * 用 `useLayoutEffect` 而不是 `useEffect`：它在 React 提交完 DOM、浏览器绘制之前同步跑，
+   * 所以不会先画一帧停在旧位置的输入框。读 `offsetLeft` 会强制同步重排，量到的一定是提交
+   * 之后的布局。
+   */
+  useLayoutEffect(placeAtCaret)
+
+  // 窗口尺寸变化会让文字重排 → 阅读光标换位置 → 输入框得跟着挪。这条不靠重渲染
+  // （resize 不会让 `App` 重渲染），所以单独立一个监听，并在卸载时摘掉。
+  useEffect(() => {
+    window.addEventListener('resize', placeAtCaret)
+    return () => window.removeEventListener('resize', placeAtCaret)
+  }, [placeAtCaret])
 
   const handleKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Backspace') {
