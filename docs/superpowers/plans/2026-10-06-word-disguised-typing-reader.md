@@ -443,8 +443,11 @@ Expected: 三个路径都列出，无 "No such file"。
 - [ ] **Step 15: Commit**
 
 ```bash
-git add -A
-git commit -m "chore: 项目脚手架（electron-vite + React 19 + Vitest + Playwright）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+chore: 项目脚手架（electron-vite + React 19 + Vitest + Playwright）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -1028,8 +1031,11 @@ Expected: 文件被删除；`pnpm test` 仍然通过（此时至少有 18 个用
 - [ ] **Step 7: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(core): 编码检测与解码（BOM + 严格 UTF-8 + jschardet 打分择优）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(core): 编码检测与解码（BOM + 严格 UTF-8 + jschardet 打分择优）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -1439,8 +1445,11 @@ Expected: 全部 PASS。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(core): 章节切分（标题正则 + 前言伪章节 + 区间连续性保证）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(core): 章节切分（标题正则 + 前言伪章节 + 区间连续性保证）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -2337,8 +2346,11 @@ Expected: 全绿，exit 0。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(core): TypingEngine 游标状态机（pump/backspace/jumpToChapter + 回填）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(core): TypingEngine 游标状态机（pump/backspace/jumpToChapter + 回填）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -2471,6 +2483,16 @@ describe('sessionStore 会话读写', () => {
   // 整套 16 条仍全绿。现在一个字段一份残缺记录、各占一条用例，并且每条都断言警告里
   // **点出了那个字段**——于是「校验存在」被拆成「每条腿都在，而且报得出名字」。
   // 多字段缺失那种情形被「mode 缺失」这条覆盖（前面几条都会先通过，最后卡在 mode 上）。
+  // 【令牌必须写成完整短语，不能只写字段名】这条规则是【逐腿清扫】发现的，不是写表时想到的：
+  // 第一版令牌用的是字段名（'chapters'），而删掉「chapters 是不是数组」那条检查后，消息变成
+  // 'chapters[0] 不是对象'——**同样含 'chapters'**，于是那条用例照样通过，那条腿等于没有被
+  // 观测到。同一形状还有 'chapters[0]' 被 'chapters[0].title 不是字符串' 满足。
+  // 断言活着，只是它测的不是它声称的东西——与「断言的两个操作数同源」是同一类错误。
+  //
+  // 【而且：这张表建成之后，仍不足以说明每条腿被观测到了】第一版表建成后做逐腿清扫，
+  // 仍有 4 条腿不可见（原因是令牌太松，不是缺用例）。所以「一个字段一条用例」是**必要而非
+  // 充分**；判据是**逐条删掉检查、要求至少有一条用例变红**——本任务扫了 25 条腿，最终 0 条
+  // 不可见。请在写完表之后仍然跑一遍清扫，别跳过：这 4 条正是只在第二步才会露出来的。
   const CRIPPLED: Array<{
     name: string
     token: string
@@ -3570,8 +3592,11 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(main): 小说加载、会话存储（纯函数可测）与启动参数解析"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(main): 小说加载、会话存储（纯函数可测）与启动参数解析
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -4111,8 +4136,11 @@ Expected: 弹出窗口，标题为「文档1 - Word」，显示「Word 外壳占
 - [ ] **Step 11: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(main): IPC 通道、会话绑定、原生菜单与启动流程"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(main): IPC 通道、会话绑定、原生菜单与启动流程
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -4646,8 +4674,11 @@ Expected: PASS。若报 `document is not defined`，检查 `vitest.config.ts` �
 - [ ] **Step 9: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): Word 视觉外壳（Ribbon/侧栏/纸张/状态栏样式与布局）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(renderer): Word 视觉外壳（Ribbon/侧栏/纸张/状态栏样式与布局）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -5909,8 +5940,11 @@ Expected: 全部 PASS。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): 阅读页面（折叠护栏 + 光标）与状态栏"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(renderer): 阅读页面（折叠护栏 + 光标）与状态栏
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -6271,8 +6305,11 @@ Expected: 全部 PASS。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): InputCapture 双模式输入捕获（输入法友好 + 纯按键）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(renderer): InputCapture 双模式输入捕获（输入法友好 + 纯按键）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -6742,8 +6779,11 @@ Run: `pnpm dev`
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
-git commit -m "feat(renderer): App 接线（引擎 ↔ UI ↔ 会话持久化）"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+feat(renderer): App 接线（引擎 ↔ UI ↔ 会话持久化）
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -6915,8 +6955,11 @@ Expected: 三项全绿。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
-git commit -m "test(e2e): Playwright 驱动真实 Electron 的冒烟测试"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+test(e2e): Playwright 驱动真实 Electron 的冒烟测试
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
@@ -7068,8 +7111,11 @@ Expected: 全部 exit 0。把真实输出贴进最终报告。
 - [ ] **Step 9: Commit**
 
 ```bash
-git add -A
-git commit -m "build: electron-builder 双平台打包配置、CI 工作流与 README"
+git add <本任务改动的显式路径…>   # 不要用 -A：见文件头「git add -A 只在独占一棵工作树时安全」
+cat > /tmp/wt-commit-msg.txt <<'EOF'
+build: electron-builder 双平台打包配置、CI 工作流与 README
+EOF
+git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静默截断信息
 ```
 
 ---
