@@ -42,6 +42,20 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
   })
 
+  it('导入后蓝条上不出现小说文件名（那是导入唯一的泄露点）', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+
+    fireEvent.click(screen.getByTestId('tab-文件'))
+    fireEvent.click(screen.getByTestId('btn-import'))
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 修复前这里是 `novel.title`（= 文件名「测试书」），等于把「在看小说」写在窗口最显眼处
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+    expect(screen.getByTestId('ribbon').textContent).not.toContain('测试书')
+  })
+
   it('导入小说后可打字，阅读区按比例增长', async () => {
     const novel = makeNovel()
     installApi(novel)

@@ -34,6 +34,12 @@ export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
   const [engine, setEngine] = useState<TypingEngine | null>(null)
   const [expanded, setExpanded] = useState(false)
+  /**
+   * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
+   * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
+   * 默认取一个中性的 `文档1`。
+   */
+  const [docTitle, setDocTitle] = useState('文档1')
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
@@ -231,7 +237,7 @@ export default function App() {
   return (
     <ToolbarProvider {...toolbarProps}>
       <div className="wt-app" data-testid="app-root">
-        <Ribbon docTitle={novel ? novel.title : '文档1'} />
+        <Ribbon docTitle={docTitle} onDocTitleChange={setDocTitle} />
 
         <div className="wt-body">
           <ChapterList

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -122,14 +122,71 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ]
 }
 
-export function Ribbon({ docTitle }: { docTitle: string }) {
+export function Ribbon({
+  docTitle,
+  onDocTitleChange
+}: {
+  docTitle: string
+  onDocTitleChange: (next: string) => void
+}) {
   const [tab, setTab] = useState<RibbonTab>('开始')
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(docTitle)
+  // Esc 取消时 input 会卸载、进而触发 blur；没有这个标记的话 blur 会把草稿提交上去，
+  // 「按 Esc 取消」就成了「按 Esc 提交」。
+  const cancelTitleRef = useRef(false)
+
+  const startEditingTitle = (): void => {
+    setTitleDraft(docTitle)
+    cancelTitleRef.current = false
+    setEditingTitle(true)
+  }
+
+  const commitTitle = (): void => {
+    if (cancelTitleRef.current) {
+      cancelTitleRef.current = false
+      setEditingTitle(false)
+      return
+    }
+    const next = titleDraft.trim()
+    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
+    if (next) onDocTitleChange(next)
+    setEditingTitle(false)
+  }
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
         <span className="wt-ribbon__title-app">Word</span>
-        <span className="wt-ribbon__title-doc">{docTitle}</span>
+        {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点 */}
+        {editingTitle ? (
+          <input
+            className="wt-ribbon__title-input"
+            data-testid="doc-title-input"
+            aria-label="文档名"
+            value={titleDraft}
+            autoFocus
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitTitle()
+              else if (e.key === 'Escape') {
+                cancelTitleRef.current = true
+                setEditingTitle(false)
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="wt-ribbon__title-doc"
+            data-testid="doc-title"
+            title="点击重命名"
+            onClick={startEditingTitle}
+          >
+            {docTitle}
+          </button>
+        )}
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (
