@@ -6325,6 +6325,23 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 - Consumes: 前面全部任务
 - Produces: 完整可用的应用；`window.api` 的渲染进程类型声明
 
+> **开工前必读（Task 11 期间实测）：正文不会跟着光标滚，用户会「盲打」。**
+>
+> 实测环境：真实 Electron + 构建产物 + Task 7 的真实 CSS。量到 `.wt-canvas` 的可见高度是 **667px**，
+> 而**第 900 个字**时 `.wt-caret` 的上沿就越过了可见区下沿；期间 `.wt-canvas.scrollTop` **始终是 0**——
+> 全项目没有任何一处会滚动它。
+>
+> 按默认比例 1 键 : 10 字算，**约 90 次击键之后用户就看不见自己打出来的字了**。而用户的手在键盘上连续输入，
+> 不会去拖滚动条。真 Word 是会跟着滚的。
+>
+> 这是**设计文档的疏漏，不是取舍**：spec §「左侧章节列表」明确要求了「打字推进时自动滚动到可见区域」，
+> 并已由 Task 9 的 `ChapterList` 实现；**阅读区没有对应的一条**，plan 里 `Page.tsx` 也没有。
+> spec 关于滚动的另外两处（§「方向键…交给页面滚动」、§「A4 纸…垂直可滚动」）说的都是**用户主动**滚动。
+>
+> 处理方式（本任务做）：在 `Page` 或 `App` 里让 `.wt-canvas` 跟随光标。判据是**在真实 Electron 里量**——
+> 连续 pump 到 2000 字以上，断言 `.wt-canvas.scrollTop > 0` 且 `.wt-caret` 的矩形落在可见区内
+> （jsdom 没有布局，这个断言在单测里没有意义，别写在 vitest 里假装测了）。
+
 > **开工前必读（Task 7 期间实测，不是推测）：`window.api` 可能在渲染进程里根本不存在，而本任务的代码假定它一定在。**
 >
 > 可达性有实测依据：Task 6 量到 sandboxed preload 加载失败时（`Error: module not found: node:fs`）**页面照常渲染，而 `window.api === undefined`**。
