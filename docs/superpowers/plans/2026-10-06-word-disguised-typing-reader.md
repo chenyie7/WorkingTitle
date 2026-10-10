@@ -241,6 +241,11 @@ export default defineConfig({
 刻意用**单一 jsdom 环境**而不是 vitest projects：`src/core` 的测试不碰 DOM，在 jsdom 下照常运行，省掉一套 projects 配置和一类配置错误。`Buffer` 等 Node 全局在 vitest 的 jsdom 环境下依然可用。
 
 `tests/setup.ts`：
+
+> **这是 Task 1 时期的版本，已经过期。** Task 12 往里面加了两样 jsdom 环境缺口的东西——良性的
+> `window.api` 桩（`render(<App/>)` 的用例需要它）和 `ResizeObserver` 替身——**当前有效的是
+> Task 12「`window.api` 可能在渲染进程里根本不存在」那条必读下面的围栏**；这一版留在 Task 1 里备查。
+
 ```ts
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
@@ -5282,6 +5287,10 @@ Expected: 点「文件」「插入」等选项卡能切换工具组；点「B」
 
 本步之后 `src/renderer/src/App.tsx` 的最终全文：
 
+> **这是 Task 8 时期的版本，Task 12 之后已更新**（Task 12 的 Step 3 整体重写：接引擎、会话持久化、
+> 缺 `window.api` 时降级、让 `.wt-canvas` 跟随光标）。**当前有效的是 Task 12 Step 3 的围栏**，
+> 这一版留在 Task 8 里备查。
+
 ```tsx
 import { Ribbon } from './components/Ribbon'
 import { Toast } from './components/Toast'
@@ -6341,6 +6350,19 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 > 处理方式（本任务做）：在 `Page` 或 `App` 里让 `.wt-canvas` 跟随光标。判据是**在真实 Electron 里量**——
 > 连续 pump 到 2000 字以上，断言 `.wt-canvas.scrollTop > 0` 且 `.wt-caret` 的矩形落在可见区内
 > （jsdom 没有布局，这个断言在单测里没有意义，别写在 vitest 里假装测了）。
+>
+> **落地时才量出来的、比上面更要紧的一条（Task 12 实施期实测）：光在 effect 里滚一次是不够的，真机上等于没修。**
+> Chromium 会在**真实按键**之后把「焦点里那个 textarea 的光标」滚进视野——`.wt-input` 是盖满整张纸的
+> 隐形输入框（`inset: 0; height: 100%`），它自己的光标在纸的左上角，于是浏览器每次都把画布按回页首。
+> 实测（140 键，每键采样）：effect 里同步设成 `1414`，**同一个 effect 里再量已经是 `30`**；只在 effect 里
+> 同步滚一版，连敲 120 键后末尾 `scrollTop` 仍是 `30`、光标在 `1976px` 处（画布只有 667px 高）。
+> 回滚发生在 rAF **之前**（sync 时 1243，1~5ms 后的 rAF 已经是 30），所以修正在 rAF 里补一次即可：
+> 它落在回滚之后、这一帧画出来之前。**那次 rAF 刻意不 cancel**（cancel 会让快速连打时上一键排的那一帧
+> 被下一键的 effect 清掉，实测 k70 之后全程停在页首）。
+>
+> 还有一条**测法**上的坑，别用它证明「滚动没用」：**合成事件测不出这个回滚**。用
+> `el.dispatchEvent(new Event('input'))` 派发（哪怕焦点还在 textarea 上）浏览器根本不做这次回滚，
+> 滚动看起来完全正常——只有真实的 `keyboard.press` 才复现。真机验证必须真敲键。
 
 > **开工前必读（Task 7 期间实测，不是推测）：`window.api` 可能在渲染进程里根本不存在，而本任务的代码假定它一定在。**
 >
@@ -6357,6 +6379,85 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 > 所以本任务要同时做两件事，缺一不可：
 > - 给 `tests/setup.ts` 加一个**良性**（no-op async）的 `window.api` 桩，让渲染层测试能 `render(<App/>)`；
 > - 决定 `App` 在缺 api 时怎么降级。倾向「渲染出外壳 + 不抛」，因为 preload 失败在用户侧就是「伪装成 Word 的窗口一片空白」，比显式报错更糟。
+>
+> **实施时又踩到两个 jsdom 环境缺口，都放进 `tests/setup.ts`，一并记在这里**：
+> 1. `setupFiles` 是**每个测试文件**都跑，而 `tests/unit/guardA.test.ts` 顶上写着 `// @vitest-environment node`
+>    ——那里没有 `window`。桩里必须 `if (typeof window === 'undefined') return`，否则该文件整份失败
+>    （**0 个用例被执行**），而汇总行照旧是 `Tests N passed`，只有 exit code 是 1。
+> 2. jsdom 不实现 `ResizeObserver`，而 `ChapterList` 用它测视口高度。Task 12 之后 `App` 会渲染
+>    `ChapterList`，于是**Task 7 的 `layout.test.tsx` 也一并踩到**（它 `render(<App/>)`）。
+> 放 `setupFiles` 里一处覆盖全部经过 `App` 的用例；`chapterList.test.tsx` 里那份同名 stub 留着无害。
+>
+> 本任务交付的 `tests/setup.ts` 全文（Task 1 那一版的围栏已过期，只作历史备查）：
+
+```ts
+import { cleanup } from '@testing-library/react'
+import { afterEach } from 'vitest'
+import type { WtApi } from '../src/renderer/src/types/global'
+
+/**
+ * 渲染层的**良性** `window.api` 替身：什么都不做，但每个方法都在，且都是 async。
+ *
+ * 为什么必须有：`preload` 在 jsdom 里根本不会跑，而 `App` 挂载时会走启动流程
+ * （`initialNovelPath` / `loadSession` / `onMenuCommand`）。少了这个桩，任何
+ * `render(<App/>)` 的用例都会以「TypeError」或「unhandled rejection」两种形态之一失败
+ * （两种都是 Task 7 实测过的形态：前者让用例当场红，后者只让汇总行多一条
+ * `Errors 1 error`，用例行照旧 passed，而 vitest 的 exit code 是 1）。
+ *
+ * `openNovelPath` 刻意抛异常而不是编一本小说出来：真的被调用到（有启动参数或有会话）
+ * 说明用例自己该提供 api（见 `tests/unit/app.test.tsx` 的 `installApi`），此时一个
+ * 假小说比一声响更危险——它会让用例在「用的是别人的数据」这种前提下静默通过。
+ * 两个调用点都在 try/catch 里，异常不会冒出去。
+ */
+const benignApi: WtApi = {
+  importNovel: async () => null,
+  openNovelPath: async () => {
+    throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')
+  },
+  initialNovelPath: async () => null,
+  loadSession: async () => null,
+  saveSession: async () => {},
+  clearSession: async () => {},
+  onMenuCommand: () => () => {}
+}
+
+function installBenignApi(): void {
+  // `setupFiles` 对**每个**测试文件都跑，而 `tests/unit/guardA.test.ts` 顶上写着
+  // `// @vitest-environment node`——那个文件里根本没有 `window`。少了这行判空，
+  // 该文件会以「ReferenceError: window is not defined」整份失败：**0 个用例被执行**，
+  // 而汇总行照旧是 `Tests N passed`，只有 exit code 是 1。
+  if (typeof window === 'undefined') return
+  ;(window as unknown as { api: WtApi }).api = benignApi
+}
+
+installBenignApi()
+
+/**
+ * jsdom 不实现 ResizeObserver，而 `ChapterList` 用它测视口高度。
+ *
+ * 为什么放在这里而不是像 `tests/unit/chapterList.test.tsx` 那样各写一份：Task 12 之后
+ * **`App` 会渲染 `ChapterList`**，于是 `layout.test.tsx`（Task 7 的用例）也一并踩到这个坑
+ * ——它是 `render(<App/>)` 的。放在 `setupFiles` 里，一处即可覆盖所有经过 `App` 的用例；
+ * 那个文件里的同名 stub 留着无害（后赋值的赢，行为一样）。
+ *
+ * 这个替身【不测量任何东西】：`observe` 是空操作，所以组件里的 `measure()` 只会跑一次
+ * （挂载时那次 `clientHeight || 400`）。虚拟滚动窗口在 jsdom 里因此永远按 400px 算——
+ * 用例若要断言渲染了哪些行，得自己按这个值推算，别以为它在跟着真实布局走。
+ */
+globalThis.ResizeObserver = class {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+} as unknown as typeof ResizeObserver
+
+afterEach(() => {
+  cleanup()
+  // 用例可能把 window.api 换成自己的替身（app.test.tsx 就是这么做的）。
+  // 换回来，免得上一个用例的替身漏给下一个——那种漏给会让「本期用例没装 api」
+  // 表现为「上一个用例的 spy 被调用」，红得莫名其妙。
+  installBenignApi()
+})
+```
 
 - [ ] **Step 1: 写 `src/renderer/src/types/global.d.ts`**
 
@@ -6410,8 +6511,26 @@ import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
+import type { WtApi } from './types/global'
 
 const SAVE_DEBOUNCE_MS = 600
+/** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
+const CARET_MARGIN = 24
+
+/**
+ * 取 preload 注入的接口；**它可能不存在**。
+ *
+ * sandboxed preload 加载失败时（Task 6 实测的形态：`Error: module not found: node:fs`），
+ * 页面照常渲染而 `window.api === undefined`——用户看到的就是一个「伪装成 Word 的空窗口」。
+ * `global.d.ts` 把它声明成必填（`api: WtApi`），所以 `tsc` 认为它恒存在、**不会提醒你判空**，
+ * 这里必须自己转一道。
+ *
+ * 每次用的时候现取，【不要在模块顶层缓存成常量】：那等于把「preload 一定在模块加载前注入」
+ * 写死进加载顺序，一旦不成立，拿到的就是永久为 null 的缓存。
+ */
+function getApi(): WtApi | null {
+  return (window as unknown as { api?: WtApi }).api ?? null
+}
 
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
@@ -6419,6 +6538,7 @@ export default function App() {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const engineRef = useRef<TypingEngine | null>(null)
+  const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
 
   const state = useTypingEngine(engine)
@@ -6431,32 +6551,45 @@ export default function App() {
   }, [])
 
   const handleImport = useCallback(async () => {
-    const next = await window.api.importNovel()
+    const api = getApi()
+    if (!api) return
+    const next = await api.importNovel()
     if (!next) return
     openNovel(next)
   }, [openNovel])
 
   const handleClearSession = useCallback(async () => {
-    await window.api.clearSession()
+    const api = getApi()
+    if (!api) return
+    await api.clearSession()
     setNovel(null)
     setEngine(null)
   }, [])
 
   // 启动：先看命令行有没有指定 txt，再尝试恢复上次会话
   useEffect(() => {
+    const api = getApi()
+    // 没有 api，就没有「命令行参数」和「上次会话」这两件事可做——直接停在空状态。
+    // 这【不是】多余的防御：少了它，下面第一个 await 会变成 unhandled rejection，
+    // 用例行照旧报 passed、汇总行却是 `Errors 1 error`，vitest 的 exit code 是 1。
+    if (!api) return
+
     let cancelled = false
 
     const boot = async (): Promise<void> => {
-      const initialPath = await window.api.initialNovelPath()
-      const session = await window.api.loadSession()
+      const initialPath = await api.initialNovelPath()
+      const session = await api.loadSession()
 
       if (initialPath) {
         // 命令行给的文件可能打不开（已删除、权限、EISDIR、解不出编码……）。
         // 没有这个 try 的话错误会以【未处理的 rejection】形式冒到启动期：空状态不显示、
         // 也没有任何提示。catch 里刻意【不 return】：失败就不阻断启动，继续走下面的
         // 会话恢复 / 空状态兜底——用户至少还能看到界面并重新导入。
+        // 两条都真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里
+        // 留着上次会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」。
+        // 注意这两条**单测里是零覆盖**——把整个 try/catch 删掉，渲染层用例全绿。
         try {
-          const loaded = await window.api.openNovelPath(initialPath)
+          const loaded = await api.openNovelPath(initialPath)
           if (cancelled) return
           if (session && session.sourcePath === loaded.sourcePath) {
             setNovel(loaded)
@@ -6472,7 +6605,7 @@ export default function App() {
 
       if (session) {
         try {
-          const loaded = await window.api.openNovelPath(session.sourcePath)
+          const loaded = await api.openNovelPath(session.sourcePath)
           if (cancelled) return
           setNovel(loaded)
           setEngine(TypingEngine.fromSession(loaded, session))
@@ -6490,7 +6623,9 @@ export default function App() {
 
   // 菜单命令 → 渲染进程动作
   useEffect(() => {
-    const off = window.api.onMenuCommand((cmd) => {
+    const api = getApi()
+    if (!api) return
+    const off = api.onMenuCommand((cmd) => {
       if (cmd === 'import-novel') void handleImport()
       else if (cmd === 'clear-session') void handleClearSession()
     })
@@ -6499,18 +6634,21 @@ export default function App() {
 
   // 会话持久化（防抖）
   useEffect(() => {
-    if (!engine) return
+    const api = getApi()
+    if (!engine || !api) return
     const timer = window.setTimeout(() => {
-      void window.api.saveSession(engine.toSession())
+      void api.saveSession(engine.toSession())
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [engine, state])
 
   // 关闭前强制落盘
   useEffect(() => {
+    const api = getApi()
+    if (!api) return
     const flush = (): void => {
       const current = engineRef.current
-      if (current) void window.api.saveSession(current.toSession())
+      if (current) void api.saveSession(current.toSession())
     }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
@@ -6525,6 +6663,60 @@ export default function App() {
 
   const visibleText = engine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
+
+  /**
+   * 让阅读区跟着光标滚。
+   *
+   * 问题（真机实测，不是推测）：`.wt-canvas` 的可见高度是 667px，
+   * **第 900 个字光标就掉出可见区**，而 `.wt-canvas.scrollTop` 全程是 0——
+   * 全项目没有一处会滚动它。按默认比例算，约 90 次击键之后用户就看不见自己打的字了，
+   * 而手在键盘上连续输入的人不会去拖滚动条。真 Word 是跟着滚的。
+   *
+   * 滚的是 `.wt-canvas`（`overflow: auto` 的是它，不是 `.wt-page`），所以这段在 `App`
+   * 而不是 `Page`：画布归 App 所有。用 `querySelector` 找 `.wt-caret` 而不是给 `Page`
+   * 加一个 ref 参数，是为了不动 `Page` 的公开接口（Task 10 交付的形状）。
+   *
+   * 【最后那一帧补滚不是多余的，删掉它真机上等于没修】：真实按键之后 Chromium 会把
+   * 「焦点里那个 textarea 的光标」滚进视野——那是个盖满整张纸的隐形输入框，它自己的
+   * 光标在纸的左上角，于是浏览器每次都把画布按回页首。实测（140 键）：effect 里同步
+   * 设成 1414，同一个 effect 里再量已经是 30；去掉补滚那版连敲 120 键后末尾 scrollTop
+   * 是 30、光标在 1976px 处（画布只有 667px 高）。这就是「合成事件测不出来」的原因：
+   * 用 dispatchEvent 派发 input 时浏览器不做这次回滚，滚动完全正常。
+   *
+   * 补滚放在 rAF 里，且【刻意不 cancel】：回滚发生在 rAF 之前（实测 sync 时 1243，
+   * 1~5ms 后的 rAF 已经是 30），所以 rAF 里这次修正在回滚之后、在这一帧画出来之前。
+   * 不 cancel 是因为它幂等（每次都重新量当前布局），而 cancel 会让**快速连打**时上一键
+   * 排的那一帧被下一键的 effect 清掉——实测那样会在 k70 之后全程停在页首。
+   * 人速（10 键/秒）实测 120/120 次采样光标都在可见区内。
+   * 不 cancel 也不会在卸载后乱动：那时 canvas 已脱离文档，量到的高度是 0，被下面那条闸挡住。
+   *
+   * 【画布高度为 0 就直接返回】：jsdom 没有布局，`getBoundingClientRect()` 全返回 0，
+   * 据此算出来的「光标在可见区外」是假的。这条闸让单测里这段是空操作，而真机里画布
+   * 高度恒不为 0。**滚动这条的判据只能在真机里量**，别在 vitest 里假装测了。
+   *
+   * `expanded` 也在依赖里：点折叠条展开前文时 `visibleText` 一字不变，但光标位置大变。
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !visibleText) return
+    const caret = canvas.querySelector('.wt-caret')
+    if (!caret) return
+
+    // 幂等：已经滚到位时两次测量都落在空隙之内，位移是 0。
+    const keepCaretVisible = (): void => {
+      const canvasBox = canvas.getBoundingClientRect()
+      if (canvasBox.height === 0) return
+      const caretBox = caret.getBoundingClientRect()
+      if (caretBox.bottom > canvasBox.bottom - CARET_MARGIN) {
+        canvas.scrollTop += caretBox.bottom - (canvasBox.bottom - CARET_MARGIN)
+      } else if (caretBox.top < canvasBox.top + CARET_MARGIN) {
+        canvas.scrollTop -= canvasBox.top + CARET_MARGIN - caretBox.top
+      }
+    }
+
+    keepCaretVisible()
+    window.requestAnimationFrame(keepCaretVisible)
+  }, [visibleText, expanded])
 
   const toolbarProps = useMemo(
     () => ({
@@ -6551,7 +6743,7 @@ export default function App() {
             onJump={(i) => engineRef.current?.jumpToChapter(i)}
           />
 
-          <main className="wt-canvas">
+          <main className="wt-canvas" ref={canvasRef}>
             <Page
               visibleText={visibleText}
               expanded={expanded}
@@ -6676,6 +6868,11 @@ describe('App 端到端（单测层）', () => {
     fireEvent.click(screen.getByTestId('chapter-item-1'))
     await waitFor(() => expect(screen.getByTestId('status-chapter').textContent).toContain('第 2 章'))
     expect(screen.getByTestId('chapter-item-1').className).toContain('chapter-item--active')
+
+    // 跳章之后阅读区是**空的**：显示窗口从该章开头起算，而这一章还没读过。
+    // 少了这一条，「已显示」把 revealStart 漏掉（写成 cursor）也没人发现——
+    // 变异实测：把 `state.cursor - state.revealStart` 改成 `state.cursor`，全套用例全绿。
+    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
   })
 
   it('改比例后同样的击键抽出更多字', async () => {
@@ -6685,6 +6882,10 @@ describe('App 端到端（单测层）', () => {
     fireEvent.click(screen.getByTestId('tab-文件'))
     fireEvent.click(screen.getByTestId('btn-import'))
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 比例输入框挂在「开始」「视图」两个选项卡下，而导入按钮在「文件」选项卡下——
+    // Ribbon 只渲染当前选项卡的工具组，切回「开始」它才在 DOM 里。
+    fireEvent.click(screen.getByTestId('tab-开始'))
 
     const ratioInput = screen.getByTestId('ratio-input')
     fireEvent.change(ratioInput, { target: { value: '2' } })
@@ -6739,13 +6940,44 @@ describe('App 端到端（单测层）', () => {
     fireEvent.click(screen.getByTestId('btn-import'))
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
-    fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    const capture = screen.getByTestId('input-capture')
+    const saveSession = window.api.saveSession as unknown as { mock: { calls: unknown[] } }
+    const before = saveSession.mock.calls.length
+
+    // 连着敲 3 下（每次都是状态变化），但都发生在防抖窗口之内
+    fireEvent.input(capture, { target: { value: 'x' } })
+    fireEvent.input(capture, { target: { value: 'x' } })
+    fireEvent.input(capture, { target: { value: 'x' } })
     await act(async () => {
       vi.advanceTimersByTime(1000)
     })
     await waitFor(() => expect(saved).not.toBeNull())
-    expect(saved!.cursor).toBe(10)
+    expect(saved!.cursor).toBe(30)
     expect(saved!.sourcePath).toBe('/tmp/测试书.txt')
+
+    // 【防抖本身也要断言】：只断言「最终写了一次」的话，把防抖整个删掉
+    //（每次状态变化都立刻写）用例照样全绿——变异实测确认过。3 次击键 + 推进一次
+    // 防抖窗口，应当**恰好写一次**（写的是最后那个状态）。
+    expect(saveSession.mock.calls.length - before).toBe(1)
+  })
+
+  it('没有 window.api 时也渲染出外壳，不抛（sandboxed preload 加载失败）', async () => {
+    // 把 setup.ts 那份良性桩摘掉，模拟 Task 6 实测过的形态：preload 加载失败时
+    // 页面照常渲染，而 window.api === undefined。global.d.ts 把它声明成必填，
+    // 所以类型层面不会提醒任何人——这条用例是 App 里那几处 api 判空的唯一守卫。
+    // 两种失败形态都会被抓到：effect 里同步抛（render 直接红），以及 void boot() 里
+    // 的 unhandled rejection（用例行照旧 passed，但汇总行多一条 Errors、exit code 是 1）。
+    delete (window as unknown as { api?: unknown }).api
+
+    expect(() => render(<App />)).not.toThrow()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('app-root')).toBeTruthy()
+    expect(screen.getByTestId('page-empty')).toBeTruthy()
+    expect(screen.getByTestId('status-chapter').textContent).toBe('未导入')
+    expect(screen.getByTestId('status-chars').textContent).toContain('已显示 0')
   })
 })
 ```
