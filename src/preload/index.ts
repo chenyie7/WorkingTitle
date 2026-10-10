@@ -2,6 +2,15 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
 
 const api = {
+  /**
+   * 宿主平台。渲染层要据此决定标题条左侧留多少空位——macOS 用了
+   * `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上，必须给它们让出位置；
+   * Windows/Linux 没有红绿灯，留空反而是个洞。
+   *
+   * 沙箱化的 preload 能拿到 `process.platform`（Electron 在沙箱里保留了这几个字段），
+   * 但**渲染层拿不到**——所以在这里读取、作为普通值交给它。
+   */
+  platform: process.platform,
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),

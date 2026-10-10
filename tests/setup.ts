@@ -17,6 +17,7 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * 两个调用点都在 try/catch 里，异常不会冒出去。
  */
 const benignApi: WtApi = {
+  platform: 'darwin',
   importNovel: async () => null,
   openNovelPath: async () => {
     throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')

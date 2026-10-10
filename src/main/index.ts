@@ -31,6 +31,20 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     title: '文档1 - Word',
+    // macOS 上隐掉原生标题栏，只把红绿灯浮在网页之上。
+    //
+    // 【为什么必须这么做】默认（default）时标题栏由 macOS 自己画，它的底色跟随系统外观，
+    // 而我们网页里的标题条用的是自己的颜色——两者对不上，用户看到的正是
+    // 「红绿灯那一块和旁边不是一个色」。改成 hiddenInset 后那一块归我们上色，
+    // 顺带也没有了「原生标题条 + 网页里再画一条」的两条标题条。
+    // 其它平台不支持这个值，原样保留系统标题栏。
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          // 竖直居中对齐 32px 的标题条（灯本身约 12px 高）
+          trafficLightPosition: { x: 14, y: 10 }
+        }
+      : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG_DARK : WINDOW_BG_LIGHT,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

@@ -1,6 +1,8 @@
 import type { Novel, PersistedSession } from '../../../core/types'
 
 export interface WtApi {
+  /** 'darwin' | 'win32' | 'linux'。渲染层靠它决定要不要给红绿灯让位 */
+  platform: string
   importNovel: () => Promise<Novel | null>
   openNovelPath: (path: string) => Promise<Novel>
   initialNovelPath: () => Promise<string | null>
