@@ -8,3 +8,6 @@ out/
 coverage/
 test-results/
 playwright-report/
+
+# 本地测试语料：真实的第三方小说，有版权，不入库
+books/
