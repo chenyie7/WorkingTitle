@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
 import {
@@ -61,18 +62,58 @@ export function SettingsDialog({
   onThemeSourceChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
-  const [ratioDraft, setRatioDraft] = useState(String(ratio))
-  const [titleDraft, setTitleDraft] = useState(docTitle)
 
-  // 比例在别处变了（会话恢复、其它入口）时把草稿跟回去
-  useEffect(() => {
-    setRatioDraft(String(ratio))
-  }, [ratio])
+  /**
+   * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
+   *
+   * 表里只有这两项：文档名与阅读替换。外观、纸张、输入模式刻意**不**进来，它们的效果是
+   * 当场看得见的（换个颜色、按一下就知道），要保存才生效会很别扭。
+   *
+   * 【两项底层是两条路】文档名是全局设置（App 状态 → 防抖写 `settings.json`），而比例跟着
+   * 书走（`engine.setRatio`，存在那本书的会话里）。对用户是同一个「保存」按钮，这正是把表
+   * 放在这里的理由：对话框不必知道背后是什么，它只调 `commit`。
+   */
+  const fields: DeferredField[] = useMemo(
+    () => [
+      {
+        id: 'doc-title',
+        committed: docTitle,
+        // 空名退回当前值：蓝条上留一片空白比留着上一个名字更扎眼
+        normalize: (raw, committed) => {
+          const trimmed = raw.trim()
+          return trimmed === '' ? committed : trimmed
+        },
+        commit: (value) => {
+          if (value !== docTitle) onDocTitleChange(value)
+        }
+      },
+      {
+        id: 'ratio',
+        committed: String(ratio),
+        // 解析不出数字就退回当前值，而不是留一个 NaN 草稿——那种草稿会让「保存」一直亮着
+        // 而点下去什么都不提交（用户会以为按钮坏了）
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
+        },
+        commit: (value) => setRatio(Number(value))
+      }
+    ],
+    [docTitle, ratio, onDocTitleChange, setRatio]
+  )
+  const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
-  // 每次打开都从当前文档名起稿：上次关掉时没提交的草稿不该留到下一次
+  // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
   useEffect(() => {
-    if (open) setTitleDraft(docTitle)
-  }, [open, docTitle])
+    if (open) reset()
+  }, [open, reset])
+
+  /** 保存：提交所有有改动的项，并给一条提示（不然点完没有任何反馈） */
+  const handleSave = (): void => {
+    if (!dirty) return
+    save()
+    notify('已保存')
+  }
 
   /**
    * Esc 关闭。
@@ -111,25 +152,6 @@ export function SettingsDialog({
     if (open) return
     document.querySelector<HTMLElement>('[data-testid="input-capture"]')?.focus({ preventScroll: true })
   }, [open])
-
-  const commitRatio = (raw: string): void => {
-    const parsed = Number.parseInt(raw, 10)
-    if (!Number.isFinite(parsed)) {
-      setRatioDraft(String(ratio))
-      return
-    }
-    const next = clampRatioInput(parsed)
-    setRatio(next)
-    setRatioDraft(String(next))
-    if (next !== parsed) notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${next}`)
-  }
-
-  const commitTitle = (): void => {
-    const next = titleDraft.trim()
-    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
-    if (next && next !== docTitle) onDocTitleChange(next)
-    else setTitleDraft(docTitle)
-  }
 
   if (!open) return null
 
@@ -177,11 +199,13 @@ export function SettingsDialog({
               // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
               // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
               autoFocus
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commitTitle}
+              value={drafts['doc-title'] ?? docTitle}
+              onChange={(e) => setDraft('doc-title', e.target.value)}
+              // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
+              onBlur={() => blur('doc-title')}
+              // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitTitle()
+                if (e.key === 'Enter') handleSave()
               }}
             />
           </div>
@@ -198,11 +222,20 @@ export function SettingsDialog({
                 data-testid="ratio-input"
                 aria-label="比例：输入 1 个字显示小说多少字"
                 inputMode="numeric"
-                value={ratioDraft}
-                onChange={(e) => setRatioDraft(e.target.value)}
-                onBlur={(e) => commitRatio(e.target.value)}
+                value={drafts['ratio'] ?? String(ratio)}
+                onChange={(e) => setDraft('ratio', e.target.value)}
+                onBlur={(e) => {
+                  const raw = e.currentTarget.value
+                  const after = blur('ratio')
+                  const parsed = Number.parseInt(raw, 10)
+                  // 夹紧只发生在归一化这一步，所以提示也留在这里（保留原有的语义：
+                  // 只有真的被夹紧了才提示，普通改个数字不该弹东西）
+                  if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
+                    notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+                  }
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitRatio(e.currentTarget.value)
+                  if (e.key === 'Enter') handleSave()
                 }}
               />
               <span className="wt-ratio__label">字</span>
@@ -311,6 +344,20 @@ export function SettingsDialog({
         </div>
 
         <div className="wt-modal__footer">
+          {/*
+            保存按钮**只在有未保存改动时出现**：它一出现就是「你有东西没生效」这个信号，
+            比一个常驻的灰按钮更说明问题。没改动时点它也没有任何事可做。
+          */}
+          {dirty && (
+            <button
+              type="button"
+              className="wt-btn wt-btn--primary"
+              data-testid="settings-save"
+              onClick={handleSave}
+            >
+              保存
+            </button>
+          )}
           {/* 第二个关闭入口：标题栏那个 ✕ 是给「找关闭」的眼睛用的，这个是给读完设置的人用的 */}
           <button
             type="button"

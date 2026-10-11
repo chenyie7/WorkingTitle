@@ -415,10 +415,18 @@ describe('设置的持久化', () => {
     const saveSettings = vi.fn(async (_settings: AppSettings) => {})
     ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
     render(<App />)
+    // 【先让启动那一次设置读盘落地】它是异步的，而下面几步是同步点击。少了这一句，
+    // 启动读到默认值之后才 resolve，会把刚保存的文档名覆盖回「文档1」——
+    // 那是测试里的时序假象（真机上启动那一次 IPC 早于人能点开对话框），但假象一样会让
+    // 这条用例红在一个与它无关的地方。
+    await act(async () => {})
     importViaSettings()
     openSettings()
     fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '季度汇报' } })
-    fireEvent.blur(screen.getByTestId('doc-title-input'))
+    // 【必须点保存】失焦现在只归一化、不提交——文档名与阅读替换都归「手动保存」那一组
+    fireEvent.click(screen.getByTestId('settings-save'))
+    // 中间观测点：蓝条上那个名字变了就说明提交确实发生了（否则下面的失败会指向错误的层）
+    expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报')
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000)
     })

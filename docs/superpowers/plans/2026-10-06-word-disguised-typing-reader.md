@@ -5857,6 +5857,23 @@ body {
   border-color: #c4d9f5;
 }
 
+/*
+ * 「保存」是主按钮：真 Word 的对话框里确定键就是蓝底白字，与旁边的「关闭」拉开主次。
+ *
+ * 【必须排在上面那两条 `.wt-modal__footer .wt-btn` 之后】同特异度 (0,2,0) 靠源码顺序决胜，
+ * 上移的话底色会被上面那条吃掉。深色那侧另有一处同名排除，见下面 `:not(.wt-btn--primary)`。
+ */
+.wt-modal__footer .wt-btn--primary {
+  background: var(--wt-blue);
+  border-color: var(--wt-blue);
+  color: #fff;
+}
+
+.wt-modal__footer .wt-btn--primary:hover {
+  background: var(--wt-blue-dark);
+  border-color: var(--wt-blue-dark);
+}
+
 /* ================= 深色外观 =================
    这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
 /* 深色下**不**跟 --wt-titlebar（那是 #1f1f22）走：选中页签的底色与功能区同为 #202024，
@@ -5906,7 +5923,11 @@ body {
   background: #2a2a31;
 }
 
-[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
+/* 【`:not(.wt-btn--primary)` 与 `:not(.wt-btn--active)` 同理，不能省】这条链的特异度是
+   (0,5,0)（`[data-theme]` + `.wt-btn` + 三个 `:not()` 各自的简单选择器），压得过主按钮那条
+   (0,2,0)。少了这个 `:not`，深色下「保存」会被铺成灰底——蓝底白字正是它区别于「关闭」的地方。 */
+[data-theme='dark']
+  .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
   background: #2a2a31;
 }
 
@@ -10519,10 +10540,18 @@ describe('设置的持久化', () => {
     const saveSettings = vi.fn(async (_settings: AppSettings) => {})
     ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
     render(<App />)
+    // 【先让启动那一次设置读盘落地】它是异步的，而下面几步是同步点击。少了这一句，
+    // 启动读到默认值之后才 resolve，会把刚保存的文档名覆盖回「文档1」——
+    // 那是测试里的时序假象（真机上启动那一次 IPC 早于人能点开对话框），但假象一样会让
+    // 这条用例红在一个与它无关的地方。
+    await act(async () => {})
     importViaSettings()
     openSettings()
     fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '季度汇报' } })
-    fireEvent.blur(screen.getByTestId('doc-title-input'))
+    // 【必须点保存】失焦现在只归一化、不提交——文档名与阅读替换都归「手动保存」那一组
+    fireEvent.click(screen.getByTestId('settings-save'))
+    // 中间观测点：蓝条上那个名字变了就说明提交确实发生了（否则下面的失败会指向错误的层）
+    expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报')
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
@@ -11068,9 +11097,10 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 
 **Step 1: 写 `src/renderer/src/components/SettingsDialog.tsx`**
 ```tsx
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
 import {
@@ -11131,18 +11161,58 @@ export function SettingsDialog({
   onThemeSourceChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
-  const [ratioDraft, setRatioDraft] = useState(String(ratio))
-  const [titleDraft, setTitleDraft] = useState(docTitle)
 
-  // 比例在别处变了（会话恢复、其它入口）时把草稿跟回去
-  useEffect(() => {
-    setRatioDraft(String(ratio))
-  }, [ratio])
+  /**
+   * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
+   *
+   * 表里只有这两项：文档名与阅读替换。外观、纸张、输入模式刻意**不**进来，它们的效果是
+   * 当场看得见的（换个颜色、按一下就知道），要保存才生效会很别扭。
+   *
+   * 【两项底层是两条路】文档名是全局设置（App 状态 → 防抖写 `settings.json`），而比例跟着
+   * 书走（`engine.setRatio`，存在那本书的会话里）。对用户是同一个「保存」按钮，这正是把表
+   * 放在这里的理由：对话框不必知道背后是什么，它只调 `commit`。
+   */
+  const fields: DeferredField[] = useMemo(
+    () => [
+      {
+        id: 'doc-title',
+        committed: docTitle,
+        // 空名退回当前值：蓝条上留一片空白比留着上一个名字更扎眼
+        normalize: (raw, committed) => {
+          const trimmed = raw.trim()
+          return trimmed === '' ? committed : trimmed
+        },
+        commit: (value) => {
+          if (value !== docTitle) onDocTitleChange(value)
+        }
+      },
+      {
+        id: 'ratio',
+        committed: String(ratio),
+        // 解析不出数字就退回当前值，而不是留一个 NaN 草稿——那种草稿会让「保存」一直亮着
+        // 而点下去什么都不提交（用户会以为按钮坏了）
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
+        },
+        commit: (value) => setRatio(Number(value))
+      }
+    ],
+    [docTitle, ratio, onDocTitleChange, setRatio]
+  )
+  const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
-  // 每次打开都从当前文档名起稿：上次关掉时没提交的草稿不该留到下一次
+  // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
   useEffect(() => {
-    if (open) setTitleDraft(docTitle)
-  }, [open, docTitle])
+    if (open) reset()
+  }, [open, reset])
+
+  /** 保存：提交所有有改动的项，并给一条提示（不然点完没有任何反馈） */
+  const handleSave = (): void => {
+    if (!dirty) return
+    save()
+    notify('已保存')
+  }
 
   /**
    * Esc 关闭。
@@ -11181,25 +11251,6 @@ export function SettingsDialog({
     if (open) return
     document.querySelector<HTMLElement>('[data-testid="input-capture"]')?.focus({ preventScroll: true })
   }, [open])
-
-  const commitRatio = (raw: string): void => {
-    const parsed = Number.parseInt(raw, 10)
-    if (!Number.isFinite(parsed)) {
-      setRatioDraft(String(ratio))
-      return
-    }
-    const next = clampRatioInput(parsed)
-    setRatio(next)
-    setRatioDraft(String(next))
-    if (next !== parsed) notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${next}`)
-  }
-
-  const commitTitle = (): void => {
-    const next = titleDraft.trim()
-    // 空名不提交：蓝条上留一片空白比留着上一个名字更扎眼
-    if (next && next !== docTitle) onDocTitleChange(next)
-    else setTitleDraft(docTitle)
-  }
 
   if (!open) return null
 
@@ -11247,11 +11298,13 @@ export function SettingsDialog({
               // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
               // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
               autoFocus
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commitTitle}
+              value={drafts['doc-title'] ?? docTitle}
+              onChange={(e) => setDraft('doc-title', e.target.value)}
+              // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
+              onBlur={() => blur('doc-title')}
+              // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitTitle()
+                if (e.key === 'Enter') handleSave()
               }}
             />
           </div>
@@ -11268,11 +11321,20 @@ export function SettingsDialog({
                 data-testid="ratio-input"
                 aria-label="比例：输入 1 个字显示小说多少字"
                 inputMode="numeric"
-                value={ratioDraft}
-                onChange={(e) => setRatioDraft(e.target.value)}
-                onBlur={(e) => commitRatio(e.target.value)}
+                value={drafts['ratio'] ?? String(ratio)}
+                onChange={(e) => setDraft('ratio', e.target.value)}
+                onBlur={(e) => {
+                  const raw = e.currentTarget.value
+                  const after = blur('ratio')
+                  const parsed = Number.parseInt(raw, 10)
+                  // 夹紧只发生在归一化这一步，所以提示也留在这里（保留原有的语义：
+                  // 只有真的被夹紧了才提示，普通改个数字不该弹东西）
+                  if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
+                    notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+                  }
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitRatio(e.currentTarget.value)
+                  if (e.key === 'Enter') handleSave()
                 }}
               />
               <span className="wt-ratio__label">字</span>
@@ -11381,6 +11443,20 @@ export function SettingsDialog({
         </div>
 
         <div className="wt-modal__footer">
+          {/*
+            保存按钮**只在有未保存改动时出现**：它一出现就是「你有东西没生效」这个信号，
+            比一个常驻的灰按钮更说明问题。没改动时点它也没有任何事可做。
+          */}
+          {dirty && (
+            <button
+              type="button"
+              className="wt-btn wt-btn--primary"
+              data-testid="settings-save"
+              onClick={handleSave}
+            >
+              保存
+            </button>
+          )}
           {/* 第二个关闭入口：标题栏那个 ✕ 是给「找关闭」的眼睛用的，这个是给读完设置的人用的 */}
           <button
             type="button"
@@ -11400,6 +11476,7 @@ export function SettingsDialog({
 **Step 2: 写 `tests/unit/settings.test.tsx`**
 ```tsx
 import { describe, it, expect, vi } from 'vitest'
+import { useState } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
@@ -11449,6 +11526,49 @@ function setup(opts: SetupOptions = {}): {
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
+
+/**
+ * 会**回写**的壳：保存之后文档名 / 比例真的变了，`Ribbon` 收到的 props 跟着变。
+ *
+ * 【为什么不能复用上面的 `setup`】那个壳把 `docTitle` / `ratio` 写死成固定 prop，
+ * 于是提交之后「已提交值」永远不会变——草稿与它一比就永远算「有改动」，保存按钮不会消失。
+ * 拿它断言「保存后按钮消失」会假红。这条只有会回写的壳测得了。
+ */
+function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
+  onDocTitleChange: ReturnType<typeof vi.fn>
+  onRatioChange: ReturnType<typeof vi.fn>
+} {
+  const onDocTitleChange = vi.fn()
+  const onRatioChange = vi.fn()
+  function Harness() {
+    const [title, setTitle] = useState(init.docTitle ?? '文档1')
+    const [ratio, setRatio] = useState(init.ratio ?? 10)
+    return (
+      <ToolbarProvider
+        ratio={ratio}
+        onRatioChange={(n) => {
+          onRatioChange(n)
+          setRatio(n)
+        }}
+      >
+        <Ribbon
+          docTitle={title}
+          onDocTitleChange={(v) => {
+            onDocTitleChange(v)
+            setTitle(v)
+          }}
+          darkPaper={false}
+          onDarkPaperChange={vi.fn()}
+          themeSource="system"
+          onThemeSourceChange={vi.fn()}
+        />
+        <Toast />
+      </ToolbarProvider>
+    )
+  }
+  render(<Harness />)
+  return { onDocTitleChange, onRatioChange }
+}
 
 /** 走「文件」选项卡那个按钮——与快捷键是两条独立的路，两边都得能开 */
 function openViaButton(): void {
@@ -11546,25 +11666,35 @@ describe('真实功能收在对话框里', () => {
     expect(screen.queryByTestId('doc-title-input')).toBeNull()
   })
 
-  it('比例输入回车后回调夹紧后的值', () => {
+  it('比例输入回车后回调夹紧后的值（改动本身不生效，回车＝保存）', () => {
     const onRatioChange = vi.fn()
     setup({ ratio: 10, onRatioChange })
     openViaButton()
     const input = screen.getByTestId('ratio-input')
     fireEvent.change(input, { target: { value: '25' } })
+    // 先有改动、出保存按钮，但**还没有**生效
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRatioChange).toHaveBeenCalledWith(25)
   })
 
-  it('比例超出上限时夹紧到 500 并提示（提示压在遮罩之上，见 .wt-modal 的 z-index）', () => {
+  it('比例超出上限：失焦就夹紧并提示，回车保存夹紧后的值', () => {
     const onRatioChange = vi.fn()
     setup({ ratio: 10, onRatioChange })
     openViaButton()
-    const input = screen.getByTestId('ratio-input')
+    const input = screen.getByTestId('ratio-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '9999' } })
+    fireEvent.blur(input)
+    // 失焦只归一化：框里显示夹紧后的值、给一条提示，但**还没生效**
+    // （提示压在遮罩之上，见 .wt-modal 的 z-index）
+    expect(input.value).toBe('500')
+    expect(screen.getByTestId('toast').textContent).toContain('500')
+    expect(onRatioChange).not.toHaveBeenCalled()
+
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRatioChange).toHaveBeenCalledWith(500)
-    expect(screen.getByTestId('toast').textContent).toContain('500')
   })
 
   it('输入模式按钮真实切换并提示', () => {
@@ -11596,24 +11726,28 @@ describe('真实功能收在对话框里', () => {
 })
 
 describe('对话框里改文档名', () => {
-  it('回车提交，两侧空白去掉', () => {
+  it('文档名：回车＝保存，两侧空白去掉', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     expect(input.value).toBe('文档1')
 
     fireEvent.change(input, { target: { value: '  第 3 季度汇报  ' } })
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
   })
 
-  it('失焦也提交（鼠标用户点「关闭」时就是这样）', () => {
+  it('失焦只归一化，不提交——生效要等「保存」', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '会议纪要' } })
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
     fireEvent.blur(input)
-    expect(onChange).toHaveBeenCalledWith('会议纪要')
+    // 归一化只体现在框里；没有提交，但已经算「有改动」
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input.value).toBe('会议纪要')
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
   })
 
   it('空名不提交（蓝条不能变成一片空白）', () => {
@@ -11657,6 +11791,91 @@ describe('对话框里改文档名', () => {
 
     openViaButton()
     expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 「手动保存」这一组：文档名与阅读替换改了不立即生效，点保存才生效。
+ *
+ * 外观 / 纸张 / 输入模式刻意**不**在这一组里——它们的效果当场看得见（换个颜色、按一下就知道），
+ * 要保存才生效会很别扭。所以这里也顺带守住那条边界。
+ */
+describe('手动保存', () => {
+  it('没有改动时不出现保存按钮', () => {
+    setup({ ratio: 10, docTitle: '文档1' })
+    openViaButton()
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('改回原值之后保存按钮消失', () => {
+    setup({ docTitle: '文档1' })
+    openViaButton()
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '会议纪要' } })
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: '文档1' } })
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('点保存才生效，给一条提示，并且按钮随之消失', () => {
+    const { onDocTitleChange: onChange } = setupLive({ docTitle: '文档1' })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '会议纪要' } })
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onChange).toHaveBeenCalledWith('会议纪要')
+    expect(screen.getByTestId('toast').textContent).toContain('已保存')
+    // 保存之后没有未提交的改动了（这一条靠会回写的壳才测得出来，见 setupLive）
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('两项各有改动时，一次保存把它们一起提交', () => {
+    const { onDocTitleChange, onRatioChange } = setupLive({ docTitle: '文档1', ratio: 10 })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '会议纪要' } })
+    fireEvent.change(screen.getByTestId('ratio-input'), { target: { value: '25' } })
+    expect(onDocTitleChange).not.toHaveBeenCalled()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onDocTitleChange).toHaveBeenCalledWith('会议纪要')
+    expect(onRatioChange).toHaveBeenCalledWith(25)
+  })
+
+  it('外观与纸张不在这组里：点一下就生效，不经过保存', () => {
+    const { onThemeSourceChange, onDarkPaperChange } = setup({
+      themeSource: 'system',
+      darkPaper: false
+    })
+    openViaButton()
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('theme-dark'))
+    fireEvent.click(screen.getByTestId('dark-paper'))
+
+    // 两项都是即时回调（不经过保存）……
+    expect(onThemeSourceChange).toHaveBeenCalledWith('dark')
+    expect(onDarkPaperChange).toHaveBeenCalledWith(true)
+    // ……所以它们不会让「有未保存的改动」为真，保存按钮不该被它们点亮
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '不该生效' } })
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('settings-close-footer'))
+    expect(onChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+    expect(screen.queryByTestId('settings-save')).toBeNull()
   })
 })
 
@@ -12500,4 +12719,250 @@ export function useThemePreference(source: ThemeSource): void {
     <rect x="452" y="526" width="22" height="40" rx="7" fill="#ffb900" />
   </g>
 </svg>
+```
+
+
+---
+
+## Task 20: 设置的手动保存（草稿机制）
+
+> **本节是本计划写完之后补入的。** 原有的 Task 1–19 记录的是最初那一轮实现；后来给设置
+> 对话框加「保存」按钮时新增了两个文件（一层可复用的草稿机制 + 它的用例）。按硬约定 1，
+> 每个源/测试文件都要在这里有逐字节副本，所以补在文末而不是插回历史里。
+
+**为什么要有这一层**：设置项将来会变多，而「哪些项要手动保存」应该是一张**表**，不是散在
+JSX 里的几个 `useState`。加一项的成本是往表里加一行——不用碰「有没有改动」的算法、不用碰
+保存按钮的显隐、也不用碰对话框的关闭语义（草稿是对话框的局部状态，一关就丢）。
+
+现阶段表里只有两项（文档名、阅读替换）；外观 / 纸张 / 输入模式刻意不进去，它们的效果是
+当场看得见的。
+
+```ts
+import { useCallback, useRef, useState } from 'react'
+
+/**
+ * 「手动保存」的那一组设置项：草稿留在这里，生效在点「保存」那一刻。
+ *
+ * 【为什么要单独一个模块】设置项将来会变多，而「哪些项要手动保存」这件事应该是一张表，
+ * 不是散在 JSX 里的几个 useState。加一项的成本是往表里加一行：不用碰「有没有改动」的
+ * 算法、不用碰保存按钮的显隐、也不用碰对话框的关闭语义（草稿本来就是对话框的局部状态，
+ * 一关就丢）。
+ *
+ * 【为什么草稿统一是字符串】这些项在界面上都是输入框，而输入框里本来就是字符串；
+ * 归一化（去空白、夹紧）与解析各自在 `normalize` / `commit` 里做。统一成字符串省掉了
+ * 「草稿的类型跟着字段走」那一层泛型，代价只是比例在提交时 `Number(...)` 一下。
+ */
+export interface DeferredField {
+  /** 也是 data-testid 的一部分：输入框就叫 `${id}-input` */
+  id: string
+  /** 已经生效的值（字符串形式）。「有没有改动」是拿草稿跟它比出来的 */
+  committed: string
+  /**
+   * 失焦时把草稿归一化——**不提交**。归一化只是让框里显示的东西合法
+   * （去掉两侧空白、把超出范围的比例夹回区间）。
+   *
+   * 第二个参数是当前的 `committed`：归一化不出合法值时要退回它，而不是留下一个空的或
+   * NaN 的草稿——那种草稿会让「保存」按钮一直亮着，而点下去什么都不提交（用户会以为坏了）。
+   */
+  normalize: (raw: string, committed: string) => string
+  /** 点「保存」时才调用；只对**有改动**的项调 */
+  commit: (value: string) => void
+}
+
+export interface DeferredSettings {
+  /** 各字段的当前草稿，键是 `id` */
+  drafts: Record<string, string>
+  setDraft: (id: string, raw: string) => void
+  /** 失焦：归一化这一项，返回归一化后的值（调用方据此决定要不要给提示） */
+  blur: (id: string) => string
+  /** 有没有未保存的改动 */
+  dirty: boolean
+  /** 提交所有有改动的项 */
+  save: () => void
+  /** 把草稿全部拉回已提交值（打开对话框时用） */
+  reset: () => void
+}
+
+export function useDeferredSettings(fields: DeferredField[]): DeferredSettings {
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((f) => [f.id, f.committed]))
+  )
+
+  /**
+   * 表挂在一个 ref 上，让 `blur` / `save` / `reset` 的身份不随每次渲染变。
+   *
+   * 【为什么不能直接用 `fields`】那张表每次渲染都是新数组（它闭包着 `docTitle` / `ratio`），
+   * 于是这三个回调每次渲染都换身份；而对话框里 `useEffect(…, [open, reset])` 要靠 `reset`
+   * 的稳定身份才只在「打开」那一下跑——身份一变就成了每次渲染都重置草稿，用户打一个字就被
+   * 拉回去。渲染期写 ref 是本仓库既有的写法（`App.tsx` 的 `engineRef.current = engine`）。
+   */
+  const fieldsRef = useRef(fields)
+  fieldsRef.current = fields
+
+  const setDraft = useCallback((id: string, raw: string): void => {
+    setDrafts((prev) => ({ ...prev, [id]: raw }))
+  }, [])
+
+  const blur = useCallback((id: string): string => {
+    const field = fieldsRef.current.find((f) => f.id === id)
+    if (!field) return ''
+    const normalized = field.normalize(drafts[id] ?? field.committed, field.committed)
+    setDrafts((prev) => ({ ...prev, [id]: normalized }))
+    return normalized
+  }, [drafts])
+
+  const dirty = fields.some((f) => (drafts[f.id] ?? f.committed) !== f.committed)
+
+  const save = useCallback((): void => {
+    const normalized: Record<string, string> = { ...drafts }
+    for (const f of fieldsRef.current) {
+      // 【提交前先归一化，不能直接提交草稿】草稿是框里的原文，而失焦不是必经之路：
+      // 在框里直接按回车（Enter＝保存）时它根本没被归一化过——两侧空白、空名、超范围的
+      // 比例都会原样漏进已提交值里。点保存按钮的情况同理（浏览器会先失焦，但那是巧合，
+      // 不是这里能依赖的性质）。
+      const value = f.normalize(drafts[f.id] ?? f.committed, f.committed)
+      normalized[f.id] = value
+      if (value !== f.committed) f.commit(value)
+    }
+    // 草稿也要跟着归一化：否则框里留着原文、已提交值是归一化后的，两者一比永远算「有改动」，
+    // 保存按钮点完还亮着。注意这里写的是**归一化后的值**而不是「拉回 committed」——
+    // 后者会在 commit 被拒时把用户刚打的字吃掉，看起来像按钮坏了。
+    setDrafts(normalized)
+  }, [drafts])
+
+  const reset = useCallback((): void => {
+    setDrafts(Object.fromEntries(fieldsRef.current.map((f) => [f.id, f.committed])))
+  }, [])
+
+  return { drafts, setDraft, blur, dirty, save, reset }
+}
+```
+
+```ts
+import { describe, it, expect, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import {
+  useDeferredSettings,
+  type DeferredField
+} from '../../src/renderer/src/state/deferredSettings'
+
+/**
+ * 这一层是「手动保存」的通用机制，具体设置项只是往表里加行——所以它自己要有用例。
+ * 这里刻意用两个假字段（一个去空白、一个夹紧），而不是拿文档名 / 比例来测：测的是机制，
+ * 混进真实业务规则会让「机制坏了」和「那一项的 normalize 写错了」分不开。
+ */
+function makeFields(commitA = vi.fn(), commitB = vi.fn()): DeferredField[] {
+  return [
+    {
+      id: 'a',
+      committed: 'A',
+      // 空 → 退回已提交值（不能留一个空草稿让「保存」永远亮着）
+      normalize: (raw, committed) => {
+        const trimmed = raw.trim()
+        return trimmed === '' ? committed : trimmed
+      },
+      commit: commitA
+    },
+    {
+      id: 'b',
+      committed: '10',
+      // 解析不出数字 → 退回已提交值；否则夹到 1–500
+      normalize: (raw, committed) => {
+        const parsed = Number.parseInt(raw, 10)
+        return Number.isFinite(parsed) ? String(Math.min(500, Math.max(1, parsed))) : committed
+      },
+      commit: commitB
+    }
+  ]
+}
+
+describe('useDeferredSettings', () => {
+  it('初始草稿等于已提交值，没有改动', () => {
+    const { result } = renderHook(() => useDeferredSettings(makeFields()))
+    expect(result.current.drafts).toEqual({ a: 'A', b: '10' })
+    expect(result.current.dirty).toBe(false)
+  })
+
+  it('改草稿算改动，改回原值就不算了', () => {
+    const { result } = renderHook(() => useDeferredSettings(makeFields()))
+    act(() => result.current.setDraft('a', 'A2'))
+    expect(result.current.dirty).toBe(true)
+
+    act(() => result.current.setDraft('a', 'A'))
+    expect(result.current.dirty).toBe(false)
+  })
+
+  it('失焦只归一化，不提交', () => {
+    const commitA = vi.fn()
+    const { result } = renderHook(() => useDeferredSettings(makeFields(commitA)))
+    act(() => result.current.setDraft('a', '  A2  '))
+    let returned = ''
+    act(() => {
+      returned = result.current.blur('a')
+    })
+    expect(returned).toBe('A2')
+    expect(result.current.drafts.a).toBe('A2')
+    expect(commitA).not.toHaveBeenCalled()
+  })
+
+  it('归一化不出合法值时就退回已提交值（不留空草稿 / NaN 草稿）', () => {
+    const { result } = renderHook(() => useDeferredSettings(makeFields()))
+    act(() => result.current.setDraft('a', '   '))
+    act(() => result.current.blur('a'))
+    expect(result.current.drafts.a).toBe('A')
+
+    act(() => result.current.setDraft('b', 'abc'))
+    act(() => result.current.blur('b'))
+    expect(result.current.drafts.b).toBe('10')
+    // 两条都退回了原值 ⇒ 一个字的改动都没剩下，按钮不该亮
+    expect(result.current.dirty).toBe(false)
+  })
+
+  it('save 只提交有改动的项', () => {
+    const commitA = vi.fn()
+    const commitB = vi.fn()
+    const { result } = renderHook(() => useDeferredSettings(makeFields(commitA, commitB)))
+    act(() => result.current.setDraft('a', 'A2'))
+    act(() => result.current.save())
+    expect(commitA).toHaveBeenCalledWith('A2')
+    expect(commitB).not.toHaveBeenCalled()
+  })
+
+  it('save 提交的是归一化后的值，而不是框里的原文', () => {
+    const commitA = vi.fn()
+    const commitB = vi.fn()
+    const { result } = renderHook(() => useDeferredSettings(makeFields(commitA, commitB)))
+    // 【这条是真踩到过的】没失焦直接按回车时草稿是原文，原样提交会把两侧空白带进已提交值
+    act(() => result.current.setDraft('a', '  A2  '))
+    act(() => result.current.setDraft('b', '9999'))
+    act(() => result.current.save())
+    expect(commitA).toHaveBeenCalledWith('A2')
+    expect(commitB).toHaveBeenCalledWith('500')
+  })
+
+  it('save 之后草稿跟着归一化，于是不再算有改动', () => {
+    const { result } = renderHook(() => useDeferredSettings(makeFields()))
+    act(() => result.current.setDraft('a', '  A2  '))
+    expect(result.current.dirty).toBe(true)
+
+    act(() => result.current.save())
+
+    // 草稿是归一化后的值（不是拉回旧值——那会在提交被拒时把用户刚打的字吃掉）
+    expect(result.current.drafts.a).toBe('A2')
+    // 这里没有会回写 committed 的外层，所以 dirty 仍为真；真正让它转假的是外层更新后的
+    // committed。这条只钉「草稿被归一化了」，其余的由 settings.test.tsx 的会回写壳守。
+  })
+
+  it('reset 把草稿全部拉回已提交值', () => {
+    const { result } = renderHook(() => useDeferredSettings(makeFields()))
+    act(() => result.current.setDraft('a', 'A2'))
+    act(() => result.current.setDraft('b', '25'))
+    expect(result.current.dirty).toBe(true)
+
+    act(() => result.current.reset())
+
+    expect(result.current.drafts).toEqual({ a: 'A', b: '10' })
+    expect(result.current.dirty).toBe(false)
+  })
+})
 ```

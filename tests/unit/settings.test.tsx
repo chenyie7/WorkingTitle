@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { useState } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
@@ -48,6 +49,49 @@ function setup(opts: SetupOptions = {}): {
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
+
+/**
+ * 会**回写**的壳：保存之后文档名 / 比例真的变了，`Ribbon` 收到的 props 跟着变。
+ *
+ * 【为什么不能复用上面的 `setup`】那个壳把 `docTitle` / `ratio` 写死成固定 prop，
+ * 于是提交之后「已提交值」永远不会变——草稿与它一比就永远算「有改动」，保存按钮不会消失。
+ * 拿它断言「保存后按钮消失」会假红。这条只有会回写的壳测得了。
+ */
+function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
+  onDocTitleChange: ReturnType<typeof vi.fn>
+  onRatioChange: ReturnType<typeof vi.fn>
+} {
+  const onDocTitleChange = vi.fn()
+  const onRatioChange = vi.fn()
+  function Harness() {
+    const [title, setTitle] = useState(init.docTitle ?? '文档1')
+    const [ratio, setRatio] = useState(init.ratio ?? 10)
+    return (
+      <ToolbarProvider
+        ratio={ratio}
+        onRatioChange={(n) => {
+          onRatioChange(n)
+          setRatio(n)
+        }}
+      >
+        <Ribbon
+          docTitle={title}
+          onDocTitleChange={(v) => {
+            onDocTitleChange(v)
+            setTitle(v)
+          }}
+          darkPaper={false}
+          onDarkPaperChange={vi.fn()}
+          themeSource="system"
+          onThemeSourceChange={vi.fn()}
+        />
+        <Toast />
+      </ToolbarProvider>
+    )
+  }
+  render(<Harness />)
+  return { onDocTitleChange, onRatioChange }
+}
 
 /** 走「文件」选项卡那个按钮——与快捷键是两条独立的路，两边都得能开 */
 function openViaButton(): void {
@@ -145,25 +189,35 @@ describe('真实功能收在对话框里', () => {
     expect(screen.queryByTestId('doc-title-input')).toBeNull()
   })
 
-  it('比例输入回车后回调夹紧后的值', () => {
+  it('比例输入回车后回调夹紧后的值（改动本身不生效，回车＝保存）', () => {
     const onRatioChange = vi.fn()
     setup({ ratio: 10, onRatioChange })
     openViaButton()
     const input = screen.getByTestId('ratio-input')
     fireEvent.change(input, { target: { value: '25' } })
+    // 先有改动、出保存按钮，但**还没有**生效
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRatioChange).toHaveBeenCalledWith(25)
   })
 
-  it('比例超出上限时夹紧到 500 并提示（提示压在遮罩之上，见 .wt-modal 的 z-index）', () => {
+  it('比例超出上限：失焦就夹紧并提示，回车保存夹紧后的值', () => {
     const onRatioChange = vi.fn()
     setup({ ratio: 10, onRatioChange })
     openViaButton()
-    const input = screen.getByTestId('ratio-input')
+    const input = screen.getByTestId('ratio-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '9999' } })
+    fireEvent.blur(input)
+    // 失焦只归一化：框里显示夹紧后的值、给一条提示，但**还没生效**
+    // （提示压在遮罩之上，见 .wt-modal 的 z-index）
+    expect(input.value).toBe('500')
+    expect(screen.getByTestId('toast').textContent).toContain('500')
+    expect(onRatioChange).not.toHaveBeenCalled()
+
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRatioChange).toHaveBeenCalledWith(500)
-    expect(screen.getByTestId('toast').textContent).toContain('500')
   })
 
   it('输入模式按钮真实切换并提示', () => {
@@ -195,24 +249,28 @@ describe('真实功能收在对话框里', () => {
 })
 
 describe('对话框里改文档名', () => {
-  it('回车提交，两侧空白去掉', () => {
+  it('文档名：回车＝保存，两侧空白去掉', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     expect(input.value).toBe('文档1')
 
     fireEvent.change(input, { target: { value: '  第 3 季度汇报  ' } })
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith('第 3 季度汇报')
   })
 
-  it('失焦也提交（鼠标用户点「关闭」时就是这样）', () => {
+  it('失焦只归一化，不提交——生效要等「保存」', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
-    const input = screen.getByTestId('doc-title-input')
-    fireEvent.change(input, { target: { value: '会议纪要' } })
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '  会议纪要  ' } })
     fireEvent.blur(input)
-    expect(onChange).toHaveBeenCalledWith('会议纪要')
+    // 归一化只体现在框里；没有提交，但已经算「有改动」
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input.value).toBe('会议纪要')
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
   })
 
   it('空名不提交（蓝条不能变成一片空白）', () => {
@@ -256,6 +314,91 @@ describe('对话框里改文档名', () => {
 
     openViaButton()
     expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 「手动保存」这一组：文档名与阅读替换改了不立即生效，点保存才生效。
+ *
+ * 外观 / 纸张 / 输入模式刻意**不**在这一组里——它们的效果当场看得见（换个颜色、按一下就知道），
+ * 要保存才生效会很别扭。所以这里也顺带守住那条边界。
+ */
+describe('手动保存', () => {
+  it('没有改动时不出现保存按钮', () => {
+    setup({ ratio: 10, docTitle: '文档1' })
+    openViaButton()
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('改回原值之后保存按钮消失', () => {
+    setup({ docTitle: '文档1' })
+    openViaButton()
+    const input = screen.getByTestId('doc-title-input')
+    fireEvent.change(input, { target: { value: '会议纪要' } })
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: '文档1' } })
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('点保存才生效，给一条提示，并且按钮随之消失', () => {
+    const { onDocTitleChange: onChange } = setupLive({ docTitle: '文档1' })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '会议纪要' } })
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onChange).toHaveBeenCalledWith('会议纪要')
+    expect(screen.getByTestId('toast').textContent).toContain('已保存')
+    // 保存之后没有未提交的改动了（这一条靠会回写的壳才测得出来，见 setupLive）
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('两项各有改动时，一次保存把它们一起提交', () => {
+    const { onDocTitleChange, onRatioChange } = setupLive({ docTitle: '文档1', ratio: 10 })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '会议纪要' } })
+    fireEvent.change(screen.getByTestId('ratio-input'), { target: { value: '25' } })
+    expect(onDocTitleChange).not.toHaveBeenCalled()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onDocTitleChange).toHaveBeenCalledWith('会议纪要')
+    expect(onRatioChange).toHaveBeenCalledWith(25)
+  })
+
+  it('外观与纸张不在这组里：点一下就生效，不经过保存', () => {
+    const { onThemeSourceChange, onDarkPaperChange } = setup({
+      themeSource: 'system',
+      darkPaper: false
+    })
+    openViaButton()
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('theme-dark'))
+    fireEvent.click(screen.getByTestId('dark-paper'))
+
+    // 两项都是即时回调（不经过保存）……
+    expect(onThemeSourceChange).toHaveBeenCalledWith('dark')
+    expect(onDarkPaperChange).toHaveBeenCalledWith(true)
+    // ……所以它们不会让「有未保存的改动」为真，保存按钮不该被它们点亮
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {
+    const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '不该生效' } })
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('settings-close-footer'))
+    expect(onChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+    expect(screen.queryByTestId('settings-save')).toBeNull()
   })
 })
 

@@ -580,6 +580,23 @@
   border-color: #c4d9f5;
 }
 
+/*
+ * 「保存」是主按钮：真 Word 的对话框里确定键就是蓝底白字，与旁边的「关闭」拉开主次。
+ *
+ * 【必须排在上面那两条 `.wt-modal__footer .wt-btn` 之后】同特异度 (0,2,0) 靠源码顺序决胜，
+ * 上移的话底色会被上面那条吃掉。深色那侧另有一处同名排除，见下面 `:not(.wt-btn--primary)`。
+ */
+.wt-modal__footer .wt-btn--primary {
+  background: var(--wt-blue);
+  border-color: var(--wt-blue);
+  color: #fff;
+}
+
+.wt-modal__footer .wt-btn--primary:hover {
+  background: var(--wt-blue-dark);
+  border-color: var(--wt-blue-dark);
+}
+
 /* ================= 深色外观 =================
    这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
 /* 深色下**不**跟 --wt-titlebar（那是 #1f1f22）走：选中页签的底色与功能区同为 #202024，
@@ -629,7 +646,11 @@
   background: #2a2a31;
 }
 
-[data-theme='dark'] .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
+/* 【`:not(.wt-btn--primary)` 与 `:not(.wt-btn--active)` 同理，不能省】这条链的特异度是
+   (0,5,0)（`[data-theme]` + `.wt-btn` + 三个 `:not()` 各自的简单选择器），压得过主按钮那条
+   (0,2,0)。少了这个 `:not`，深色下「保存」会被铺成灰底——蓝底白字正是它区别于「关闭」的地方。 */
+[data-theme='dark']
+  .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
   background: #2a2a31;
 }
 
