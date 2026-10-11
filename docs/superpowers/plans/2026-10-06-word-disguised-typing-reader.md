@@ -9877,6 +9877,9 @@ export default function App() {
       // 目标文件可能打不开（已删除、权限、EISDIR、解不出编码……）。没有这个 try 的话错误会
       // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。catch 里刻意
       // 不做别的：失败就停在空状态，用户至少还能看到界面并重新导入。
+      // 两条都真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里
+      // 留着上次会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」。
+      // 注意这条**单测里是零覆盖**——把整个 try/catch 删掉，渲染层用例全绿。
       try {
         const loaded = await api.openNovelPath(target)
         if (cancelled) return
