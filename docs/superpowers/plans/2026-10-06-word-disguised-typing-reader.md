@@ -6307,11 +6307,8 @@ const CLIPBOARD_GROUP: ToolbarGroup = {
   label: '剪贴板',
   items: [
     // 数组顺序就是排布顺序。组内按【两行、按列填充】排（见 ribbon.css 的 `.wt-group__body`），
-    // 于是这四项落成「粘贴(大) | 剪切 / 复制 | 格式刷(大)」——大按钮占满整列。
-    // 全是小按钮横排一溜的话，整组看起来像「一个大方块边上飘着几个小的」，实测被指出很奇怪。
-    { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
-    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
-    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
+    // 大按钮占满整列，于是这四项落成「格式刷(大) | 粘贴(大) | 剪切 / 复制」。
+    // 格式刷摆在粘贴左边是明确要求的；剪切/复制留在粘贴右侧（它们本来就是粘贴的下级动作）。
     {
       kind: 'placeholder',
       id: 'brush',
@@ -6319,7 +6316,10 @@ const CLIPBOARD_GROUP: ToolbarGroup = {
       title: '格式刷',
       icon: IconFormatPainter,
       large: true
-    }
+    },
+    { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
+    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy }
   ]
 }
 
