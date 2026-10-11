@@ -99,20 +99,19 @@ const STYLE_ENTRIES = ['正文', '标题 1', '标题 2', '标题 3', '无间隔'
 const CLIPBOARD_GROUP: ToolbarGroup = {
   label: '剪贴板',
   items: [
-    // 真 Word 的「粘贴」是带展开箭头的大按钮；这里没给 `split` 做大按钮尺寸（那要另写一套
-    // 箭头定位的样式），所以粘贴用大按钮，箭头留给下面几个真正需要它的地方。
+    // 数组顺序就是排布顺序。组内按【两行、按列填充】排（见 ribbon.css 的 `.wt-group__body`），
+    // 于是这四项落成「粘贴(大) | 剪切 / 复制 | 格式刷(大)」——大按钮占满整列。
+    // 全是小按钮横排一溜的话，整组看起来像「一个大方块边上飘着几个小的」，实测被指出很奇怪。
     { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
-    // 剩下三个排成两列**贴满粘贴那 64px**。横着排成一溜的话，整组看起来就是
-    // 「一个大方块边上飘着三个小的」——实测被一眼指出「太大、很奇怪」。
+    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
     {
-      kind: 'grid',
-      id: 'clipboard-actions',
-      columns: 2,
-      items: [
-        { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
-        { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
-        { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
-      ]
+      kind: 'placeholder',
+      id: 'brush',
+      label: '格式刷',
+      title: '格式刷',
+      icon: IconFormatPainter,
+      large: true
     }
   ]
 }

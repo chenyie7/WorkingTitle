@@ -40,16 +40,6 @@ export type ToolbarItem =
   | { kind: 'gallery'; id: string; title: string; entries: readonly string[] }
   /** 主按钮 + 右侧展开箭头（下划线 / 项目符号 / 编号）。主按钮是 toggle，箭头只弹提示。 */
   | { kind: 'split'; id: string; label: string; title: string; icon: FluentIcon }
-  /**
-   * 把一个组里的小按钮排成 `columns` 列。**存在的唯一理由是高度对齐**：
-   *
-   * 真 Word 的「剪贴板」组里，「粘贴」是大按钮（64px 高），而「剪切/复制/格式刷」是三个
-   * 小按钮——它们不是横着飘在旁边，而是排成两列**贴满那 64px**。少了这层，整组看起来就是
-   * 「一个大方块边上飘着三个小的」，实测被一眼指出「太大、很奇怪」。
-   *
-   * 所以这不是通用的栅格，是「让若干小按钮凑出与相邻大按钮同高的一块」。
-   */
-  | { kind: 'grid'; id: string; columns: number; items: ToolbarItem[] }
 
 export interface ToolbarGroup {
   label: string
@@ -263,12 +253,10 @@ export function Toolbar({
   const { toggles, toggle, notify } = useToolbar()
 
   /**
-   * 渲染一个「叶子」控件（不能再往下拆的那些）。
-   *
-   * 【为什么抽成函数】`grid` 里的每一项必须与直接摆在组里的一项走**同一套**渲染规则，
-   * 否则同一个按钮放进格子就换了样式。分开写两份迟早会漂移。
+   * 渲染一个控件。抽成函数只是因为它在两处被调用（组内、以及下面那份兜底）——
+   * 组内的两行排布是 CSS 的事，与这里无关，见 `ribbon.css` 的 `.wt-group__body`。
    */
-  const renderLeaf = (item: ToolbarItem): ReactNode => {
+  const renderItem = (item: ToolbarItem): ReactNode => {
     if (item.kind === 'settings') {
       return (
         <button
@@ -313,11 +301,6 @@ export function Toolbar({
       )
     }
 
-    if (item.kind === 'grid') {
-      // 只会从 renderItem 进来；写在这里是为了让类型收敛，不是一条真实路径。
-      return null
-    }
-
     const active = Boolean(toggles[item.id])
     const Icon = item.icon
     // 有图标、又不是大按钮 → 只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
@@ -341,20 +324,6 @@ export function Toolbar({
         {Icon ? <Icon filled={active} className="wt-btn__icon" /> : null}
         <span className="wt-btn__label">{item.label}</span>
       </button>
-    )
-  }
-
-  const renderItem = (item: ToolbarItem): ReactNode => {
-    if (item.kind !== 'grid') return renderLeaf(item)
-    return (
-      <div
-        key={item.id}
-        className="wt-grid"
-        data-testid={`grid-${item.id}`}
-        style={{ gridTemplateColumns: `repeat(${item.columns}, auto)` }}
-      >
-        {item.items.map(renderItem)}
-      </div>
     )
   }
 
