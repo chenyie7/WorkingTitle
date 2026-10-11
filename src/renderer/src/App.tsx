@@ -144,22 +144,30 @@ export default function App() {
       setLastSourcePath(settings.lastSourcePath)
       setSettingsLoaded(true)
 
-      const target = (await api.initialNovelPath()) ?? settings.lastSourcePath
-      if (!target || cancelled) return
+      // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
+      // 这个回退原先是由两段式启动天然给的（第一段的 catch 刻意不 return，落到第二段），
+      // 合并成一次之后必须显式写出来——否则「命令行指了一个打不开的文件」会直接落到空状态，
+      // 而磁盘上明明有一本上次读的书。去重是为了两处指向同一个路径时不要试两遍。
+      const initialPath = await api.initialNovelPath()
+      const targets = [initialPath, settings.lastSourcePath].filter(
+        (p, i, arr): p is string => typeof p === 'string' && p !== '' && arr.indexOf(p) === i
+      )
 
-      // 目标文件可能打不开（已删除、权限、EISDIR、解不出编码……）。没有这个 try 的话错误会
-      // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。catch 里刻意
-      // 不做别的：失败就停在空状态，用户至少还能看到界面并重新导入。
-      // 两条都真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里
-      // 留着上次会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」。
-      // 注意这条**单测里是零覆盖**——把整个 try/catch 删掉，渲染层用例全绿。
-      try {
-        const loaded = await api.openNovelPath(target)
-        if (cancelled) return
-        // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
-        await openNovel(loaded)
-      } catch {
-        // 原文件已不可用：停在空状态，等用户重新导入
+      for (const target of targets) {
+        // 目标文件可能打不开（已删除、权限、EISDIR、解不出编码……）。没有这个 try 的话错误会
+        // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。
+        // 真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里留着上次
+        // 会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」——那正是上面
+        // 这条回退在起作用。注意这一整段**单测里是零覆盖**：把 try/catch 删掉，渲染层用例全绿。
+        try {
+          const loaded = await api.openNovelPath(target)
+          if (cancelled) return
+          // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
+          await openNovel(loaded)
+          return
+        } catch {
+          // 这个目标不可用，试下一个；都不可用就停在空状态，等用户重新导入
+        }
       }
     }
 
