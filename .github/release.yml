@@ -6,32 +6,30 @@
 # 生成出来的那段文字**怎么分组**。没有它照样能发 Release，只是所有 PR 会平铺成一列。
 #
 # 【分类依据是 PR 的标签，不是提交信息的前缀】所以：
-#   - 打标签之前，这份配置**等于没生效**，所有 PR 会全部落进最后那条 `'*'` 兜底类；
-#   - `feat` / `fix` / `docs` / `chore` / `ci` / `skip-changelog` 这几个标签
-#     得先在仓库里**建出来**（Settings → Labels，或 `gh label create`），
-#     否则给 PR 打不上。
+#   - **每个 PR 得打上标签**，不然它会落进最后那条 `'*'` 兜底类；
+#   - 下面用的 `enhancement` / `bug` / `documentation` 是 **GitHub 自带的默认标签**，
+#     仓库里本来就有，不需要新建。刻意不去自造 `feat`/`fix` 那套——为了对齐提交信息的
+#     前缀而新建一批标签，收益不抵多一套要维护的东西。
 #
 # 【兜底那条必须在最后】GitHub 按顺序匹配，把 `'*'` 放前面会把后面几类全吃掉。
 
 changelog:
   exclude:
-    # 带这些标签的 PR 不进发布说明（内部改动、依赖升级这类对用户没意义的）
+    # 想让某个 PR 不进发布说明（纯内部改动、依赖升级），给它打上这个标签即可。
+    # **这个标签还没建**，要用先跑：gh label create skip-changelog
+    # 建之前这一条是空转，不影响其它分类。
     labels:
       - skip-changelog
   categories:
     - title: 新功能
       labels:
-        - feat
+        - enhancement
     - title: 修复
       labels:
-        - fix
+        - bug
     - title: 文档
       labels:
-        - docs
-    - title: 构建与工具
-      labels:
-        - chore
-        - ci
+        - documentation
     - title: 其它改动
       labels:
         - '*'
