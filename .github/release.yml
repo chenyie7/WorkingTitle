@@ -5,31 +5,41 @@
 # `softprops/action-gh-release`。这个文件只决定 `generate_release_notes: true`
 # 生成出来的那段文字**怎么分组**。没有它照样能发 Release，只是所有 PR 会平铺成一列。
 #
-# 【分类依据是 PR 的标签，不是提交信息的前缀】所以：
-#   - **每个 PR 得打上标签**，不然它会落进最后那条 `'*'` 兜底类；
-#   - 下面用的 `enhancement` / `bug` / `documentation` 是 **GitHub 自带的默认标签**，
-#     仓库里本来就有，不需要新建。刻意不去自造 `feat`/`fix` 那套——为了对齐提交信息的
-#     前缀而新建一批标签，收益不抵多一套要维护的东西。
+# 【分类依据是 PR 的标签，不是提交信息的前缀】这是 GitHub 的功能限制，绕不过去。
+# 所以**每个 PR 都得打上标签**，不然它会落进最后那条 `'*'` 兜底类。
+#
+# 【标签名为什么用 feat/fix/docs 这套短的】本仓库的提交信息本来就是
+# Conventional Commits（`feat(ribbon): …` / `fix(ci): …` / `docs: …`），标签名与提交
+# 前缀一一对应之后，打标签就是照着提交开头抄一下，不用再记第二套词汇。
+# GitHub 自带的 `enhancement`/`bug`/`documentation` 也能用，但那样等于为了迁就工具
+# 再记一套同义词。
+#
+# 这几个标签**已经建好了**（`gh label list` 可查）。缺了的话配置不报错，只是空转。
 #
 # 【兜底那条必须在最后】GitHub 按顺序匹配，把 `'*'` 放前面会把后面几类全吃掉。
 
 changelog:
   exclude:
-    # 想让某个 PR 不进发布说明（纯内部改动、依赖升级），给它打上这个标签即可。
-    # **这个标签还没建**，要用先跑：gh label create skip-changelog
-    # 建之前这一条是空转，不影响其它分类。
+    # 想让某个 PR 不进发布说明（纯内部改动、依赖升级这类对用户没意义的），
+    # 给它打上这个标签即可。
     labels:
       - skip-changelog
   categories:
     - title: 新功能
       labels:
-        - enhancement
+        - feat
     - title: 修复
       labels:
-        - bug
+        - fix
     - title: 文档
       labels:
-        - documentation
+        - docs
+    - title: 内部改动
+      labels:
+        # 对用户不可见，但值得留个记录，免得看发布说明时以为漏了什么
+        - chore
+        - style
+        - refactor
     - title: 其它改动
       labels:
         - '*'
