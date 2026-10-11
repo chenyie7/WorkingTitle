@@ -1201,7 +1201,8 @@ export function Ribbon({
   darkPaper,
   onDarkPaperChange,
   themeSource,
-  onThemeSourceChange
+  onThemeSourceChange,
+  novelOpen
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -1209,6 +1210,8 @@ export function Ribbon({
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
+  novelOpen: boolean
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1268,6 +1271,7 @@ export function Ribbon({
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        novelOpen={novelOpen}
       />
     </div>
   )

@@ -14,6 +14,7 @@ function setup(): void {
         onDarkPaperChange={() => {}}
         themeSource="system"
         onThemeSourceChange={() => {}}
+        novelOpen={false}
       />
       <Toast />
     </ToolbarProvider>

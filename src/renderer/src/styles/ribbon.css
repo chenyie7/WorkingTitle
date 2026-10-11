@@ -419,6 +419,50 @@
   gap: 5px;
 }
 
+/* 「阅读替换」的两格（全局 / 当前书）：一行一个，竖着排。
+   横排的话两行说明文字会把这一行撑得很宽，而对话框的行是「标签 + 内容」两列。 */
+.wt-ratio-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 一格：输入框在前、说明文字在后（说明里带着「全局/当前书」与它的作用）。
+   竖着对齐而不是居中——两行的说明文字长度不同，居中会让两个输入框错开。 */
+.wt-ratio-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 两格的标签（全局 / 当前书）。定宽，让两行的输入框竖直对齐。 */
+.wt-ratio__caption {
+  width: 44px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--wt-text);
+}
+
+/* 跟在后面的一句小字（「新导入的书用它」/「未打开小说」）。 */
+.wt-ratio__note {
+  font-size: 11px;
+  color: var(--wt-text-muted);
+}
+
+/*
+ * 「当前书」那格在没打开小说时禁用：没有书就没有「当前书」。
+ *
+ * 【必须让它看得出来，而且光靠底色不够】`.wt-ratio__input` 本来就没设 background，
+ * 靠的是浏览器给输入框的默认白底；拿 `--wt-chrome`（#f7f7f8）当禁用底色，两者在浅色下
+ * 几乎一模一样——真机截图里根本分不出哪格是禁用的。所以这里叠一层半透明：
+ * 它在两种主题下都与可用态明显不同。 */
+.wt-ratio__input:disabled {
+  background: var(--wt-chrome);
+  color: var(--wt-text-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .wt-ratio__label {
   font-size: 11px;
   color: var(--wt-text-muted);

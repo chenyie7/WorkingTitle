@@ -156,7 +156,26 @@ function settingsProblem(v: unknown): string | null {
   if (s.lastSourcePath !== null && typeof s.lastSourcePath !== 'string') {
     return 'lastSourcePath 既不是 null 也不是字符串'
   }
+  const n = s.ratio
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 'ratio 不是有限数字'
   return null
+}
+
+/**
+ * 给**旧版**写下的设置补上后来才加的字段。
+ *
+ * 【为什么不能直接让它按必填校验失败】`ratio` 是后加的。旧版写下的 settings.json 里没有它，
+ * 而校验是「一个字段不合格就整份退回默认值」——那等于：升级一次，用户改过的文档名 / 外观 /
+ * 纸张**一起没了**，只在日志里留一条 warn。所以这里把「缺这个字段」单独识别出来补默认值，
+ * 其余字段仍然必填（写错了就是坏文件，照样整份退回）。
+ *
+ * 判据是「键不存在」而不是「值是 undefined」：后者在 JSON 里从来写不出来，
+ * 而前者正是旧版本留下的形状。
+ */
+function withRatioFilled(v: unknown): unknown {
+  if (typeof v !== 'object' || v === null) return v
+  if ('ratio' in v) return v
+  return { ...(v as Record<string, unknown>), ratio: defaultSettings().ratio }
 }
 
 function isAppSettings(v: unknown): v is AppSettings {
@@ -167,14 +186,16 @@ function readSettingsFile(path: string): AppSettings {
   try {
     if (!existsSync(path)) return defaultSettings()
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-    if (!isAppSettings(parsed)) {
+    // 先给旧版记录补上后来才加的字段，再按必填校验（见 withRatioFilled 的说明）
+    const filled = withRatioFilled(parsed)
+    if (!isAppSettings(filled)) {
       console.warn(
-        `[wt] 设置文件结构不合法（${settingsProblem(parsed) ?? '未知'}），按默认值处理：`,
+        `[wt] 设置文件结构不合法（${settingsProblem(filled) ?? '未知'}），按默认值处理：`,
         path
       )
       return defaultSettings()
     }
-    return parsed
+    return filled
   } catch (err) {
     console.warn('[wt] 读取设置失败，按默认值处理：', err)
     return defaultSettings()

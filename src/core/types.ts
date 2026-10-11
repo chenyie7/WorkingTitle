@@ -98,6 +98,15 @@ export interface AppSettings {
   darkPaper: boolean
   /** 上次打开的书；启动时用它决定恢复哪一本。从未导入过时为 null。 */
   lastSourcePath: string | null
+  /**
+   * **全局**的阅读替换比例：新导入的书用它当起点。范围与当前书那个一样是 1–500。
+   *
+   * 【与 `PersistedSession.ratio` 的分工】那一份是**当前书**的比例，也是真正生效的那个
+   * （引擎只认它）。这一份不是「覆盖值」，而是**导入时的初值**：一本书第一次被打开时取它，
+   * 之后各管各的——**改全局不影响已经打开过的书，只影响之后导入的**。
+   * 于是两者之间没有「跟随」这层状态，界面上两个普通输入框就够了。
+   */
+  ratio: number
 }
 
 /** 蓝条上那个文档名的默认值：刻意中性，不泄露在读什么。 */
@@ -114,6 +123,7 @@ export function defaultSettings(): AppSettings {
     docTitle: DEFAULT_DOC_TITLE,
     themeSource: 'system',
     darkPaper: false,
-    lastSourcePath: null
+    lastSourcePath: null,
+    ratio: DEFAULT_RATIO
   }
 }
