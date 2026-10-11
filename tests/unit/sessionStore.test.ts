@@ -482,7 +482,8 @@ describe('sessionStore 设置读写', () => {
       token: 'lastSourcePath 既不是 null 也不是字符串',
       mangle: (s) => ({ ...s, lastSourcePath: 42 })
     },
-    { name: '记录是 null', token: '不是一个对象', mangle: () => null }
+    { name: '记录是 null', token: '不是一个对象', mangle: () => null },
+    { name: '记录是裸数字', token: '不是一个对象', mangle: () => 42 }
   ]
 
   it.each(BAD_SETTINGS)('设置里的 $name → 按默认值处理，且警告点出该字段', ({ mangle, token }) => {
@@ -494,6 +495,11 @@ describe('sessionStore 设置读写', () => {
       lastSourcePath: null
     }
     const bad = mangle(good)
+    // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
+    // 这一条同时钉住 lastSourcePath 允许 null：默认值与「清除阅读记录」之后写回的都是 null，
+    // 而那两处若被误判成非法，症状是这个字段连着的四项设置一起回默认值。
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify(good), 'utf8')
+    expect(store.readSettings()).toEqual(good)
     writeFileSync(join(dir, 'settings.json'), JSON.stringify(bad), 'utf8')
     // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏文件」那一条
     expect(() => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).not.toThrow()
