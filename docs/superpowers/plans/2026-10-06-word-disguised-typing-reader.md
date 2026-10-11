@@ -10112,16 +10112,15 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
     }),
     clearSession: vi.fn(async () => {}),
     /**
-     * 【最后一项刻意不是 `defaultSettings()` 的那个 null】`lastSourcePath` 现在是启动恢复的唯一
-     * 线索：按书取进度之后，「读完哪本接着读」必须先知道是哪本。桩里让设置指向本用例这本，
-     * 就等于「用户上次打开的就是它」——那是真的 settings.json 在这本书读过之后的样子。
-     * 若留 null，启动就什么都不开（正合 `installApi(null)` 那条用例），而
-     * 「有会话时启动即恢复到上次位置」会红成 0 个字：它现在测的正是「设置指路 → 取那本的进度」。
+     * 【默认桩刻意不指任何书】`lastSourcePath` 是启动恢复的唯一线索，给成 null 就等于
+     * 「用户上次什么都没打开」——启动什么都不开。于是凡是要有书的用例**都必须自己走导入路径**
+     * （`importViaSettings()`），而那正是「导入小说」这条真实路径要被覆盖的地方：桩若指着本用例
+     * 这本书，书在测试体跑之前就已经由启动恢复加载好了，`importViaSettings()` 沦为装饰，
+     * 连 `handleImport` 里那句 `await openNovel(next)` 删掉都没人发现。
+     *
+     * 需要「设置指路 → 启动恢复」那一条路径的用例（目前只有一条）在自己的体内显式覆盖它。
      */
-    loadSettings: vi.fn(async () => ({
-      ...defaultSettings(),
-      lastSourcePath: novel?.sourcePath ?? null
-    })),
+    loadSettings: vi.fn(async () => defaultSettings()),
     saveSettings: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
@@ -10259,6 +10258,13 @@ describe('App 端到端（单测层）', () => {
       startedAt: null
     }
     installApi(novel, session)
+    // 【这条用例测的正是「启动恢复」那条路】设置指路 → 打开那本书 → 取它自己的进度，
+    // 全程不点导入。所以这里要显式把 `lastSourcePath` 指着这本书——那才是真的
+    // settings.json 在读这本书【之后】的样子（默认桩是 null，见 installApi 的说明）。
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel.sourcePath
+    }))
     render(<App />)
 
     await waitFor(() => expect(revealedChars()).toBe(15))
