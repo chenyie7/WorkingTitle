@@ -9,6 +9,8 @@ describe('IPC 契约', () => {
       loadSession: 'wt:load-session',
       saveSession: 'wt:save-session',
       clearSession: 'wt:clear-session',
+      loadSettings: 'wt:load-settings',
+      saveSettings: 'wt:save-settings',
       initialNovelPath: 'wt:initial-novel-path',
       menuCommand: 'wt:menu-command',
       getTheme: 'wt:get-theme',

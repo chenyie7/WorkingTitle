@@ -14,9 +14,11 @@ const api = {
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
-  loadSession: () => ipcRenderer.invoke(CH.loadSession),
+  loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
   saveSession: (session: unknown) => ipcRenderer.invoke(CH.saveSession, session),
   clearSession: () => ipcRenderer.invoke(CH.clearSession),
+  loadSettings: () => ipcRenderer.invoke(CH.loadSettings),
+  saveSettings: (settings: unknown) => ipcRenderer.invoke(CH.saveSettings, settings),
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
     const listener = (_e: unknown, cmd: string): void => cb(cmd)
     ipcRenderer.on(CH.menuCommand, listener)
