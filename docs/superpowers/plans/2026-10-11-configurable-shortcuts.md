@@ -765,9 +765,9 @@ import type { ShortcutId } from './shortcuts'
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
    * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
-   * 有六十多处调用点（写这句时实测 63；这个数随测试增长只多不少）。稀疏之后这两个函数的签名
-   * 一个都不用动，`core` 也不必去读 `process`
-   * （那是 node 的东西，而 core 要能被渲染进程共用）。
+   * 有六十多处调用点（写这句时实测 63 = `tests/` 下这两个名字的出现次数；这个数随测试
+   * 增长只多不少，别当成会停住的量）。稀疏之后这两个函数的签名一个都不用动，`core` 也不必
+   * 去读 `process`（那是 node 的东西，而 core 要能被渲染进程共用）。
    *
    * 【为什么值是规范串而不是 accelerator】`CmdOrCtrl+O` 把两个平台合并成一个记号，恰好
    * 表达不了「各平台不一样」。规范串（`Meta+KeyO` / `Ctrl+KeyO`）把 Meta 与 Ctrl 分开存，
