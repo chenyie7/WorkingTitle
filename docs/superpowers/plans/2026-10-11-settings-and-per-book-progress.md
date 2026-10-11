@@ -831,7 +831,9 @@ describe('旧版单槽会话的迁移', () => {
       store.migrateLegacySession()
       // 前提：这次写入确实失败了——否则下面那条「旧文件还在」可能只是因为已经迁移成功
       expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(false)
-      expect(String(spy.mock.calls[0][0])).toContain('迁移失败')
+      // 【不能看 calls[0]】writeSessionFile 自己那条「保存会话失败，本次进度未落盘：」
+      // 是同步先响的，迁移那条 warn 在它之后——`calls[0]` 必然不含这个令牌（实测红在这里）。
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
     } finally {
       spy.mockRestore()
     }
@@ -1436,6 +1438,13 @@ git commit -F /tmp/wt-msg.txt
 
 替换时按「旧内容的 md5」定位（改动前先记下每个文件的 md5），而不是按行号或锚点行——
 同一份代码在计划里可能出现多次，且有些块是**历史版本**（注定与当前文件不符，不要动它们）。
+
+**只同步 `2026-10-06` 那一份。** 本计划（`2026-10-11`）里的代码块是**指令、不是镜像**：
+实施过程中它们已经在若干处与最终源码不同（例如 `sessionStore.test.ts` 里那条 `.tmp` 断言、
+`writeSessionFile` 的返回类型），这是设计如此——本计划的正文只保证「照着做能得到正确结果」，
+逐字节镜像的角色由旧计划承担。别反过来去改本计划的代码块来迎合源码：那会把「当时要求做什么」
+这段历史抹掉。唯一例外是本计划里已经被实施者指出**写错了**的地方（例如那条 `calls[0]` 令牌），
+那类是可读性 bug，可以修。
 
 - [ ] **Step 2: 更新设计文档**
 
