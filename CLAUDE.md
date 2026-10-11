@@ -10,7 +10,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `build/icon.svg` 的图标）。但**蓝条上那个 `Word` 与窗口标题 `文档1 - Word` 是刻意的**——
 那是伪装本身，别"顺手统一"掉。
 
-仓库里的文档与代码注释**一律用中文**，新写的注释并入这个风格。
+仓库里的**代码注释、CLAUDE.md、spec/plan 这类开发文档一律用中文**，新写的并入这个风格。
+
+**但 README 是双语的，改的时候别只改一份**：
+
+| 文件 | 语言 | 谁在看 |
+|---|---|---|
+| `README.md` | **英文** | GitHub 首页与 Release 页面默认显示的就是它 |
+| `README.zh-CN.md` | 中文 | 从英文版顶部那行跳过去 |
+
+两份顶部互相跳转，**结构与标题一一对应**（同样的二级/三级标题、同样的顺序）。改一份就同步另一份——
+别看到 `README.md` 是英文就"顺手统一"成中文，那是刻意的布局（Vue / Vite 这些双语项目都是这个排法）。
 
 ## 命令
 
@@ -277,10 +287,33 @@ Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂
 没有配自动更新（`electron-builder.yml` 里没有 `publish` 段），所以 Release 只是给人下载用的；
 打包时 Electron 那边生成的那个 `latest-mac.yml` 用不上，也没被传上去。
 
+#### 发布说明怎么分组 —— 这步要人做
+
+`generate_release_notes: true` 生成的那段文字由 `.github/release.yml` 按 **PR 的标签**分组。
+按标签分组是 GitHub 的功能限制（它读不到提交信息的 `feat:` / `fix:` 前缀），**所以绕不过去**：
+
+**开 PR 时打上标签**，否则该 PR 会全部落进「其它改动」那一类。
+
+| 标签 | 归到哪一类 |
+|---|---|
+| `feat` | 新功能 |
+| `fix` | 修复 |
+| `docs` | 文档 |
+| `chore` / `style` / `refactor` | 内部改动 |
+| `skip-changelog` | **不进发布说明**（纯内部改动、依赖升级用） |
+
+这几个标签**已经建好了**（`gh label list` 可查）；漏建的话配置不报错，只是空转。
+标签名刻意与提交前缀一一对应，打标签时照着提交开头抄一下即可。
+
+嫌这一步烦的话，出路是换 release-please 那类**读提交前缀、不需要标签**的工具——但那是另一套
+机制（它还会自动开"发布 PR"），换之前先想清楚。
+
 ### 3. 提交
 
 - **`git add` 用显式路径，不要 `-A`。** 工作树里可能有别人的在途改动，以及未跟踪的用户素材 `books/`（一本 9MB 的真实小说，是测试语料，**不要入库**）。
+  - **提交前先 `git branch --show-current`。** 曾经在「以为还在分支上、其实已经被切到 main」的状态下提交过，`git add` 用的是显式路径却仍被暂存区里已有的东西带进去。光用显式路径不够。
 - **`git commit -F <消息文件>`，不要内联 `-m`。** 内联消息里的 ASCII 双引号会**静默截断**提交信息，而 diff/stat/测试看起来全对，评审看不出来。
+- **`docs/screenshot.png` 里含 `books/` 那本小说的真实内容**（书名、章节名、约 600 字正文）——它是拿那本书实拍出来的。这与 `books/` 不入库的理由（版权）是冲突的，**作者知情并决定保留**。重新生成截图时要意识到这一点，别在无意中把更多内容带进去。
 
 ### 4. `out/` 被 gitignore —— 陈旧构建对 `git status` 完全隐形
 
@@ -304,6 +337,18 @@ merge-base 算 diff，**整个项目都会显示成新增**（PR 页面没法看
 清陈旧分支：`git push origin --delete <b1> <b2>` + `git branch -D <b1> <b2> <b3>`。
 判据与 `out/` 那类一样是**正向**的——先确认「分支有、main 没有的文件」为空
 （`git diff --diff-filter=D --name-only origin/<branch> origin/main`），再删。
+
+**main 上有一个 ruleset，但它可能"配了但没生效"**——`enforcement` 字段是 `disabled` 的话等于没配：
+
+```bash
+gh api repos/chenyie7/WorkingTitle/rulesets --jq '.[] | {name, enforcement}'   # 看状态
+gh api repos/chenyie7/WorkingTitle/rulesets/<id> --jq '.rules[].type'          # 看规则
+```
+
+配置本身是：禁止删除 main、禁止强推、必须走 PR（`required_approving_review_count: 0`——单人仓库
+设成 1 会把自己锁死，GitHub 不允许你批准自己的 PR）、无人豁免。生效之后**直接 `git push origin main`
+会被拒**，所有改动都得走 PR。改 `enforcement` 只需在网页上 ruleset 页把 Enforcement status 切成
+Active，或 `gh api -X PUT repos/chenyie7/WorkingTitle/rulesets/<id> -f enforcement=active`。
 
 ## 测试
 
