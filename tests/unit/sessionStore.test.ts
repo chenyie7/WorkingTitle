@@ -47,7 +47,7 @@ const SRC = '/tmp/测试书.txt'
  *
  * 【为什么测试自己算一遍 sha256 而不是从实现里 import】判据要独立：把实现里的算法换掉
  * （比如换成 base64），这些用例必须跟着红，而不是跟着实现一起漂。仓库里已有的会话路径
- * 断言（clearAll 那条）也是这个姿势。
+ * 断言（clearReadingHistory 那条）也是这个姿势。
  */
 function sessionFile(dir: string, sourcePath: string): string {
   const key = createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)
@@ -250,15 +250,20 @@ describe('sessionStore 会话读写', () => {
       lastSourcePath: '/tmp/A.txt'
     })
     // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
-    // 不存在」——无论 clearReadingHistory 做什么都会通过（实测：把删除列表写成空的，全量仍全绿）。
+    // 不存在」——无论 clearReadingHistory 做什么都会通过。
     expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(true)
     expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
     expect(existsSync(join(dir, 'settings.json'))).toBe(true)
-    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
+    // 旧版留下的单槽会话文件（没有 Task 5 的迁移时它就在那儿）：「清除阅读记录」应当把它清掉。
     writeFileSync(join(dir, 'session.json'), '{"novelTitle":"旧版残留', 'utf8')
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    // 模拟崩溃留在磁盘上的临时文件（写了一半就死掉的那份）：「清除阅读记录」应当把它一起清掉。
+    // 少了下面这一行，删除列表里 `${legacySessionPath}.tmp` 那一项就是**没有任何用例观测**的——
+    // 把它删掉不会有断言变红。
+    writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
 
     store.clearReadingHistory()
 
@@ -269,6 +274,7 @@ describe('sessionStore 会话读写', () => {
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
     expect(existsSync(join(dir, 'session.json'))).toBe(false)
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
     // 设置不在此列：它是用户的偏好，与「读到哪」无关
     expect(store.readSettings()).toEqual({
       docTitle: '季度汇报',
