@@ -765,7 +765,8 @@ import type { ShortcutId } from './shortcuts'
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
    * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
-   * 有 55 处调用点。稀疏之后这两个函数的签名一个都不用动，`core` 也不必去读 `process`
+   * 有六十多处调用点（写这句时实测 63；这个数随测试增长只多不少）。稀疏之后这两个函数的签名
+   * 一个都不用动，`core` 也不必去读 `process`
    * （那是 node 的东西，而 core 要能被渲染进程共用）。
    *
    * 【为什么值是规范串而不是 accelerator】`CmdOrCtrl+O` 把两个平台合并成一个记号，恰好
@@ -881,7 +882,7 @@ function isShortcutId(id: string): id is ShortcutId {
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `pnpm vitest run tests/unit/sessionStore.test.ts`
-Expected: PASS，含新加的 6 条
+Expected: PASS，含新加的 7 条
 
 - [ ] **Step 7: 跑全量门禁**
 
