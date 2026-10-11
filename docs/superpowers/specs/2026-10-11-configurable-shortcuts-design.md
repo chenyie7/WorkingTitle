@@ -56,12 +56,16 @@ export interface ShortcutDef {
 
 - `SHORTCUTS: readonly ShortcutDef[]` —— 唯一的事实来源。加一条快捷键就是加一行
 - `platformKind(raw)` → 把 `process.platform` 的原值收敛成 `'darwin' | 'other'`
-- `defaultShortcuts(kind: PlatformKind)` → 该平台的完整表
-- `parseShortcut(spec)` → 解析结果或 `null`
+- `defaultShortcut(id, kind)` → 某一条在该平台的默认值（设置界面那个 ↺ 用它）
+- `resolveShortcuts(raw, kind)` → 稀疏表 → 完整表。**这就是「该平台的完整表」**，空表传进去即可
+- `parseShortcut(spec)` / `normalizeSpec(spec)` → 解析结果或 `null`
 - `fromChord(chord: KeyChord)` → 规范串或 `null`（录制用）
-- `formatShortcut(spec, platform)` → `⌘O` / `Ctrl+O`
+- `shortcutProblem(spec, kind)` → `'no-modifier' | 'unsupported-key' | 'reserved' | null`
+- `formatShortcut(spec, kind)` → `⌘O` / `Ctrl+O`
 - `toAccelerator(spec)` → `Cmd+O`
 - `findConflict(table, spec, exceptId)` → 撞到的另一条 `ShortcutId` 或 `null`
+
+【为什么不设一个 `defaultShortcuts(kind)`】它等于 `resolveShortcuts({}, kind)`，而那正是「一张空表」这个最常见输入的自然用法。多一个只转发一层的函数，只会让读代码的人多问一次「这两个有什么区别」。
 
 **纯净性约束（不能破）**：`tsconfig.node.json` 的 `lib` 是 `["ES2023"]`（没有 DOM），而 `core` 在它的 include 里。所以 `fromChord` **不能收 `KeyboardEvent`**，只吃一个裸字段结构：
 
@@ -147,11 +151,22 @@ shortcuts: Partial<Record<ShortcutId, string>>
 
 - **必须带修饰键。** 这个应用每一次裸按键都是有意义的，录成裸 `O` 等于把打字吃掉。拒绝。
 - **应用内撞车** → 拒绝，提示撞的是哪一条（用 `ShortcutDef.label`）。
-- **macOS 保留清单** → 硬拦 ⌘Q / ⇧⌘Q / ⌘W / ⌘M / ⌘H / ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z。前九个是 `menu.ts` 里 role 正在用的键（抢过来会废掉退出 / 关闭窗口 / 复制粘贴），**⇧⌘Q 是系统的「退出登录」**——它不在我们的菜单里，但同样会被应用级 accelerator 顶掉。
+- **macOS 保留清单** → 硬拦 ⌘Q / ⇧⌘Q / ⌘W / ⌘M / ⌘H / ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z。分两类：
+  - **本应用菜单里 role 正在用的八个**：⌘Q 退出 / ⌘W 关闭 / ⌘H 隐藏 / ⌘X 剪切 / ⌘C 复制 / ⌘V 粘贴 / ⌘A 全选 / ⌘Z 撤销。（实测 `menu.ts` 只绑了这八个 role——**没有 `minimize`**，所以 ⌘M 不在此列）
+  - **macOS 系统的两个**：⇧⌘Q 退出登录、⌘M 最小化。它们**不在**我们的菜单里，但应用级 accelerator 一样会把系统约定顶掉。
   - 这张清单**录制时和读盘时都要过**：手工改过 `settings.json` 的人照样塞得进来，只在录制端拦等于没拦。
   - 【刻意没做的一件事】菜单里其它 role 的键（⌘R / ⌥⌘I / ⌘0 / ⌃⌘F …）按同样的理由也算「被占」，但**没进清单**——那等于问「清单要不要从菜单模板推导出来」，是另一个决定。现在收的是「丢掉了最难受」的那几个。
 - **Windows 不设保留清单**：那里没有菜单，Ctrl+C/V/X/A/Z 由 Chromium 对可编辑元素自理，而本应用的可编辑元素只有设置里的几个输入框。
-- **磁盘上读到解析不了的串** → 该条退回该平台默认值 + `console.warn`。**不整份退回**——设置项是可再生的，没必要因为一条快捷键写坏而丢掉文档名。姿态与 `settingsProblem` 一致（说出是哪个字段）。
+- **磁盘上读到的串不合法时分两种情况，判据是「这层拿不拿得到平台」**：
+
+  | 情况 | 谁判 | 结果 |
+  |---|---|---|
+  | 结构不合法（解析不了 / 没带修饰键） | `sessionStore.settingsProblem` | **整份退回默认值**，与其它所有字段姿态一致（见 §5） |
+  | 平台不允许（macOS 保留键） | `core.resolveShortcuts` | **该条**退回该平台默认值，其余条目与其它设置项都不受影响 |
+
+  第二行必须留在 core：`sessionStore` **拿不到平台**（那正是 §5 用稀疏表要避免的事），所以保留键它本来就判不了。反过来「解析不了」是纯结构问题，那一层能判、也该在那儿判——于是两层校验在真机路径上都跑得到，没有一层是摆设。
+
+- **不在这里加 `console.warn`。** §7 之前的写法要求它，但 `resolveShortcuts` 是**渲染期每次都要跑**的热路径（`App` 的 `useMemo` 一次、菜单读取一次），在里面 warn 会刷屏；而读盘那一层拿不到平台，本来就说不出「是哪一条被忽略了」。用户能在设置界面里看见当前生效的键，这比日志更直接。
 
 ## 10. 明确不做
 
