@@ -8960,6 +8960,24 @@ export interface ChapterListProps {
    * 不传也得显示成**该平台的默认值**，而不是写死一句「⌘/Ctrl + Shift + H」。
    */
   sidebarShortcut?: string
+  /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么是可选带默认值】真值住在 `App` 里——收起/展开的快捷键归**全局分发器**，而分发器
+   * 长在那一层，它翻不动本组件内部的 state，所以那边必须受控。但本组件单独渲染时（组件级
+   * 用例、以及任何不关心全局快捷键的场景）没人替它持这个状态，两个 prop 都不给就退回组件
+   * 内部——与上面那个 `sidebarShortcut` 是同一套取舍。
+   *
+   * 【受控不受控只看 `collapsed` 给没给值】给了就是受控（切换走 `onCollapsedChange`），
+   * 没给就自己管。**别写成「两个都给才受控」**：只给值不给回调时受控是坏的（点不动），
+   * 那时退回内部状态反而能用。
+   *
+   * 【无论哪种，状态都只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的
+   * 字段——那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与
+   * 校验。要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
+   */
+  collapsed?: boolean
+  onCollapsedChange?: (next: boolean) => void
 }
 
 export function ChapterList({
@@ -8967,19 +8985,23 @@ export function ChapterList({
   activeChapter,
   chapterPos,
   onJump,
-  sidebarShortcut = defaultShortcutText('toggle-sidebar')
+  sidebarShortcut = defaultShortcutText('toggle-sidebar'),
+  collapsed: collapsedProp,
+  onCollapsedChange
 }: ChapterListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /**
-   * 整条左栏（书名信息 + 章节列表）是否收起。
-   *
-   * 【为什么状态只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的字段——
-   * 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
-   * 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
-   */
-  const [collapsed, setCollapsed] = useState(false)
+  /** 不受控时的落点。受控时它永远是初值，没人读它。 */
+  const [selfCollapsed, setSelfCollapsed] = useState(false)
+  const controlled = collapsedProp !== undefined
+  const collapsed = controlled ? collapsedProp : selfCollapsed
+
+  /** 收起/展开的**唯一**出口：受控时交给外面，不受控时落到自己这段 state。 */
+  const setCollapsed = (next: boolean): void => {
+    if (controlled) onCollapsedChange?.(next)
+    else setSelfCollapsed(next)
+  }
 
   useEffect(() => {
     const el = scrollRef.current
@@ -10378,6 +10400,7 @@ export function useTypingEngine(engine: TypingEngine | null): EngineState | null
 ```tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
+import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
@@ -10386,6 +10409,7 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
@@ -10415,6 +10439,14 @@ export default function App() {
   const [engine, setEngine] = useState<TypingEngine | null>(null)
   const [expanded, setExpanded] = useState(false)
   /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么从 `ChapterList` 提上来】收起/展开的快捷键归**全局分发器**，而分发器长在本层
+   * （见下面 `useShortcutDispatcher` 那次调用）——它碰不到组件内部的 state。所以这个状态
+   * 与 `settingsOpen` 是同一条路：状态归 `App`，组件收成受控的。
+   */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  /**
    * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
    * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
    * 默认取一个中性的 `文档1`。
@@ -10439,6 +10471,24 @@ export default function App() {
    * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
    */
   const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
+  /**
+   * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
+   * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
+   *
+   * 它由 `SettingsDialog` 经 `Ribbon` 上报（那两根线都是「可选带默认值」的，所以漏接一根
+   * 不会报错、也不会红一条用例——`tests/unit/app.test.tsx` 里那条「录制期间分发器静音」
+   * 就是专门钉它的）。
+   */
+  const [recording, setRecording] = useState(false)
+  /**
+   * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
+   *
+   * 【为什么原样收着，不在这里 `resolveShortcuts` 补齐】它读回来的是磁盘上那个字段、写回去
+   * 的也是它。补齐是按平台做的，而「当前是哪个平台」只有渲染这一层知道——补过的表落盘就
+   * 等于把 macOS 的默认值写进了 Windows 的配置，换台机器打开就全是错的键。
+   * 补齐只发生在**消费点**（下面前缀成 `shortcutTable`，以及设置里按平台格式化那几处）。
+   */
+  const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
   /**
    * 设置是否已经读回来了。
    *
@@ -10481,17 +10531,19 @@ export default function App() {
    * memo 不重算，于是防抖的载荷与关窗的快照一起停在旧值上——那个字段的改动在别的依赖也
    * 变化之前，哪条路都带不上去（既不报错、也不落盘，只是悄悄不变）。所以依赖数组必须与
    * 返回对象里的字段一一对应；字段也只在这一处增删。
+   *
+   * 【`shortcuts` 这一项是这条规矩的活例】它曾经恒为写死的 `{}`、因此**不在依赖数组里**
+   * ——那时没有后果（那个值永远不会变）。接上状态之后两处必须同时改，两种漏法都只静默：
+   * 留着写死的 `{}`，手改过 `settings.json` 的人启动一次就会被 600ms 那次防抖**无声冲成
+   * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
+   *
+   * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
+   * 「在设置里录一条新快捷键并保存」管后者。**后者的载荷断言必须排在按新键导入之前**——
+   * 那一步会动 `lastSourcePath`，把 memo 顺带重算一遍，漏依赖那件事就再也显不出来了。
    */
-  // 【为什么这里先给空表】`shortcuts` 是必填字段，而稀疏表的 `{}` 就是「全默认」——
-  // 行为与本次改动之前完全一致。真正的用户改动会在后续任务里接进来（届时这里换成状态）。
-  //
-  // 【接进来的时候别忘了依赖数组】上面那段刚说过「依赖数组必须与返回对象里的字段一一对应」，
-  // 而 `shortcuts` 眼下正是**唯一一个不在依赖数组里的字段**——它恒为 `{}`，所以现在没有后果。
-  // Task 7 把它换成状态时，必须同时把 `shortcuts` 加进下面那个依赖数组；否则这个字段的改动
-  // 哪条路都带不上去（见上段第二小节）。
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts: {} }),
-    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
+    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio, shortcuts]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
@@ -10588,6 +10640,7 @@ export default function App() {
       setThemeSource(settings.themeSource)
       setLastSourcePath(settings.lastSourcePath)
       setGlobalRatio(settings.ratio)
+      setShortcuts(settings.shortcuts)
       setSettingsLoaded(true)
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
@@ -10638,6 +10691,40 @@ export default function App() {
     })
     return off
   }, [handleImport, handleClearSession])
+
+  /**
+   * 宿主平台的原值（`window.api.platform`）。**决定 mac 上哪一条快捷键要留给原生菜单**，
+   * 以及显示/补齐时按哪一套默认值走。
+   *
+   * 【为什么缺桥时按 `'other'` 而不是抛】`getApi()` 可能返回 null（见上面那段说明）。
+   * 那时宁可让 Windows 的那套键在 macOS 上显示错，也不要因为一个读不到的字段把整棵树炸掉
+   * ——`global.d.ts` 把 `api` 声明成必填，`tsc` 不会提醒这件事。
+   */
+  const platform = getApi()?.platform ?? 'other'
+  const kind = platformKind(platform)
+  /** 补齐过的完整表：分发器、以及各处「显示的键」都读它（缺条目＝该平台的默认值）。 */
+  const shortcutTable = useMemo(() => resolveShortcuts(shortcuts, kind), [shortcuts, kind])
+
+  /**
+   * 全局快捷键分发器。
+   *
+   * 【为什么 `enabled` 要连录制态一起算】录制期间按下的组合键必须先被设置对话框拿走：
+   * 不静音的话，用户在录制框里按下 ⌘O 的那一刻就会弹出文件选择框。
+   *
+   * 【`actions` 每次渲染都是新对象，这是有意的】分发器把它挂在 ref 上（见那个模块里的
+   * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
+   * 跟着稳，反而更容易漏。
+   */
+  useShortcutDispatcher({
+    platform,
+    table: shortcutTable,
+    enabled: !recording,
+    actions: {
+      import: () => void handleImport(),
+      'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
+      'open-settings': () => setSettingsOpen(true)
+    }
+  })
 
   // 会话持久化（防抖）
   useEffect(() => {
@@ -10758,6 +10845,11 @@ export default function App() {
           novelOpen={novel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
+          shortcuts={shortcuts}
+          platform={platform}
+          onShortcutsChange={setShortcuts}
+          onRecordingChange={setRecording}
+          settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 
         <div className="wt-body">
@@ -10766,6 +10858,9 @@ export default function App() {
             activeChapter={state?.activeChapter ?? 0}
             chapterPos={state?.chapterPos ?? []}
             onJump={(i) => engineRef.current?.jumpToChapter(i)}
+            collapsed={sidebarCollapsed}
+            onCollapsedChange={setSidebarCollapsed}
+            sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
           />
 
           <main className="wt-canvas" ref={canvasRef}>
@@ -10774,6 +10869,7 @@ export default function App() {
               expanded={expanded}
               onToggleExpand={() => setExpanded(true)}
               empty={!novel}
+              importShortcut={formatShortcut(shortcutTable.import, kind)}
             >
               {engine && state && (
                 <InputCapture engine={engine} mode={state.mode} />
@@ -11158,7 +11254,13 @@ describe('App 端到端（单测层）', () => {
 describe('设置的持久化', () => {
   it('启动时把磁盘上的设置读进界面', async () => {
     installApi(null)
+    // 【桩必须是一份**完整**的设置】这个替身是靠 `as unknown` 塞进去的，`tsc` 不会替它查
+    // 字段齐不齐——原先这里少写了 `ratio` 与 `shortcuts`，而 `App` 那时不读这两个字段，
+    // 所以一直没人发现。Task 7 接上 `shortcuts` 之后它当场炸在 `resolveShortcuts` 里
+    // （`undefined` 当表用），且是在**启动路径**上、整棵树一起挂。真机上不会发生这件事：
+    // 主进程的 `readSettingsFile` 逐字段与默认值合并，返回的恒是完整对象。
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
       docTitle: '季度汇报',
       themeSource: 'dark' as const,
       darkPaper: true,
@@ -11201,7 +11303,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: {} })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -11212,6 +11314,11 @@ describe('设置的持久化', () => {
     expect(payload.docTitle).toBe('季度汇报')
     expect(payload.themeSource).toBe('dark')
     expect(payload.darkPaper).toBe(true)
+    // 【这一条钉的是「快捷键也真的来自磁盘」】memo 里写死 `shortcuts: {}` 的话，
+    // settingsLoaded 一翻 true，防抖那次重跑就会拿空表覆盖手改过的 settings.json
+    // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
+    // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
+    expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
   })
 
   it('改了文档名之后会把设置写回去', async () => {
@@ -11313,6 +11420,150 @@ describe('导入一本读过的书', () => {
     // 条用例在改之前就能通过（实测：只加用例、还没动 App.tsx 的那一轮，它已经在 12 passed 里）。
     // 有证明力的是「有人按这本书的路径去问过进度」：openNovel 若不读会话，这一项恒为 null。
     expect(sessionAskedFor).toBe(novel.sourcePath)
+  })
+})
+
+describe('快捷键接线', () => {
+  /**
+   * 【为什么平台显式设成 win32】默认桩（`installApi`）里没有 `platform` 这个字段，于是
+   * `App` 按 `'other'` 走——那与 win32 同属一类（`platformKind` 只分 darwin / other）。
+   * 显式写出来是为了让下面的期望键位有出处，而不是碰巧对上。
+   */
+  function setPlatformWin32(): void {
+    ;(window as unknown as { api: { platform: string } }).api.platform = 'win32'
+  }
+
+  it('Windows 上 Ctrl+O 真的能导入——这条以前是死的', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    // 让启动那次设置读盘先落地。它不是这条用例的观测点，但晚一步落地会让界面在按键之后
+    // 才提交，把失败指向错误的层。
+    await act(async () => {})
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  it('设置里改过的键生效（读的是补过的表，不是默认表）', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      shortcuts: { import: 'Ctrl+KeyI' }
+    }))
+    render(<App />)
+    // 【这一句不能省】设置是异步读回来的，没落地时表里还是默认值（Ctrl+KeyO）——
+    // 那时按下 Ctrl+O 会真的触发导入，用例会红在一个与本条主题无关的地方。
+    await act(async () => {})
+
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    // 旧键不该再触发
+    expect(screen.queryByTestId('page-text')).toBeNull()
+
+    fireEvent.keyDown(window, { code: 'KeyI', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  /**
+   * 【这条补的是「链接上了没有」里最容易漏的一段】
+   *
+   * Task 6 把 `ChapterList` 自己的 keydown 监听删掉之后，「按键 → 分发器 → `toggle-sidebar`
+   * 这个 action → `App` 里的 `collapsed` 状态 → 侧栏真的切换」这条链的**后半段零覆盖**：
+   * 前半段（按键 → action）由 `shortcutDispatch.test.ts` 守着，而 action 之后呢——
+   * 把 `App` 里那个 action 换成空函数，全套单测此前一条都不会红。
+   */
+  it('按章节栏快捷键真的收起、又展开', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    // 收起：整条 aside 不渲染，只剩那条 12px 的细缝按钮
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  /**
+   * 【这条钉的是 `Ribbon` 上那根「可选带默认值」的线——漏接是**静默**的】
+   *
+   * `onRecordingChange` 不传时落到模块顶层那个空函数，于是界面一切正常、全绿，而实际表现是
+   * 「录制期间分发器不静音」：用户在录制框里按下 Ctrl+O 的那一刻文件选择框当场弹出来。
+   * 本项目在「摘要看着是绿的」这件事上栽过两次，这条与它们同族。
+   */
+  it('录制期间分发器静音——录制框里按组合键不该触发别的动作', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+    openSettings()
+
+    // 【前提自检：没在录制时这条键是好使的】少了它，一个「分发器压根没接上」的实现
+    // （按什么都没反应）也能让下面那两段绿。
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    // 让「显示/隐藏章节栏」那一行进入录制态。中间观测点：文案变了才说明真的在录——
+    // 这一条同时是下面那两段断言的前提。
+    fireEvent.click(screen.getByTestId('shortcut-toggle-sidebar-input'))
+    expect(screen.getByTestId('shortcut-toggle-sidebar-input').textContent).toBe('请按下组合键…')
+
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    expect(importNovel.mock.calls.length).toBe(before)
+    // 另一条动作按键同样不该生效
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+  })
+
+  /**
+   * 【这条同时钉三件事，每一件都是「漏了也不会报错」的那种】
+   *
+   * 1. `Ribbon` 的 `onShortcutsChange` 是**可选带默认值**的：不传＝改动被那个空函数吃掉，
+   *    界面照旧、全绿，表现是「改完快捷键保存了，重启就没了」。
+   * 2. `App` 那个 `settings` memo 的**依赖数组**：值带上 `shortcuts` 而依赖里漏掉它，
+   *    memo 不重算，写盘的载荷就停在旧表上（既不报错、也不落盘，只是悄悄不变）。
+   * 3. 新键要**当场**生效（分发器读的是重算后的表，不是启动时那一份）。
+   *
+   * 【载荷断言必须排在按新键导入之前】那一步会让 `lastSourcePath` 变，而它是 memo 的另一个
+   * 依赖——排到后面的话，memo 会被它带着重算，第 2 件事就再也红不了了（实测：只留最后那句
+   * 断言时，把 `shortcuts` 从依赖数组里删掉，全套用例仍然全绿）。
+   */
+  it('在设置里录一条新快捷键并保存：当场生效，也真的写回设置', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    openSettings()
+
+    const box = screen.getByTestId('shortcut-import-input')
+    fireEvent.click(box)
+    // 在**录制框自己**上派发：录制归它那个 `onKeyDown` 管（分发器这时是哑的，见上一条用例）
+    fireEvent.keyDown(box, { code: 'KeyJ', ctrlKey: true })
+    expect(box.textContent).toBe('Ctrl+J')
+    fireEvent.click(screen.getByTestId('settings-save'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as { mock: { calls: AppSettings[][] } }
+    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.shortcuts).toEqual({ import: 'Ctrl+KeyJ' })
+
+    // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
+    fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
   })
 })
 ```

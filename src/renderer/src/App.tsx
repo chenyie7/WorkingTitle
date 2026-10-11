@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
+import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
@@ -8,6 +9,7 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
@@ -37,6 +39,14 @@ export default function App() {
   const [engine, setEngine] = useState<TypingEngine | null>(null)
   const [expanded, setExpanded] = useState(false)
   /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么从 `ChapterList` 提上来】收起/展开的快捷键归**全局分发器**，而分发器长在本层
+   * （见下面 `useShortcutDispatcher` 那次调用）——它碰不到组件内部的 state。所以这个状态
+   * 与 `settingsOpen` 是同一条路：状态归 `App`，组件收成受控的。
+   */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  /**
    * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
    * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
    * 默认取一个中性的 `文档1`。
@@ -61,6 +71,24 @@ export default function App() {
    * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
    */
   const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
+  /**
+   * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
+   * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
+   *
+   * 它由 `SettingsDialog` 经 `Ribbon` 上报（那两根线都是「可选带默认值」的，所以漏接一根
+   * 不会报错、也不会红一条用例——`tests/unit/app.test.tsx` 里那条「录制期间分发器静音」
+   * 就是专门钉它的）。
+   */
+  const [recording, setRecording] = useState(false)
+  /**
+   * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
+   *
+   * 【为什么原样收着，不在这里 `resolveShortcuts` 补齐】它读回来的是磁盘上那个字段、写回去
+   * 的也是它。补齐是按平台做的，而「当前是哪个平台」只有渲染这一层知道——补过的表落盘就
+   * 等于把 macOS 的默认值写进了 Windows 的配置，换台机器打开就全是错的键。
+   * 补齐只发生在**消费点**（下面前缀成 `shortcutTable`，以及设置里按平台格式化那几处）。
+   */
+  const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
   /**
    * 设置是否已经读回来了。
    *
@@ -103,17 +131,19 @@ export default function App() {
    * memo 不重算，于是防抖的载荷与关窗的快照一起停在旧值上——那个字段的改动在别的依赖也
    * 变化之前，哪条路都带不上去（既不报错、也不落盘，只是悄悄不变）。所以依赖数组必须与
    * 返回对象里的字段一一对应；字段也只在这一处增删。
+   *
+   * 【`shortcuts` 这一项是这条规矩的活例】它曾经恒为写死的 `{}`、因此**不在依赖数组里**
+   * ——那时没有后果（那个值永远不会变）。接上状态之后两处必须同时改，两种漏法都只静默：
+   * 留着写死的 `{}`，手改过 `settings.json` 的人启动一次就会被 600ms 那次防抖**无声冲成
+   * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
+   *
+   * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
+   * 「在设置里录一条新快捷键并保存」管后者。**后者的载荷断言必须排在按新键导入之前**——
+   * 那一步会动 `lastSourcePath`，把 memo 顺带重算一遍，漏依赖那件事就再也显不出来了。
    */
-  // 【为什么这里先给空表】`shortcuts` 是必填字段，而稀疏表的 `{}` 就是「全默认」——
-  // 行为与本次改动之前完全一致。真正的用户改动会在后续任务里接进来（届时这里换成状态）。
-  //
-  // 【接进来的时候别忘了依赖数组】上面那段刚说过「依赖数组必须与返回对象里的字段一一对应」，
-  // 而 `shortcuts` 眼下正是**唯一一个不在依赖数组里的字段**——它恒为 `{}`，所以现在没有后果。
-  // Task 7 把它换成状态时，必须同时把 `shortcuts` 加进下面那个依赖数组；否则这个字段的改动
-  // 哪条路都带不上去（见上段第二小节）。
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts: {} }),
-    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
+    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio, shortcuts]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
@@ -210,6 +240,7 @@ export default function App() {
       setThemeSource(settings.themeSource)
       setLastSourcePath(settings.lastSourcePath)
       setGlobalRatio(settings.ratio)
+      setShortcuts(settings.shortcuts)
       setSettingsLoaded(true)
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
@@ -260,6 +291,40 @@ export default function App() {
     })
     return off
   }, [handleImport, handleClearSession])
+
+  /**
+   * 宿主平台的原值（`window.api.platform`）。**决定 mac 上哪一条快捷键要留给原生菜单**，
+   * 以及显示/补齐时按哪一套默认值走。
+   *
+   * 【为什么缺桥时按 `'other'` 而不是抛】`getApi()` 可能返回 null（见上面那段说明）。
+   * 那时宁可让 Windows 的那套键在 macOS 上显示错，也不要因为一个读不到的字段把整棵树炸掉
+   * ——`global.d.ts` 把 `api` 声明成必填，`tsc` 不会提醒这件事。
+   */
+  const platform = getApi()?.platform ?? 'other'
+  const kind = platformKind(platform)
+  /** 补齐过的完整表：分发器、以及各处「显示的键」都读它（缺条目＝该平台的默认值）。 */
+  const shortcutTable = useMemo(() => resolveShortcuts(shortcuts, kind), [shortcuts, kind])
+
+  /**
+   * 全局快捷键分发器。
+   *
+   * 【为什么 `enabled` 要连录制态一起算】录制期间按下的组合键必须先被设置对话框拿走：
+   * 不静音的话，用户在录制框里按下 ⌘O 的那一刻就会弹出文件选择框。
+   *
+   * 【`actions` 每次渲染都是新对象，这是有意的】分发器把它挂在 ref 上（见那个模块里的
+   * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
+   * 跟着稳，反而更容易漏。
+   */
+  useShortcutDispatcher({
+    platform,
+    table: shortcutTable,
+    enabled: !recording,
+    actions: {
+      import: () => void handleImport(),
+      'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
+      'open-settings': () => setSettingsOpen(true)
+    }
+  })
 
   // 会话持久化（防抖）
   useEffect(() => {
@@ -380,6 +445,11 @@ export default function App() {
           novelOpen={novel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
+          shortcuts={shortcuts}
+          platform={platform}
+          onShortcutsChange={setShortcuts}
+          onRecordingChange={setRecording}
+          settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 
         <div className="wt-body">
@@ -388,6 +458,9 @@ export default function App() {
             activeChapter={state?.activeChapter ?? 0}
             chapterPos={state?.chapterPos ?? []}
             onJump={(i) => engineRef.current?.jumpToChapter(i)}
+            collapsed={sidebarCollapsed}
+            onCollapsedChange={setSidebarCollapsed}
+            sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
           />
 
           <main className="wt-canvas" ref={canvasRef}>
@@ -396,6 +469,7 @@ export default function App() {
               expanded={expanded}
               onToggleExpand={() => setExpanded(true)}
               empty={!novel}
+              importShortcut={formatShortcut(shortcutTable.import, kind)}
             >
               {engine && state && (
                 <InputCapture engine={engine} mode={state.mode} />

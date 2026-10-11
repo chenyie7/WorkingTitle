@@ -20,6 +20,24 @@ export interface ChapterListProps {
    * 不传也得显示成**该平台的默认值**，而不是写死一句「⌘/Ctrl + Shift + H」。
    */
   sidebarShortcut?: string
+  /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么是可选带默认值】真值住在 `App` 里——收起/展开的快捷键归**全局分发器**，而分发器
+   * 长在那一层，它翻不动本组件内部的 state，所以那边必须受控。但本组件单独渲染时（组件级
+   * 用例、以及任何不关心全局快捷键的场景）没人替它持这个状态，两个 prop 都不给就退回组件
+   * 内部——与上面那个 `sidebarShortcut` 是同一套取舍。
+   *
+   * 【受控不受控只看 `collapsed` 给没给值】给了就是受控（切换走 `onCollapsedChange`），
+   * 没给就自己管。**别写成「两个都给才受控」**：只给值不给回调时受控是坏的（点不动），
+   * 那时退回内部状态反而能用。
+   *
+   * 【无论哪种，状态都只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的
+   * 字段——那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与
+   * 校验。要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
+   */
+  collapsed?: boolean
+  onCollapsedChange?: (next: boolean) => void
 }
 
 export function ChapterList({
@@ -27,19 +45,23 @@ export function ChapterList({
   activeChapter,
   chapterPos,
   onJump,
-  sidebarShortcut = defaultShortcutText('toggle-sidebar')
+  sidebarShortcut = defaultShortcutText('toggle-sidebar'),
+  collapsed: collapsedProp,
+  onCollapsedChange
 }: ChapterListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /**
-   * 整条左栏（书名信息 + 章节列表）是否收起。
-   *
-   * 【为什么状态只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的字段——
-   * 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
-   * 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
-   */
-  const [collapsed, setCollapsed] = useState(false)
+  /** 不受控时的落点。受控时它永远是初值，没人读它。 */
+  const [selfCollapsed, setSelfCollapsed] = useState(false)
+  const controlled = collapsedProp !== undefined
+  const collapsed = controlled ? collapsedProp : selfCollapsed
+
+  /** 收起/展开的**唯一**出口：受控时交给外面，不受控时落到自己这段 state。 */
+  const setCollapsed = (next: boolean): void => {
+    if (controlled) onCollapsedChange?.(next)
+    else setSelfCollapsed(next)
+  }
 
   useEffect(() => {
     const el = scrollRef.current

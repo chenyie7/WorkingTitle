@@ -354,7 +354,13 @@ describe('App 端到端（单测层）', () => {
 describe('设置的持久化', () => {
   it('启动时把磁盘上的设置读进界面', async () => {
     installApi(null)
+    // 【桩必须是一份**完整**的设置】这个替身是靠 `as unknown` 塞进去的，`tsc` 不会替它查
+    // 字段齐不齐——原先这里少写了 `ratio` 与 `shortcuts`，而 `App` 那时不读这两个字段，
+    // 所以一直没人发现。Task 7 接上 `shortcuts` 之后它当场炸在 `resolveShortcuts` 里
+    // （`undefined` 当表用），且是在**启动路径**上、整棵树一起挂。真机上不会发生这件事：
+    // 主进程的 `readSettingsFile` 逐字段与默认值合并，返回的恒是完整对象。
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
       docTitle: '季度汇报',
       themeSource: 'dark' as const,
       darkPaper: true,
@@ -397,7 +403,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: {} })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -408,6 +414,11 @@ describe('设置的持久化', () => {
     expect(payload.docTitle).toBe('季度汇报')
     expect(payload.themeSource).toBe('dark')
     expect(payload.darkPaper).toBe(true)
+    // 【这一条钉的是「快捷键也真的来自磁盘」】memo 里写死 `shortcuts: {}` 的话，
+    // settingsLoaded 一翻 true，防抖那次重跑就会拿空表覆盖手改过的 settings.json
+    // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
+    // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
+    expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
   })
 
   it('改了文档名之后会把设置写回去', async () => {
@@ -509,5 +520,149 @@ describe('导入一本读过的书', () => {
     // 条用例在改之前就能通过（实测：只加用例、还没动 App.tsx 的那一轮，它已经在 12 passed 里）。
     // 有证明力的是「有人按这本书的路径去问过进度」：openNovel 若不读会话，这一项恒为 null。
     expect(sessionAskedFor).toBe(novel.sourcePath)
+  })
+})
+
+describe('快捷键接线', () => {
+  /**
+   * 【为什么平台显式设成 win32】默认桩（`installApi`）里没有 `platform` 这个字段，于是
+   * `App` 按 `'other'` 走——那与 win32 同属一类（`platformKind` 只分 darwin / other）。
+   * 显式写出来是为了让下面的期望键位有出处，而不是碰巧对上。
+   */
+  function setPlatformWin32(): void {
+    ;(window as unknown as { api: { platform: string } }).api.platform = 'win32'
+  }
+
+  it('Windows 上 Ctrl+O 真的能导入——这条以前是死的', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    // 让启动那次设置读盘先落地。它不是这条用例的观测点，但晚一步落地会让界面在按键之后
+    // 才提交，把失败指向错误的层。
+    await act(async () => {})
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  it('设置里改过的键生效（读的是补过的表，不是默认表）', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      shortcuts: { import: 'Ctrl+KeyI' }
+    }))
+    render(<App />)
+    // 【这一句不能省】设置是异步读回来的，没落地时表里还是默认值（Ctrl+KeyO）——
+    // 那时按下 Ctrl+O 会真的触发导入，用例会红在一个与本条主题无关的地方。
+    await act(async () => {})
+
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    // 旧键不该再触发
+    expect(screen.queryByTestId('page-text')).toBeNull()
+
+    fireEvent.keyDown(window, { code: 'KeyI', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  /**
+   * 【这条补的是「链接上了没有」里最容易漏的一段】
+   *
+   * Task 6 把 `ChapterList` 自己的 keydown 监听删掉之后，「按键 → 分发器 → `toggle-sidebar`
+   * 这个 action → `App` 里的 `collapsed` 状态 → 侧栏真的切换」这条链的**后半段零覆盖**：
+   * 前半段（按键 → action）由 `shortcutDispatch.test.ts` 守着，而 action 之后呢——
+   * 把 `App` 里那个 action 换成空函数，全套单测此前一条都不会红。
+   */
+  it('按章节栏快捷键真的收起、又展开', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    // 收起：整条 aside 不渲染，只剩那条 12px 的细缝按钮
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  /**
+   * 【这条钉的是 `Ribbon` 上那根「可选带默认值」的线——漏接是**静默**的】
+   *
+   * `onRecordingChange` 不传时落到模块顶层那个空函数，于是界面一切正常、全绿，而实际表现是
+   * 「录制期间分发器不静音」：用户在录制框里按下 Ctrl+O 的那一刻文件选择框当场弹出来。
+   * 本项目在「摘要看着是绿的」这件事上栽过两次，这条与它们同族。
+   */
+  it('录制期间分发器静音——录制框里按组合键不该触发别的动作', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+    openSettings()
+
+    // 【前提自检：没在录制时这条键是好使的】少了它，一个「分发器压根没接上」的实现
+    // （按什么都没反应）也能让下面那两段绿。
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    // 让「显示/隐藏章节栏」那一行进入录制态。中间观测点：文案变了才说明真的在录——
+    // 这一条同时是下面那两段断言的前提。
+    fireEvent.click(screen.getByTestId('shortcut-toggle-sidebar-input'))
+    expect(screen.getByTestId('shortcut-toggle-sidebar-input').textContent).toBe('请按下组合键…')
+
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
+    fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
+    expect(importNovel.mock.calls.length).toBe(before)
+    // 另一条动作按键同样不该生效
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+  })
+
+  /**
+   * 【这条同时钉三件事，每一件都是「漏了也不会报错」的那种】
+   *
+   * 1. `Ribbon` 的 `onShortcutsChange` 是**可选带默认值**的：不传＝改动被那个空函数吃掉，
+   *    界面照旧、全绿，表现是「改完快捷键保存了，重启就没了」。
+   * 2. `App` 那个 `settings` memo 的**依赖数组**：值带上 `shortcuts` 而依赖里漏掉它，
+   *    memo 不重算，写盘的载荷就停在旧表上（既不报错、也不落盘，只是悄悄不变）。
+   * 3. 新键要**当场**生效（分发器读的是重算后的表，不是启动时那一份）。
+   *
+   * 【载荷断言必须排在按新键导入之前】那一步会让 `lastSourcePath` 变，而它是 memo 的另一个
+   * 依赖——排到后面的话，memo 会被它带着重算，第 2 件事就再也红不了了（实测：只留最后那句
+   * 断言时，把 `shortcuts` 从依赖数组里删掉，全套用例仍然全绿）。
+   */
+  it('在设置里录一条新快捷键并保存：当场生效，也真的写回设置', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    openSettings()
+
+    const box = screen.getByTestId('shortcut-import-input')
+    fireEvent.click(box)
+    // 在**录制框自己**上派发：录制归它那个 `onKeyDown` 管（分发器这时是哑的，见上一条用例）
+    fireEvent.keyDown(box, { code: 'KeyJ', ctrlKey: true })
+    expect(box.textContent).toBe('Ctrl+J')
+    fireEvent.click(screen.getByTestId('settings-save'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as { mock: { calls: AppSettings[][] } }
+    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.shortcuts).toEqual({ import: 'Ctrl+KeyJ' })
+
+    // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
+    fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
   })
 })
