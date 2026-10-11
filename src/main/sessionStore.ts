@@ -171,11 +171,16 @@ function settingsProblem(v: unknown): string | null {
     // 未知 id 刻意**不拦**：那是更新版本写的，本版本应当照常读、照常写回去。
     // 已知 id 则必须能解析——解析不了说明这个文件被改坏了。
     // 【只拦结构问题，不拦保留键】解析不了 / 没带修饰键 → 这个文件被改坏了，与其它字段
-    // 一样整份退回；保留键则是**平台相关**的，而这一层拿不到平台（那正是稀疏表要避免的
-    // 事），只能交给 core 的 resolveShortcuts 按平台逐条退回默认值。
+    // 一样整份退回；保留键是**平台相关**的，而这一层拿不到平台，只能交给 core 的
+    // `resolveShortcuts` 按平台逐条退回默认值。
+    //
+    // 【那个 'darwin' 是惰性的，别试图"修正"它】`shortcutProblem` 的 `no-modifier` /
+    // `unsupported-key` 两个出口在**查保留清单之前**就返回了，与 kind 无关；所以这里传
+    // 什么都一样，真正吃重的是下面这个枚举。写成枚举而不是 `!== 'reserved'`，就是为了
+    // 让这件事在调用点上自明。
     if (isShortcutId(id)) {
       const problem = shortcutProblem(spec, 'darwin')
-      if (problem !== null && problem !== 'reserved') {
+      if (problem === 'no-modifier' || problem === 'unsupported-key') {
         return `shortcuts.${id} 不是合法的快捷键（${problem}）`
       }
     }
@@ -197,7 +202,7 @@ function settingsProblem(v: unknown): string | null {
  * 再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个；写成一张表就没有
  * 这个「记得」了。
  */
-const FILLED_DEFAULTS: Readonly<Record<string, unknown>> = {
+const FILLED_DEFAULTS: Readonly<Record<string, () => unknown>> = {
   ratio: () => defaultSettings().ratio,
   shortcuts: () => ({})
 }
@@ -207,7 +212,7 @@ function withDefaultsFilled(v: unknown): unknown {
   const record = v as Record<string, unknown>
   const filled: Record<string, unknown> = { ...record }
   for (const [key, make] of Object.entries(FILLED_DEFAULTS)) {
-    if (!(key in record)) filled[key] = typeof make === 'function' ? make() : make
+    if (!(key in record)) filled[key] = make()
   }
   return filled
 }

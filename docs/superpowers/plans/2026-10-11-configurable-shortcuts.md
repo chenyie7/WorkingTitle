@@ -676,6 +676,41 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
   })
 
+  it('shortcuts 是数组时整份退回默认值', () => {
+    // 【为什么要单列一条】`Array.isArray(sc)` 是**独立于** `typeof sc !== 'object'` 的一道
+    // 守卫：数组的 typeof 恰好就是 'object'，少了它，`[]` 会被当成「一张合法的空表」放行。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: [] }),
+      'utf8'
+    )
+    expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+  })
+
+  it('shortcuts 里某一条的值不是字符串时整份退回默认值，且警告点出是哪一条', () => {
+    // 【断言里为什么必须带上那行 warn】只看返回值的话这条用例没有区分能力：把
+    // `typeof spec !== 'string'` 这道守卫删掉，非字符串会一路走进 `shortcutProblem`、
+    // 在 `spec.split` 上抛 TypeError——而 `readSettingsFile` 的 catch 也返回
+    // `defaultSettings()`，于是返回值一模一样，变异体活下来。两边的差别只在那行警告里：
+    // 干净拒绝报的是 `shortcuts.import 不是字符串`，抛异常报的是 `读取设置失败`。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { import: 123 } }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'shortcuts.import 不是字符串'
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('shortcuts 里有一条坏串时整份退回默认值', () => {
     // 【为什么是整份而不是只丢那一条】坏串意味着这个文件被人改过或写坏了；设置项全是
     // 可再生的，退回默认值是既有姿态。逐条退让会让「哪几条是我改的」变得无法解释。
@@ -712,14 +747,18 @@ describe('shortcuts 字段的向后兼容', () => {
   })
 
   it('shortcuts 里的未知 id 不拦——那是更新版本写的，本版本应当照常读', () => {
+    // 【这一条的值必须是**结构上非法**的串】原先喂的是 `'Meta+KeyJ'`，它本身就合法，
+    // 于是「只校验已知 id」与「一视同仁校验所有 id」两种实现结果一样——用例空转。
+    // 换成没带修饰键的 `'KeyJ'` 才有区分能力：`isShortcutId` 那道守卫一旦被去掉，这个
+    // 文件就会被当坏文件整份退回，下面第一行断言当场红。
     const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
     writeFileSync(
       join(dir, 'settings.json'),
-      JSON.stringify({ ...defaultSettings(), shortcuts: { 'future-thing': 'Meta+KeyJ' } }),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { 'future-thing': 'KeyJ' } }),
       'utf8'
     )
     const settings = createSessionStore(dir).readSettings()
-    expect(settings.shortcuts).toEqual({ 'future-thing': 'Meta+KeyJ' })
+    expect(settings.shortcuts).toEqual({ 'future-thing': 'KeyJ' })
     // 未知 id 不参与解析，所以默认值一条都不受影响
     expect(resolveShortcuts(settings.shortcuts, 'other').import).toBe('Ctrl+KeyO')
   })
@@ -778,16 +817,21 @@ import type { ShortcutId } from './shortcuts'
 
 在 `defaultSettings()` 的返回对象里补上 `shortcuts: {}`（**注意它仍然是零参的**）。
 
-在 `DEFAULT_DOC_TITLE` 旁边加一句说明为什么默认是空表：
+`shortcuts: {}` 那一行上方写清楚为什么默认是空表：
 
 ```ts
-/**
- * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
- * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。
- *
- * 【为什么不在这里写死一份】写死就要求这个函数知道平台，而它是零参的
- * （见 AppSettings.shortcuts 的说明）。
- */
+    /**
+     * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
+     * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。
+     *
+     * 【为什么不在这里写死一份】写死就要求这个函数知道平台，而它是零参的
+     * （见 AppSettings.shortcuts 的说明）。
+     *
+     * 【为什么是就地写 `{}` 而不是提一个模块级常量】本函数上面那段说明的就是这件事：
+     * 共享常量会被消费方就地改掉（`s.shortcuts.import = 'Meta+KeyI'`），于是「默认值」
+     * 在下一次调用时已经变了。每次返回一个新的字面量才是这里要的形状。
+     */
+    shortcuts: {}
 ```
 
 - [ ] **Step 4: 把 `withRatioFilled` 泛化成 `withDefaultsFilled`**
@@ -809,7 +853,7 @@ import type { ShortcutId } from './shortcuts'
  * 再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个；写成一张表就没有
  * 这个「记得」了。
  */
-const FILLED_DEFAULTS: Readonly<Record<string, unknown>> = {
+const FILLED_DEFAULTS: Readonly<Record<string, () => unknown>> = {
   ratio: () => defaultSettings().ratio,
   shortcuts: () => ({})
 }
@@ -819,7 +863,7 @@ function withDefaultsFilled(v: unknown): unknown {
   const record = v as Record<string, unknown>
   const filled: Record<string, unknown> = { ...record }
   for (const [key, make] of Object.entries(FILLED_DEFAULTS)) {
-    if (!(key in record)) filled[key] = typeof make === 'function' ? make() : make
+    if (!(key in record)) filled[key] = make()
   }
   return filled
 }
@@ -844,11 +888,16 @@ function withDefaultsFilled(v: unknown): unknown {
     // 未知 id 刻意**不拦**：那是更新版本写的，本版本应当照常读、照常写回去。
     // 已知 id 则必须能解析——解析不了说明这个文件被改坏了。
     // 【只拦结构问题，不拦保留键】解析不了 / 没带修饰键 → 这个文件被改坏了，与其它字段
-    // 一样整份退回；保留键则是**平台相关**的，而这一层拿不到平台（那正是稀疏表要避免的
-    // 事），只能交给 core 的 resolveShortcuts 按平台逐条退回默认值。
+    // 一样整份退回；保留键是**平台相关**的，而这一层拿不到平台，只能交给 core 的
+    // `resolveShortcuts` 按平台逐条退回默认值。
+    //
+    // 【那个 'darwin' 是惰性的，别试图"修正"它】`shortcutProblem` 的 `no-modifier` /
+    // `unsupported-key` 两个出口在**查保留清单之前**就返回了，与 kind 无关；所以这里传
+    // 什么都一样，真正吃重的是下面这个枚举。写成枚举而不是 `!== 'reserved'`，就是为了
+    // 让这件事在调用点上自明。
     if (isShortcutId(id)) {
       const problem = shortcutProblem(spec, 'darwin')
-      if (problem !== null && problem !== 'reserved') {
+      if (problem === 'no-modifier' || problem === 'unsupported-key') {
         return `shortcuts.${id} 不是合法的快捷键（${problem}）`
       }
     }
@@ -874,8 +923,14 @@ function isShortcutId(id: string): id is ShortcutId {
 >
 > 【这条划分必须守住，否则会有一层校验变成摆设】要是这里把保留键也拦了，`resolveShortcuts`
 > 的逐条校验在真机路径上就永远走不到——`tests/unit/shortcuts.test.ts` 里「macOS 上磁盘里的
-> 保留键也退回默认值」那条描述的路径只在单测里成立。传 `'darwin'` 而不是 `'other'`，是因为
-> 它是保留清单更严的那一侧；写严的一侧不会漏判「结构问题」。
+> 保留键也退回默认值」那条描述的路径只在单测里成立。
+>
+> 【那个 `'darwin'` 是**惰性**的实参，别试图「修正」它】`shortcutProblem` 的两个结构性出口
+> （`no-modifier` / `unsupported-key`）在**查保留清单之前**就返回了，与 `kind` 无关——所以
+> 这个调用点上传 `'darwin'` 还是 `'other'`，结论完全相同。真正吃重的是那个**枚举**：写成
+> `problem === 'no-modifier' || problem === 'unsupported-key'` 而不是 `problem !== 'reserved'`，
+> 为的就是让「只拦结构问题」这件事在调用点上自明，而不是靠读者知道 `kind` 影响哪些出口。
+> （本段原稿写的是「传 darwin 是因为它是保留清单更严的一侧」，那个理由在该函数实现下不成立。）
 >
 > 下面那两条用例（坏串整份退回 / 保留键不整份退回）正是钉住这条划分的。
 
