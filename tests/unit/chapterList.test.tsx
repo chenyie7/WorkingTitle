@@ -76,8 +76,18 @@ describe('ChapterList', () => {
   // 【原来的「⌘/Ctrl + Shift + H 与按钮等效」与「少了 Shift 或修饰键时不触发」两条删掉了】
   // 它们断言的是本组件自己那个 window keydown 监听，而那条监听已经归全局分发器
   // （见 ChapterList.tsx 里那段注释）。留在原处会全红；而按组件改写成「空转的绿」更糟——
-  // 树里没有分发器，无论那条监听在不在，`collapsed` 都不会翻。分发器那一侧的等价用例在
-  // `tests/unit/shortcutDispatch.test.ts`，App 那一侧的接线在 Task 7。
+  // 树里没有分发器，无论那条监听在不在，`collapsed` 都不会翻。
+  //
+  // 覆盖去哪了，逐条说清楚（别以为这两件事没人测）：
+  //
+  //  - **「按 ⌘⇧H 等效于点按钮」拆成了两半**。前半（按键 → `toggle-sidebar` 这个 action）由
+  //    `tests/unit/shortcutDispatch.test.ts` 覆盖：它断言 darwin 上按 ⌘⇧H 会调到那个 action。
+  //    后半（action → 本组件这个 `collapsed`）要等 Task 7 把状态提到 `App` 上才接得上，
+  //    而**目前没有任何用例覆盖它**——Task 7 计划里只加了 import 的两条。
+  //  - **「少了 Shift 或修饰键时不触发」也在分发器里**：裸键由那句
+  //    `if (!e.ctrlKey && !e.metaKey && !e.altKey) return` 提前放行，修饰键少一个则落在
+  //    表查找不中。`shortcutDispatch.test.ts` 的「裸按键一律放行」与「没配上的组合不触发」
+  //    覆盖的是这两条路，而**这几个具体形态（裸 H / 只按 Shift+H / 只按 ⌘+H）没有专门用例**。
 
   it('title 里显示的是传进来的快捷键，不是写死的 ⌘/Ctrl + Shift + H', () => {
     // 传一个**两条默认值都推不出来**的串：jsdom 里 `window.api.platform` 是 darwin，

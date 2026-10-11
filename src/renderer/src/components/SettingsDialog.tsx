@@ -117,6 +117,21 @@ export function SettingsDialog({
     useToolbar()
 
   const kind = platformKind(platform)
+
+  /**
+   * 「导入小说」按钮 title 里那条快捷键的显示文本。
+   *
+   * 【为什么在这里算，而不是像 `Toolbar` 那样收一个成品 prop】本组件的定位就是「拿着稀疏表
+   * 与平台**自己**格式化」——下面那几个录制框（`formatShortcut(draft, kind)`）已经是这么做的。
+   * 写成收 prop 的话，调用方（`Ribbon`）就得为这**一处** tooltip 再算一遍。
+   *
+   * 【取的是已提交值，不是录制中的草稿】这个 title 说的是「现在按什么键能导入」；草稿还没保存。
+   * 录制框显示草稿是因为它要展示你正在录的那个键，两者不是一回事。
+   */
+  const importButtonShortcut = formatShortcut(
+    shortcuts.import ?? defaultShortcut('import', kind),
+    kind
+  )
   /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
   const [recording, setRecording] = useState<ShortcutId | null>(null)
 
@@ -538,7 +553,7 @@ export function SettingsDialog({
               type="button"
               className="wt-btn"
               data-testid="btn-import"
-              title="导入小说 (Ctrl+O)"
+              title={`导入小说 (${importButtonShortcut})`}
               onClick={() => onImport()}
             >
               <IconImport className="wt-btn__icon" />

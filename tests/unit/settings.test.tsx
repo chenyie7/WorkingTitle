@@ -632,6 +632,14 @@ describe('设置里的快捷键录制', () => {
     expect(screen.getByTestId('shortcut-open-settings-input').textContent).toContain('Ctrl+,')
   })
 
+  it('「导入小说」按钮的 title 跟着当前快捷键走（不是写死的 Ctrl+O）', () => {
+    // 用一个**默认值推不出来**的键：写死的 'Ctrl+O'、或「忽略 shortcuts 直接推默认值」的
+    // 实现都会显示 Ctrl+O，本条即红。
+    setup({ shortcuts: { import: 'Ctrl+KeyI' } })
+    openViaButton()
+    expect(screen.getByTestId('btn-import').getAttribute('title')).toContain('Ctrl+I')
+  })
+
   it('点一下进录制态，显示提示', () => {
     setup({})
     openViaButton()
