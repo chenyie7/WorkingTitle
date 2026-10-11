@@ -22,6 +22,8 @@ export function openNovel(filePath: string): Novel {
 export interface IpcDeps {
   getWindow: () => BrowserWindow | null
   getInitialNovelPath: () => string | null
+  /** 设置写盘后重建原生菜单——菜单里的 accelerator 要跟着用户改的键走。 */
+  rebuildMenu: () => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -61,6 +63,10 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.saveSettings, (_e, settings: AppSettings): void => {
     getStore().writeSettings(settings)
+    // 【为什么在这里重建而不是新开一条 IPC 通道】设置本来就要从这条路进主进程，顺手重建
+    // 比让渲染层再喊一声省一条通道、也少一个「谁先谁后」的问题。
+    // 【为什么可以无条件重建】非 darwin 上 buildAppMenu 直接 return，成本是一次判断。
+    deps.rebuildMenu()
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。

@@ -4726,11 +4726,20 @@ export function resetStore(): void {
 ```ts
 import { app, Menu, shell, type BrowserWindow } from 'electron'
 import { CH, type MenuCommand } from './ipc'
+import type { ResolvedShortcuts } from '../core/shortcuts'
+import { toAccelerator } from '../core/shortcuts'
 
 /**
  * 建原生应用菜单。**只有 macOS 会真的建出菜单**，见下面的注释。
+ *
+ * 【为什么快捷键表是**取**而不是**传**】菜单要在设置改动之后重建，而设置是渲染层改的。
+ * 传一个取值函数而不是一张表，调用方（`index.ts` 与 `ipc.ts`）就不必各自维护「当前是哪
+ * 一份」——它们只管在需要的时候重建一次。
  */
-export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
+export function buildAppMenu(
+  getWindow: () => BrowserWindow | null,
+  getShortcuts: () => ResolvedShortcuts
+): void {
   const send = (cmd: MenuCommand): void => {
     getWindow()?.webContents.send(CH.menuCommand, cmd)
   }
@@ -4773,7 +4782,12 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
       submenu: [
         {
           label: '导入小说…',
-          accelerator: 'CmdOrCtrl+O',
+          // 【为什么这里可能为空】非 darwin 根本走不到这一段（下面直接 return 了），而
+          // darwin 上 `shortcutProblem` 与白名单保证了 accelerator 一定转得出来。取空是
+          // 防御性的：真为空时菜单项只是不显示快捷键，功能照旧。
+          ...(toAccelerator(getShortcuts().import) === null
+            ? {}
+            : { accelerator: toAccelerator(getShortcuts().import) as string }),
           click: () => send('import-novel')
         },
         {
@@ -4886,6 +4900,8 @@ export function openNovel(filePath: string): Novel {
 export interface IpcDeps {
   getWindow: () => BrowserWindow | null
   getInitialNovelPath: () => string | null
+  /** 设置写盘后重建原生菜单——菜单里的 accelerator 要跟着用户改的键走。 */
+  rebuildMenu: () => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -4925,6 +4941,10 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.saveSettings, (_e, settings: AppSettings): void => {
     getStore().writeSettings(settings)
+    // 【为什么在这里重建而不是新开一条 IPC 通道】设置本来就要从这条路进主进程，顺手重建
+    // 比让渲染层再喊一声省一条通道、也少一个「谁先谁后」的问题。
+    // 【为什么可以无条件重建】非 darwin 上 buildAppMenu 直接 return，成本是一次判断。
+    deps.rebuildMenu()
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
@@ -5050,9 +5070,10 @@ export type WtApi = typeof api
 import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
+import { platformKind, resolveShortcuts } from '../core/shortcuts'
 import { registerIpc } from './ipc'
 import { buildAppMenu } from './menu'
-import { resetStore } from './session'
+import { getStore, resetStore } from './session'
 import { applyUserDataOverride, resolveInitialNovelPath } from './startup'
 import { CH } from './channels'
 
@@ -5196,11 +5217,22 @@ function isRegularFile(p: string): boolean {
 app.whenReady().then(() => {
   initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
 
+  /**
+   * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
+   * 「用户按下去真正生效的键」不会分岔的唯一保证。
+   *
+   * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
+   * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
+   */
+  const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
+    resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+
   registerIpc({
     getWindow: () => win,
-    getInitialNovelPath: () => initialNovelPath
+    getInitialNovelPath: () => initialNovelPath,
+    rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
   })
-  buildAppMenu(() => win)
+  buildAppMenu(() => win, getShortcuts)
   win = createWindow()
 
   // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
