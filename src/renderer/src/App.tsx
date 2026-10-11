@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
-import { DEFAULT_DOC_TITLE } from '../../core/types'
+import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
@@ -49,6 +49,14 @@ export default function App() {
   /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
   const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
   /**
+   * **全局**阅读替换比例：新导入的书拿它当起点。
+   *
+   * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
+   * 一本书第一次打开时取它，之后各管各的——改这个**不影响已经打开过的书**，只影响之后导入的。
+   * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
+   */
+  const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
@@ -64,6 +72,20 @@ export default function App() {
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
+  /**
+   * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
+   *
+   * 【为什么不能用闭包里的那个值】`openNovel` 的依赖是 `[flushSession]`，而那是个稳定引用
+   * ——于是它永远保留**首次渲染**那一刻闭包里的 `globalRatio`（默认 10），启动读回真正的
+   * 全局值之后也不会更新。实测过：全局设成 3、导入一本新书，引擎拿到的仍是 10。
+   *
+   * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
+   * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
+   * 渲染期写 ref 是本文件既有的写法（见上面的 `engineRef.current = engine`）。
+   */
+  const globalRatioRef = useRef(DEFAULT_RATIO)
+  globalRatioRef.current = globalRatio
+
   const settingsRef = useRef<AppSettings | null>(null)
   /**
    * 设置的当前值：**一处构造，两处消费**（防抖写盘的载荷、关窗前的快照）。
@@ -73,8 +95,8 @@ export default function App() {
    * 漏改 ref 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
    */
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath }),
-    [docTitle, themeSource, darkPaper, lastSourcePath]
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio }),
+    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
@@ -114,7 +136,13 @@ export default function App() {
       flushSession()
 
       setNovel(next)
-      setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
+      // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
+      // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
+      setEngine(
+        session
+          ? TypingEngine.fromSession(next, session)
+          : new TypingEngine(next, { ratio: globalRatioRef.current })
+      )
       setExpanded(false)
       setLastSourcePath(next.sourcePath)
     },
@@ -164,6 +192,7 @@ export default function App() {
       setDarkPaper(settings.darkPaper)
       setThemeSource(settings.themeSource)
       setLastSourcePath(settings.lastSourcePath)
+      setGlobalRatio(settings.ratio)
       setSettingsLoaded(true)
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
@@ -311,12 +340,14 @@ export default function App() {
     () => ({
       ratio: state?.ratio,
       mode: state?.mode,
+      globalRatio,
       onRatioChange: (n: number) => engineRef.current?.setRatio(n),
+      onGlobalRatioChange: setGlobalRatio,
       onModeChange: (m: InputMode) => engineRef.current?.setMode(m),
       onImport: () => void handleImport(),
       onClearSession: () => void handleClearSession()
     }),
-    [state?.ratio, state?.mode, handleImport, handleClearSession]
+    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession]
   )
 
   return (
@@ -329,6 +360,7 @@ export default function App() {
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
+          novelOpen={novel !== null}
         />
 
         <div className="wt-body">

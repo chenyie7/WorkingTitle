@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, type FocusEvent } from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
@@ -32,6 +32,8 @@ export interface SettingsDialogProps {
   /** 外观偏好：跟随系统 / 浅色 / 深色 */
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 有没有打开小说：「当前书」的比例框据此禁用——没有书就没有「当前书」 */
+  novelOpen: boolean
 }
 
 const THEME_OPTIONS = [
@@ -59,9 +61,11 @@ export function SettingsDialog({
   darkPaper,
   onDarkPaperChange,
   themeSource,
-  onThemeSourceChange
+  onThemeSourceChange,
+  novelOpen
 }: SettingsDialogProps) {
-  const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
+  const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
+    useToolbar()
 
   /**
    * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
@@ -97,9 +101,20 @@ export function SettingsDialog({
           return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
         },
         commit: (value) => setRatio(Number(value))
+      },
+      {
+        // 全局比例与当前书比例**用的是同一套解析与夹紧**，区别只在提交到哪儿：
+        // 一个进 settings.json（新导入的书取它当起点），一个进那本书的会话（真正生效的那个）。
+        id: 'global-ratio',
+        committed: String(globalRatio),
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
+        },
+        commit: (value) => setGlobalRatio(Number(value))
       }
     ],
-    [docTitle, ratio, onDocTitleChange, setRatio]
+    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
@@ -107,6 +122,21 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) reset()
   }, [open, reset])
+
+  /**
+   * 比例那两格的失焦处理：只归一化、不提交；**被夹紧了才提示**（普通改个数字不该弹东西）。
+   * 两格逻辑一模一样，只有 id 不同，所以抽出来——复制一份的话，夹紧提示的文案或边界一改就容易漏一处。
+   */
+  const blurRatio =
+    (id: 'ratio' | 'global-ratio') =>
+    (e: FocusEvent<HTMLInputElement>): void => {
+      const raw = e.currentTarget.value
+      const after = blur(id)
+      const parsed = Number.parseInt(raw, 10)
+      if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
+        notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+      }
+    }
 
   /** 保存：提交所有有改动的项，并给一条提示（不然点完没有任何反馈） */
   const handleSave = (): void => {
@@ -215,30 +245,50 @@ export function SettingsDialog({
               <IconFontSize className="wt-modal__label-icon" />
               阅读替换
             </span>
-            <div className="wt-ratio">
-              <span className="wt-ratio__label">1 键显示</span>
-              <input
-                className="wt-ratio__input"
-                data-testid="ratio-input"
-                aria-label="比例：输入 1 个字显示小说多少字"
-                inputMode="numeric"
-                value={drafts['ratio'] ?? String(ratio)}
-                onChange={(e) => setDraft('ratio', e.target.value)}
-                onBlur={(e) => {
-                  const raw = e.currentTarget.value
-                  const after = blur('ratio')
-                  const parsed = Number.parseInt(raw, 10)
-                  // 夹紧只发生在归一化这一步，所以提示也留在这里（保留原有的语义：
-                  // 只有真的被夹紧了才提示，普通改个数字不该弹东西）
-                  if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
-                    notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSave()
-                }}
-              />
-              <span className="wt-ratio__label">字</span>
+            {/*
+              两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
+              顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
+              点保存才生效。
+            */}
+            <div className="wt-ratio-pair">
+              <div className="wt-ratio-line">
+                <span className="wt-ratio__caption">全局</span>
+                <span className="wt-ratio__label">1 键显示</span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="global-ratio-input"
+                  aria-label="全局比例：新导入的书，输入 1 个字显示小说多少字"
+                  inputMode="numeric"
+                  value={drafts['global-ratio'] ?? String(globalRatio)}
+                  onChange={(e) => setDraft('global-ratio', e.target.value)}
+                  onBlur={blurRatio('global-ratio')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">字</span>
+                <span className="wt-ratio__note">新导入的书用它</span>
+              </div>
+              <div className="wt-ratio-line">
+                <span className="wt-ratio__caption">当前书</span>
+                <span className="wt-ratio__label">1 键显示</span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="ratio-input"
+                  aria-label="当前书比例：输入 1 个字显示小说多少字"
+                  inputMode="numeric"
+                  // 没有书就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
+                  disabled={!novelOpen}
+                  value={drafts['ratio'] ?? String(ratio)}
+                  onChange={(e) => setDraft('ratio', e.target.value)}
+                  onBlur={blurRatio('ratio')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">字</span>
+                {!novelOpen && <span className="wt-ratio__note">未打开小说</span>}
+              </div>
             </div>
           </div>
 

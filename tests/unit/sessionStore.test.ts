@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
-import { defaultSettings } from '../../src/core/types'
+import { DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
@@ -247,7 +247,8 @@ describe('sessionStore 会话读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/A.txt'
+      lastSourcePath: '/tmp/A.txt',
+      ratio: 10
     })
     // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
     // 不存在」——无论 clearReadingHistory 做什么都会通过。
@@ -280,7 +281,8 @@ describe('sessionStore 会话读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/A.txt'
+      lastSourcePath: '/tmp/A.txt',
+      ratio: 10
     })
   })
 
@@ -541,7 +543,8 @@ describe('sessionStore 设置读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/测试书.txt'
+      lastSourcePath: '/tmp/测试书.txt',
+      ratio: 10
     }
     store.writeSettings(s)
     expect(store.readSettings()).toEqual(s)
@@ -564,6 +567,7 @@ describe('sessionStore 设置读写', () => {
       token: 'lastSourcePath 既不是 null 也不是字符串',
       mangle: (s) => ({ ...s, lastSourcePath: 42 })
     },
+    { name: 'ratio 不是有限数字', token: 'ratio 不是有限数字', mangle: (s) => ({ ...s, ratio: '10' }) },
     { name: '记录是 null', token: '不是一个对象', mangle: () => null },
     { name: '记录是裸数字', token: '不是一个对象', mangle: () => 42 }
   ]
@@ -574,7 +578,8 @@ describe('sessionStore 设置读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: null
+      lastSourcePath: null,
+      ratio: 10
     }
     const bad = mangle(good)
     // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
@@ -593,6 +598,37 @@ describe('sessionStore 设置读写', () => {
       expect(store.readSettings()).toEqual(defaultSettings())
       expect(spy).toHaveBeenCalledTimes(1)
       expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // 【旧版记录里没有 ratio】它是后加的字段。若按必填校验，升级一次就会把用户改过的
+  // 文档名 / 外观 / 纸张一起退回默认值——「缺字段」是旧版本，「写错」才是坏文件，
+  // 这两件事必须分开：前者补上默认值，后者整份退回（上面那张表管的正是后者）。
+  it('旧版没有 ratio 的 settings.json 仍被接受，并补上默认值', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt'
+      }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSettings()).toEqual({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt',
+        ratio: DEFAULT_RATIO
+      })
+      // 补默认值这条正常路径不该报 warn（一条在正常路径上也会响的告警等于没有告警）
+      expect(spy).not.toHaveBeenCalled()
     } finally {
       spy.mockRestore()
     }
@@ -743,7 +779,8 @@ describe('旧版单槽会话的迁移', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/另一本.txt'
+      lastSourcePath: '/tmp/另一本.txt',
+      ratio: 10
     })
 
     store.migrateLegacySession()

@@ -573,6 +573,15 @@ export interface AppSettings {
   darkPaper: boolean
   /** 上次打开的书；启动时用它决定恢复哪一本。从未导入过时为 null。 */
   lastSourcePath: string | null
+  /**
+   * **全局**的阅读替换比例：新导入的书用它当起点。范围与当前书那个一样是 1–500。
+   *
+   * 【与 `PersistedSession.ratio` 的分工】那一份是**当前书**的比例，也是真正生效的那个
+   * （引擎只认它）。这一份不是「覆盖值」，而是**导入时的初值**：一本书第一次被打开时取它，
+   * 之后各管各的——**改全局不影响已经打开过的书，只影响之后导入的**。
+   * 于是两者之间没有「跟随」这层状态，界面上两个普通输入框就够了。
+   */
+  ratio: number
 }
 
 /** 蓝条上那个文档名的默认值：刻意中性，不泄露在读什么。 */
@@ -589,7 +598,8 @@ export function defaultSettings(): AppSettings {
     docTitle: DEFAULT_DOC_TITLE,
     themeSource: 'system',
     darkPaper: false,
-    lastSourcePath: null
+    lastSourcePath: null,
+    ratio: DEFAULT_RATIO
   }
 }
 ```
@@ -2450,7 +2460,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
-import { defaultSettings } from '../../src/core/types'
+import { DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
@@ -2684,7 +2694,8 @@ describe('sessionStore 会话读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/A.txt'
+      lastSourcePath: '/tmp/A.txt',
+      ratio: 10
     })
     // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
     // 不存在」——无论 clearReadingHistory 做什么都会通过。
@@ -2717,7 +2728,8 @@ describe('sessionStore 会话读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/A.txt'
+      lastSourcePath: '/tmp/A.txt',
+      ratio: 10
     })
   })
 
@@ -2978,7 +2990,8 @@ describe('sessionStore 设置读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/测试书.txt'
+      lastSourcePath: '/tmp/测试书.txt',
+      ratio: 10
     }
     store.writeSettings(s)
     expect(store.readSettings()).toEqual(s)
@@ -3001,6 +3014,7 @@ describe('sessionStore 设置读写', () => {
       token: 'lastSourcePath 既不是 null 也不是字符串',
       mangle: (s) => ({ ...s, lastSourcePath: 42 })
     },
+    { name: 'ratio 不是有限数字', token: 'ratio 不是有限数字', mangle: (s) => ({ ...s, ratio: '10' }) },
     { name: '记录是 null', token: '不是一个对象', mangle: () => null },
     { name: '记录是裸数字', token: '不是一个对象', mangle: () => 42 }
   ]
@@ -3011,7 +3025,8 @@ describe('sessionStore 设置读写', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: null
+      lastSourcePath: null,
+      ratio: 10
     }
     const bad = mangle(good)
     // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
@@ -3030,6 +3045,37 @@ describe('sessionStore 设置读写', () => {
       expect(store.readSettings()).toEqual(defaultSettings())
       expect(spy).toHaveBeenCalledTimes(1)
       expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // 【旧版记录里没有 ratio】它是后加的字段。若按必填校验，升级一次就会把用户改过的
+  // 文档名 / 外观 / 纸张一起退回默认值——「缺字段」是旧版本，「写错」才是坏文件，
+  // 这两件事必须分开：前者补上默认值，后者整份退回（上面那张表管的正是后者）。
+  it('旧版没有 ratio 的 settings.json 仍被接受，并补上默认值', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt'
+      }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSettings()).toEqual({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt',
+        ratio: DEFAULT_RATIO
+      })
+      // 补默认值这条正常路径不该报 warn（一条在正常路径上也会响的告警等于没有告警）
+      expect(spy).not.toHaveBeenCalled()
     } finally {
       spy.mockRestore()
     }
@@ -3180,7 +3226,8 @@ describe('旧版单槽会话的迁移', () => {
       docTitle: '季度汇报',
       themeSource: 'dark',
       darkPaper: true,
-      lastSourcePath: '/tmp/另一本.txt'
+      lastSourcePath: '/tmp/另一本.txt',
+      ratio: 10
     })
 
     store.migrateLegacySession()
@@ -3415,7 +3462,26 @@ function settingsProblem(v: unknown): string | null {
   if (s.lastSourcePath !== null && typeof s.lastSourcePath !== 'string') {
     return 'lastSourcePath 既不是 null 也不是字符串'
   }
+  const n = s.ratio
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 'ratio 不是有限数字'
   return null
+}
+
+/**
+ * 给**旧版**写下的设置补上后来才加的字段。
+ *
+ * 【为什么不能直接让它按必填校验失败】`ratio` 是后加的。旧版写下的 settings.json 里没有它，
+ * 而校验是「一个字段不合格就整份退回默认值」——那等于：升级一次，用户改过的文档名 / 外观 /
+ * 纸张**一起没了**，只在日志里留一条 warn。所以这里把「缺这个字段」单独识别出来补默认值，
+ * 其余字段仍然必填（写错了就是坏文件，照样整份退回）。
+ *
+ * 判据是「键不存在」而不是「值是 undefined」：后者在 JSON 里从来写不出来，
+ * 而前者正是旧版本留下的形状。
+ */
+function withRatioFilled(v: unknown): unknown {
+  if (typeof v !== 'object' || v === null) return v
+  if ('ratio' in v) return v
+  return { ...(v as Record<string, unknown>), ratio: defaultSettings().ratio }
 }
 
 function isAppSettings(v: unknown): v is AppSettings {
@@ -3426,14 +3492,16 @@ function readSettingsFile(path: string): AppSettings {
   try {
     if (!existsSync(path)) return defaultSettings()
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-    if (!isAppSettings(parsed)) {
+    // 先给旧版记录补上后来才加的字段，再按必填校验（见 withRatioFilled 的说明）
+    const filled = withRatioFilled(parsed)
+    if (!isAppSettings(filled)) {
       console.warn(
-        `[wt] 设置文件结构不合法（${settingsProblem(parsed) ?? '未知'}），按默认值处理：`,
+        `[wt] 设置文件结构不合法（${settingsProblem(filled) ?? '未知'}），按默认值处理：`,
         path
       )
       return defaultSettings()
     }
-    return parsed
+    return filled
   } catch (err) {
     console.warn('[wt] 读取设置失败，按默认值处理：', err)
     return defaultSettings()
@@ -5710,6 +5778,50 @@ body {
   gap: 5px;
 }
 
+/* 「阅读替换」的两格（全局 / 当前书）：一行一个，竖着排。
+   横排的话两行说明文字会把这一行撑得很宽，而对话框的行是「标签 + 内容」两列。 */
+.wt-ratio-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 一格：输入框在前、说明文字在后（说明里带着「全局/当前书」与它的作用）。
+   竖着对齐而不是居中——两行的说明文字长度不同，居中会让两个输入框错开。 */
+.wt-ratio-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 两格的标签（全局 / 当前书）。定宽，让两行的输入框竖直对齐。 */
+.wt-ratio__caption {
+  width: 44px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--wt-text);
+}
+
+/* 跟在后面的一句小字（「新导入的书用它」/「未打开小说」）。 */
+.wt-ratio__note {
+  font-size: 11px;
+  color: var(--wt-text-muted);
+}
+
+/*
+ * 「当前书」那格在没打开小说时禁用：没有书就没有「当前书」。
+ *
+ * 【必须让它看得出来，而且光靠底色不够】`.wt-ratio__input` 本来就没设 background，
+ * 靠的是浏览器给输入框的默认白底；拿 `--wt-chrome`（#f7f7f8）当禁用底色，两者在浅色下
+ * 几乎一模一样——真机截图里根本分不出哪格是禁用的。所以这里叠一层半透明：
+ * 它在两种主题下都与可用态明显不同。 */
+.wt-ratio__input:disabled {
+  background: var(--wt-chrome);
+  color: var(--wt-text-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .wt-ratio__label {
   font-size: 11px;
   color: var(--wt-text-muted);
@@ -6438,8 +6550,12 @@ export interface ToolbarValue {
   choose: (id: string, value: string) => void
   notify: (message: string) => void
   toast: string | null
+  /** **当前书**的比例：真正生效的那个 */
   ratio: number
   setRatio: (n: number) => void
+  /** **全局**比例：只是新导入的书的起点，改了不影响已经打开过的书 */
+  globalRatio: number
+  setGlobalRatio: (n: number) => void
   mode: InputMode
   setMode: (m: InputMode) => void
   onImport: () => void
@@ -6456,8 +6572,10 @@ export function clampRatioInput(n: number): number {
 export interface ToolbarProviderProps {
   children: ReactNode
   ratio?: number
+  globalRatio?: number
   mode?: InputMode
   onRatioChange?: (n: number) => void
+  onGlobalRatioChange?: (n: number) => void
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
@@ -6466,8 +6584,10 @@ export interface ToolbarProviderProps {
 export function ToolbarProvider({
   children,
   ratio: ratioProp,
+  globalRatio: globalRatioProp,
   mode: modeProp,
   onRatioChange,
+  onGlobalRatioChange,
   onModeChange,
   onImport,
   onClearSession
@@ -6476,9 +6596,11 @@ export function ToolbarProvider({
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
+  const [innerGlobalRatio, setInnerGlobalRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
 
   const ratio = ratioProp ?? innerRatio
+  const globalRatio = globalRatioProp ?? innerGlobalRatio
   const mode = modeProp ?? innerMode
 
   const toggle = useCallback((id: string) => {
@@ -6505,6 +6627,15 @@ export function ToolbarProvider({
     [onRatioChange]
   )
 
+  const setGlobalRatio = useCallback(
+    (n: number) => {
+      const next = clampRatioInput(n)
+      setInnerGlobalRatio(next)
+      onGlobalRatioChange?.(next)
+    },
+    [onGlobalRatioChange]
+  )
+
   const setMode = useCallback(
     (m: InputMode) => {
       setInnerMode(m)
@@ -6523,6 +6654,8 @@ export function ToolbarProvider({
       toast,
       ratio,
       setRatio,
+      globalRatio,
+      setGlobalRatio,
       mode,
       setMode,
       onImport: onImport ?? (() => notify('演示占位功能，未实现')),
@@ -6537,6 +6670,8 @@ export function ToolbarProvider({
       toast,
       ratio,
       setRatio,
+      globalRatio,
+      setGlobalRatio,
       mode,
       setMode,
       onImport,
@@ -8123,7 +8258,8 @@ export function Ribbon({
   darkPaper,
   onDarkPaperChange,
   themeSource,
-  onThemeSourceChange
+  onThemeSourceChange,
+  novelOpen
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -8131,6 +8267,8 @@ export function Ribbon({
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
+  novelOpen: boolean
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -8190,6 +8328,7 @@ export function Ribbon({
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        novelOpen={novelOpen}
       />
     </div>
   )
@@ -8215,6 +8354,7 @@ function setup(): void {
         onDarkPaperChange={() => {}}
         themeSource="system"
         onThemeSourceChange={() => {}}
+        novelOpen={false}
       />
       <Toast />
     </ToolbarProvider>
@@ -9784,7 +9924,7 @@ export function useTypingEngine(engine: TypingEngine | null): EngineState | null
 ```tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
-import { DEFAULT_DOC_TITLE } from '../../core/types'
+import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
@@ -9833,6 +9973,14 @@ export default function App() {
   /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
   const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
   /**
+   * **全局**阅读替换比例：新导入的书拿它当起点。
+   *
+   * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
+   * 一本书第一次打开时取它，之后各管各的——改这个**不影响已经打开过的书**，只影响之后导入的。
+   * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
+   */
+  const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
@@ -9848,6 +9996,20 @@ export default function App() {
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
+  /**
+   * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
+   *
+   * 【为什么不能用闭包里的那个值】`openNovel` 的依赖是 `[flushSession]`，而那是个稳定引用
+   * ——于是它永远保留**首次渲染**那一刻闭包里的 `globalRatio`（默认 10），启动读回真正的
+   * 全局值之后也不会更新。实测过：全局设成 3、导入一本新书，引擎拿到的仍是 10。
+   *
+   * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
+   * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
+   * 渲染期写 ref 是本文件既有的写法（见上面的 `engineRef.current = engine`）。
+   */
+  const globalRatioRef = useRef(DEFAULT_RATIO)
+  globalRatioRef.current = globalRatio
+
   const settingsRef = useRef<AppSettings | null>(null)
   /**
    * 设置的当前值：**一处构造，两处消费**（防抖写盘的载荷、关窗前的快照）。
@@ -9857,8 +10019,8 @@ export default function App() {
    * 漏改 ref 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
    */
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath }),
-    [docTitle, themeSource, darkPaper, lastSourcePath]
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio }),
+    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
@@ -9898,7 +10060,13 @@ export default function App() {
       flushSession()
 
       setNovel(next)
-      setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
+      // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
+      // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
+      setEngine(
+        session
+          ? TypingEngine.fromSession(next, session)
+          : new TypingEngine(next, { ratio: globalRatioRef.current })
+      )
       setExpanded(false)
       setLastSourcePath(next.sourcePath)
     },
@@ -9948,6 +10116,7 @@ export default function App() {
       setDarkPaper(settings.darkPaper)
       setThemeSource(settings.themeSource)
       setLastSourcePath(settings.lastSourcePath)
+      setGlobalRatio(settings.ratio)
       setSettingsLoaded(true)
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
@@ -10095,12 +10264,14 @@ export default function App() {
     () => ({
       ratio: state?.ratio,
       mode: state?.mode,
+      globalRatio,
       onRatioChange: (n: number) => engineRef.current?.setRatio(n),
+      onGlobalRatioChange: setGlobalRatio,
       onModeChange: (m: InputMode) => engineRef.current?.setMode(m),
       onImport: () => void handleImport(),
       onClearSession: () => void handleClearSession()
     }),
-    [state?.ratio, state?.mode, handleImport, handleClearSession]
+    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession]
   )
 
   return (
@@ -10113,6 +10284,7 @@ export default function App() {
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
+          novelOpen={novel !== null}
         />
 
         <div className="wt-body">
@@ -10556,7 +10728,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10 })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -10592,6 +10764,51 @@ describe('设置的持久化', () => {
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
     const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
     expect(last.docTitle).toBe('季度汇报')
+  })
+})
+
+describe('全局比例与当前书比例', () => {
+  // 全局比例的全部作用：**新导入**的书拿它当起点
+  it('新导入的书用全局比例当起点', async () => {
+    installApi(makeNovel())
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      ratio: 3
+    }))
+    render(<App />)
+    await act(async () => {})
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 状态栏那条报的是**当前书**的比例——也就是引擎真正在用的那个
+    expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:3')
+  })
+
+  // 这条是本设计的核心语义：全局不是「覆盖值」而是「初值」，已经打开过的书各管各的
+  it('有记录的书用它自己的比例，不被全局顶掉', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 5,
+      mode: 'key',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    // 全局是 3、这本书的记录是 5 —— 必须显示 5。桩里把 lastSourcePath 也指着它，
+    // 走的是「启动恢复」那条路（与手动导入同一条 openNovel）。
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      ratio: 3,
+      lastSourcePath: novel.sourcePath
+    }))
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:5'))
   })
 })
 
@@ -11131,7 +11348,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 
 **Step 1: 写 `src/renderer/src/components/SettingsDialog.tsx`**
 ```tsx
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, type FocusEvent } from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
@@ -11165,6 +11382,8 @@ export interface SettingsDialogProps {
   /** 外观偏好：跟随系统 / 浅色 / 深色 */
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 有没有打开小说：「当前书」的比例框据此禁用——没有书就没有「当前书」 */
+  novelOpen: boolean
 }
 
 const THEME_OPTIONS = [
@@ -11192,9 +11411,11 @@ export function SettingsDialog({
   darkPaper,
   onDarkPaperChange,
   themeSource,
-  onThemeSourceChange
+  onThemeSourceChange,
+  novelOpen
 }: SettingsDialogProps) {
-  const { ratio, setRatio, mode, setMode, onImport, onClearSession, notify } = useToolbar()
+  const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
+    useToolbar()
 
   /**
    * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
@@ -11230,9 +11451,20 @@ export function SettingsDialog({
           return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
         },
         commit: (value) => setRatio(Number(value))
+      },
+      {
+        // 全局比例与当前书比例**用的是同一套解析与夹紧**，区别只在提交到哪儿：
+        // 一个进 settings.json（新导入的书取它当起点），一个进那本书的会话（真正生效的那个）。
+        id: 'global-ratio',
+        committed: String(globalRatio),
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
+        },
+        commit: (value) => setGlobalRatio(Number(value))
       }
     ],
-    [docTitle, ratio, onDocTitleChange, setRatio]
+    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
@@ -11240,6 +11472,21 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) reset()
   }, [open, reset])
+
+  /**
+   * 比例那两格的失焦处理：只归一化、不提交；**被夹紧了才提示**（普通改个数字不该弹东西）。
+   * 两格逻辑一模一样，只有 id 不同，所以抽出来——复制一份的话，夹紧提示的文案或边界一改就容易漏一处。
+   */
+  const blurRatio =
+    (id: 'ratio' | 'global-ratio') =>
+    (e: FocusEvent<HTMLInputElement>): void => {
+      const raw = e.currentTarget.value
+      const after = blur(id)
+      const parsed = Number.parseInt(raw, 10)
+      if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
+        notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+      }
+    }
 
   /** 保存：提交所有有改动的项，并给一条提示（不然点完没有任何反馈） */
   const handleSave = (): void => {
@@ -11348,30 +11595,50 @@ export function SettingsDialog({
               <IconFontSize className="wt-modal__label-icon" />
               阅读替换
             </span>
-            <div className="wt-ratio">
-              <span className="wt-ratio__label">1 键显示</span>
-              <input
-                className="wt-ratio__input"
-                data-testid="ratio-input"
-                aria-label="比例：输入 1 个字显示小说多少字"
-                inputMode="numeric"
-                value={drafts['ratio'] ?? String(ratio)}
-                onChange={(e) => setDraft('ratio', e.target.value)}
-                onBlur={(e) => {
-                  const raw = e.currentTarget.value
-                  const after = blur('ratio')
-                  const parsed = Number.parseInt(raw, 10)
-                  // 夹紧只发生在归一化这一步，所以提示也留在这里（保留原有的语义：
-                  // 只有真的被夹紧了才提示，普通改个数字不该弹东西）
-                  if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
-                    notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSave()
-                }}
-              />
-              <span className="wt-ratio__label">字</span>
+            {/*
+              两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
+              顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
+              点保存才生效。
+            */}
+            <div className="wt-ratio-pair">
+              <div className="wt-ratio-line">
+                <span className="wt-ratio__caption">全局</span>
+                <span className="wt-ratio__label">1 键显示</span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="global-ratio-input"
+                  aria-label="全局比例：新导入的书，输入 1 个字显示小说多少字"
+                  inputMode="numeric"
+                  value={drafts['global-ratio'] ?? String(globalRatio)}
+                  onChange={(e) => setDraft('global-ratio', e.target.value)}
+                  onBlur={blurRatio('global-ratio')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">字</span>
+                <span className="wt-ratio__note">新导入的书用它</span>
+              </div>
+              <div className="wt-ratio-line">
+                <span className="wt-ratio__caption">当前书</span>
+                <span className="wt-ratio__label">1 键显示</span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="ratio-input"
+                  aria-label="当前书比例：输入 1 个字显示小说多少字"
+                  inputMode="numeric"
+                  // 没有书就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
+                  disabled={!novelOpen}
+                  value={drafts['ratio'] ?? String(ratio)}
+                  onChange={(e) => setDraft('ratio', e.target.value)}
+                  onBlur={blurRatio('ratio')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">字</span>
+                {!novelOpen && <span className="wt-ratio__note">未打开小说</span>}
+              </div>
             </div>
           </div>
 
@@ -11521,8 +11788,12 @@ import type { ThemeSource } from '../../src/renderer/src/types/global'
 
 interface SetupOptions {
   ratio?: number
+  globalRatio?: number
   mode?: InputMode
   onRatioChange?: (n: number) => void
+  onGlobalRatioChange?: (n: number) => void
+  /** 「当前书」那格据此禁用；不传＝当作已经打开了小说 */
+  novelOpen?: boolean
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
@@ -11541,7 +11812,14 @@ function setup(opts: SetupOptions = {}): {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
   const onThemeSourceChange = vi.fn()
-  const { capture, docTitle = '文档1', darkPaper = false, themeSource = 'system', ...provider } = opts
+  const {
+    capture,
+    docTitle = '文档1',
+    darkPaper = false,
+    themeSource = 'system',
+    novelOpen = true,
+    ...provider
+  } = opts
   render(
     <ToolbarProvider {...provider}>
       <Ribbon
@@ -11551,6 +11829,7 @@ function setup(opts: SetupOptions = {}): {
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        novelOpen={novelOpen}
       />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
@@ -11595,6 +11874,7 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           onDarkPaperChange={vi.fn()}
           themeSource="system"
           onThemeSourceChange={vi.fn()}
+          novelOpen
         />
         <Toast />
       </ToolbarProvider>
@@ -11896,6 +12176,37 @@ describe('手动保存', () => {
     expect(onDarkPaperChange).toHaveBeenCalledWith(true)
     // ……所以它们不会让「有未保存的改动」为真，保存按钮不该被它们点亮
     expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('全局比例与当前书比例：两格各有一个输入框，都归手动保存', () => {
+    const onRatioChange = vi.fn()
+    const onGlobalRatioChange = vi.fn()
+    setup({ ratio: 10, globalRatio: 10, onRatioChange, onGlobalRatioChange })
+    openViaButton()
+
+    expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).value).toBe('10')
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).value).toBe('10')
+
+    fireEvent.change(screen.getByTestId('global-ratio-input'), { target: { value: '4' } })
+    fireEvent.change(screen.getByTestId('ratio-input'), { target: { value: '7' } })
+    // 改了不生效——两格都在手动保存那一组里
+    expect(onGlobalRatioChange).not.toHaveBeenCalled()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    // 点保存之后各回各的家：全局进设置，当前书进引擎
+    expect(onGlobalRatioChange).toHaveBeenCalledWith(4)
+    expect(onRatioChange).toHaveBeenCalledWith(7)
+  })
+
+  it('没打开小说时「当前书」那格禁用，而全局那格照旧可用', () => {
+    setup({ novelOpen: false })
+    openViaButton()
+    // 没有书就没有「当前书」
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).disabled).toBe(true)
+    // 全局那格与「有没有书」无关：它管的是以后导入的书
+    expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).disabled).toBe(false)
   })
 
   it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {

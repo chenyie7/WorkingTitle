@@ -18,8 +18,12 @@ export interface ToolbarValue {
   choose: (id: string, value: string) => void
   notify: (message: string) => void
   toast: string | null
+  /** **当前书**的比例：真正生效的那个 */
   ratio: number
   setRatio: (n: number) => void
+  /** **全局**比例：只是新导入的书的起点，改了不影响已经打开过的书 */
+  globalRatio: number
+  setGlobalRatio: (n: number) => void
   mode: InputMode
   setMode: (m: InputMode) => void
   onImport: () => void
@@ -36,8 +40,10 @@ export function clampRatioInput(n: number): number {
 export interface ToolbarProviderProps {
   children: ReactNode
   ratio?: number
+  globalRatio?: number
   mode?: InputMode
   onRatioChange?: (n: number) => void
+  onGlobalRatioChange?: (n: number) => void
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
@@ -46,8 +52,10 @@ export interface ToolbarProviderProps {
 export function ToolbarProvider({
   children,
   ratio: ratioProp,
+  globalRatio: globalRatioProp,
   mode: modeProp,
   onRatioChange,
+  onGlobalRatioChange,
   onModeChange,
   onImport,
   onClearSession
@@ -56,9 +64,11 @@ export function ToolbarProvider({
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
+  const [innerGlobalRatio, setInnerGlobalRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
 
   const ratio = ratioProp ?? innerRatio
+  const globalRatio = globalRatioProp ?? innerGlobalRatio
   const mode = modeProp ?? innerMode
 
   const toggle = useCallback((id: string) => {
@@ -85,6 +95,15 @@ export function ToolbarProvider({
     [onRatioChange]
   )
 
+  const setGlobalRatio = useCallback(
+    (n: number) => {
+      const next = clampRatioInput(n)
+      setInnerGlobalRatio(next)
+      onGlobalRatioChange?.(next)
+    },
+    [onGlobalRatioChange]
+  )
+
   const setMode = useCallback(
     (m: InputMode) => {
       setInnerMode(m)
@@ -103,6 +122,8 @@ export function ToolbarProvider({
       toast,
       ratio,
       setRatio,
+      globalRatio,
+      setGlobalRatio,
       mode,
       setMode,
       onImport: onImport ?? (() => notify('演示占位功能，未实现')),
@@ -117,6 +138,8 @@ export function ToolbarProvider({
       toast,
       ratio,
       setRatio,
+      globalRatio,
+      setGlobalRatio,
       mode,
       setMode,
       onImport,

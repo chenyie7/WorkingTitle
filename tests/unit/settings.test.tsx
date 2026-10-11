@@ -10,8 +10,12 @@ import type { ThemeSource } from '../../src/renderer/src/types/global'
 
 interface SetupOptions {
   ratio?: number
+  globalRatio?: number
   mode?: InputMode
   onRatioChange?: (n: number) => void
+  onGlobalRatioChange?: (n: number) => void
+  /** 「当前书」那格据此禁用；不传＝当作已经打开了小说 */
+  novelOpen?: boolean
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
@@ -30,7 +34,14 @@ function setup(opts: SetupOptions = {}): {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
   const onThemeSourceChange = vi.fn()
-  const { capture, docTitle = '文档1', darkPaper = false, themeSource = 'system', ...provider } = opts
+  const {
+    capture,
+    docTitle = '文档1',
+    darkPaper = false,
+    themeSource = 'system',
+    novelOpen = true,
+    ...provider
+  } = opts
   render(
     <ToolbarProvider {...provider}>
       <Ribbon
@@ -40,6 +51,7 @@ function setup(opts: SetupOptions = {}): {
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        novelOpen={novelOpen}
       />
       {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
       <Toast />
@@ -84,6 +96,7 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           onDarkPaperChange={vi.fn()}
           themeSource="system"
           onThemeSourceChange={vi.fn()}
+          novelOpen
         />
         <Toast />
       </ToolbarProvider>
@@ -385,6 +398,37 @@ describe('手动保存', () => {
     expect(onDarkPaperChange).toHaveBeenCalledWith(true)
     // ……所以它们不会让「有未保存的改动」为真，保存按钮不该被它们点亮
     expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+
+  it('全局比例与当前书比例：两格各有一个输入框，都归手动保存', () => {
+    const onRatioChange = vi.fn()
+    const onGlobalRatioChange = vi.fn()
+    setup({ ratio: 10, globalRatio: 10, onRatioChange, onGlobalRatioChange })
+    openViaButton()
+
+    expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).value).toBe('10')
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).value).toBe('10')
+
+    fireEvent.change(screen.getByTestId('global-ratio-input'), { target: { value: '4' } })
+    fireEvent.change(screen.getByTestId('ratio-input'), { target: { value: '7' } })
+    // 改了不生效——两格都在手动保存那一组里
+    expect(onGlobalRatioChange).not.toHaveBeenCalled()
+    expect(onRatioChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    // 点保存之后各回各的家：全局进设置，当前书进引擎
+    expect(onGlobalRatioChange).toHaveBeenCalledWith(4)
+    expect(onRatioChange).toHaveBeenCalledWith(7)
+  })
+
+  it('没打开小说时「当前书」那格禁用，而全局那格照旧可用', () => {
+    setup({ novelOpen: false })
+    openViaButton()
+    // 没有书就没有「当前书」
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).disabled).toBe(true)
+    // 全局那格与「有没有书」无关：它管的是以后导入的书
+    expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).disabled).toBe(false)
   })
 
   it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {

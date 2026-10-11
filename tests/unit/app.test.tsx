@@ -397,7 +397,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10 })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -433,6 +433,51 @@ describe('设置的持久化', () => {
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
     const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
     expect(last.docTitle).toBe('季度汇报')
+  })
+})
+
+describe('全局比例与当前书比例', () => {
+  // 全局比例的全部作用：**新导入**的书拿它当起点
+  it('新导入的书用全局比例当起点', async () => {
+    installApi(makeNovel())
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      ratio: 3
+    }))
+    render(<App />)
+    await act(async () => {})
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 状态栏那条报的是**当前书**的比例——也就是引擎真正在用的那个
+    expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:3')
+  })
+
+  // 这条是本设计的核心语义：全局不是「覆盖值」而是「初值」，已经打开过的书各管各的
+  it('有记录的书用它自己的比例，不被全局顶掉', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 5,
+      mode: 'key',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    // 全局是 3、这本书的记录是 5 —— 必须显示 5。桩里把 lastSourcePath 也指着它，
+    // 走的是「启动恢复」那条路（与手动导入同一条 openNovel）。
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      ratio: 3,
+      lastSourcePath: novel.sourcePath
+    }))
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:5'))
   })
 })
 
