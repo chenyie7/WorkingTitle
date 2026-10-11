@@ -26,6 +26,23 @@ pnpm test:e2e     # 先 build 再 playwright（跑真 Electron 进程）
 pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 ```
 
+**产物名在 `electron-builder.yml` 里显式写死，别删那几行 `artifactName`。** 两个原因：
+
+- 默认模板 `${productName}-${version}-${arch}.${ext}` 里，`expandMacro` 在 arch 为空时会**把
+  `-${arch}` 整段删掉**，于是 Intel 那个 dmg 出来是 `WorkingTitle-0.1.0.dmg`，与 arm64 的分不清。
+- **`${platform}` 宏展开的是 `process.platform`——构建机的平台**，不是目标平台。在 Mac 上打
+  Windows 包会得到 `darwin`。所以平台名只能在 `mac:` / `win:` / `linux:` 段里各写一遍。
+
+产物名里那个 `v`（`WorkingTitle-v0.1.0-mac-arm64.dmg`）是**模板里的字面量**，写在 `${version}`
+前面即可。**别去改 `package.json` 的 `version` 加 `v`**：那个值会流进 macOS 包的
+`CFBundleShortVersionString` / `CFBundleVersion`（实测打出来的 .app 里就是 `0.1.0`），而 Apple
+要求这两个键是**纯数字点分**的，带上 `v` 是无效值。
+
+另外 `dist:mac` 只出 dmg（arm64 + x64 各一个），不出 zip；`dist:win` 出 `.exe` 与免安装 `.zip`。
+从 GitHub Releases 拉 Electron 二进制不稳，断了就重跑（已下的那份有缓存），或加镜像
+`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`——**注意 `.npmrc` 那条路在 pnpm 下不生效**
+（实测 `npm_config_electron_mirror` 不会被传进去），只有环境变量管用。
+
 **Electron 二进制不会被自动下下来，`pnpm dev` 会报 `Error: Electron uninstall`。** electron 44 起
 **取消了 `postinstall`**，二进制改由 `electron/index.js` 在**首次 `require('electron')` 时惰性下载**；
 而 electron-vite 的 `getElectronPath()` 只做 `require.resolve('electron')` + 直接读 `electron/path.txt`，
@@ -223,18 +240,47 @@ md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；�
 
 `docs/superpowers/specs/` 是面向人的设计文档，改行为时一并更新它。
 
-### 2. 提交
+### 2. 发布
+
+发版是「改版本号 → 打标签 → CI 自动出包并挂到 Release」，**不需要本地打包**：
+
+```bash
+# 1. 先改 package.json 的 version（产物名里的版本号取自它）
+# 2. 提交
+git commit -am "chore: 发布 v0.2.0"
+# 3. 打标签并推 —— 这一步触发 CI
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/build.yml` 会：校验标签与 `package.json` 的 version 一致 → 在 macOS 与
+Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂到该标签的 Release 上。
+
+三件必须知道的：
+
+- **版本号对不上会直接失败。** 产物名是 `WorkingTitle-v${version}-…`，取自 `package.json`；
+  release 名取自标签。不一致就会发出一个叫 `v0.2.0`、文件却叫 `WorkingTitle-v0.1.0-…` 的
+  release，且当场没人会发现——所以加了校验步骤，宁可失败。
+- **`release` 作业必须显式写 `permissions: contents: write`。** 本仓库 Actions 的默认权限是
+  `read`（`gh api repos/chenyie7/WorkingTitle/actions/permissions/workflow` 可查），
+  不写这行创建 release 会 403——这是「CI 全绿但 release 没出来」最常见的原因。
+- **在网页上「创建 release」也会触发**（它会生成标签），但那样容易踩版本号不一致那条。
+  推荐先改 version 再打标签。想先人工审一遍，把工作流里 `draft: false` 改成 `true`。
+
+没有配自动更新（`electron-builder.yml` 里没有 `publish` 段），所以 Release 只是给人下载用的；
+打包时 Electron 那边生成的那个 `latest-mac.yml` 用不上，也没被传上去。
+
+### 3. 提交
 
 - **`git add` 用显式路径，不要 `-A`。** 工作树里可能有别人的在途改动，以及未跟踪的用户素材 `books/`（一本 9MB 的真实小说，是测试语料，**不要入库**）。
 - **`git commit -F <消息文件>`，不要内联 `-m`。** 内联消息里的 ASCII 双引号会**静默截断**提交信息，而 diff/stat/测试看起来全对，评审看不出来。
 
-### 3. `out/` 被 gitignore —— 陈旧构建对 `git status` 完全隐形
+### 4. `out/` 被 gitignore —— 陈旧构建对 `git status` 完全隐形
 
 做变异验证时改源码 + 跑 `pnpm build`（或 `pnpm test:e2e`，它自带构建）会把变异编进 `out/`；之后还原了**源码**、`git status` 干净、单测全绿，而 `out/` 里仍是变异产物。此时手动 `_electron.launch({args:['.']})` 量到的是**变异后的代码**，能得出完全错误的结论（本项目栽过一次，差点把「防抖是死代码」当成 bug 报出去）。
 
 **规矩：手动跑 `_electron` 之前先 `pnpm build`；拿到负结果时先怀疑产物陈旧、重建再测。**
 
-### 4. 合并方式与分支卫生
+### 5. 合并方式与分支卫生
 
 合并 PR 用 **squash** 或 **merge commit**；用 **rebase merge** 就必须**合完立刻删分支**。
 

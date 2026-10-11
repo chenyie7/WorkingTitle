@@ -18,12 +18,15 @@
 
 从 [Releases](https://github.com/chenyie7/WorkingTitle/releases) 下载：
 
-| 平台 | 安装器 | 免安装 |
-|---|---|---|
-| Windows | `WorkingTitle-*-win-x64.exe` | `WorkingTitle-*-win-x64.zip` |
-| macOS | `WorkingTitle-*-arm64.dmg`、`-x64.dmg` | `WorkingTitle-*-mac.zip` |
+| 平台 | 下载 |
+|---|---|
+| Windows | `WorkingTitle-v<版本>-win-x64.exe`（安装器）或 `WorkingTitle-v<版本>-win-x64.zip`（免安装） |
+| macOS | `WorkingTitle-v<版本>-mac-arm64.dmg`（Apple 芯片）或 `WorkingTitle-v<版本>-mac-x64.dmg`（Intel） |
 
-**zip 版解压即用**——不跑安装器、不写注册表、不需要管理员权限。
+Windows 的 **zip 版解压即用**——不跑安装器、不写注册表、不需要管理员权限。
+
+macOS 用 dmg 就行：挂载后把 `WorkingTitle.app` 拖进「应用程序」。**dmg 本身不安装任何东西**，
+所以它已经满足了「不想跑安装器」这个诉求。
 
 ### 首次打开会被系统拦一下
 
@@ -32,9 +35,6 @@
 - **Windows**：SmartScreen 警告 →「更多信息」→「仍要运行」
 - **macOS**：Gatekeeper 拦下 → 右键点图标选「打开」；或
   `xattr -dr com.apple.quarantine /Applications/WorkingTitle.app`
-
-macOS 的 `.app` 里有符号链接，**zip 版请用访达自带的「归档实用工具」解压**。某些第三方解压工具
-不保留符号链接与权限位，解出来的 `.app` 启动不了。
 
 ## 使用
 
@@ -69,13 +69,15 @@ pnpm dev
 | `pnpm typecheck` | 类型检查（跑两个 tsconfig） |
 | `pnpm test` | 单元测试 |
 | `pnpm test:e2e` | 端到端测试（起真实 Electron 进程） |
-| `pnpm dist:mac` / `pnpm dist:win` | 打包成 `.dmg` / `.exe`，外加免安装 `.zip` |
+| `pnpm dist:mac` | 打包成两个 `.dmg`（arm64 + x64） |
+| `pnpm dist:win` | 打包成 `.exe` 安装器与免安装 `.zip` |
 
 `out/` 不在 git 里：**手动启动 Electron 之前先 `pnpm build`**，否则跑的是上一次的产物，
 而 `git status` 完全看不出来。
 
-打 Windows 包建议走 CI（`.github/workflows/build.yml`）：推一个 `v*` tag 或手动触发，
-两个平台各自原生构建，产物在 Actions 的 Artifacts 里——在 macOS 上打 Windows 包需要 wine。
+打 Windows 包建议走 CI——在 macOS 上打 Windows 包需要 wine。推一个 `v*` 标签，CI 会在两个平台上
+各自原生构建，并把安装包挂到该标签对应的 GitHub Release 上；手动触发工作流则只构建，
+产物在 Actions 的 Artifacts 里。
 
 ## 已知限制
 
