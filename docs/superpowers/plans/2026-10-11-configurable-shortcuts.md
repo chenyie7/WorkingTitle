@@ -1217,6 +1217,7 @@ Expected: FAIL —— `Failed to resolve import "../../src/renderer/src/state/sh
 import { useEffect, useRef } from 'react'
 import {
   SHORTCUTS,
+  fromChord,
   normalizeSpec,
   platformKind,
   resolveShortcuts,
