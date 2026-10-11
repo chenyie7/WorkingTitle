@@ -45,7 +45,14 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
 
-  ipcMain.handle(CH.loadSession, (): PersistedSession | null => getStore().readSession())
+  // 【过渡形态，Task 6 会把这条契约改成必填】进度按书存之后 readSession 需要 sourcePath，
+  // 而渲染层现在还不传它。缺参就当「无记录」返回 null，而不是让 sessionFileName(undefined)
+  // 抛出去——那个异常在 readSessionFile 的 try 之外，会一路冒到 ipcMain.handle，把渲染层
+  // 这次 invoke 打成 rejection（`pnpm dev` 每次启动都冒一条），而门禁抓不到它：
+  // 单测不碰 handler，e2e 要 Task 8 才跑。问不到就按无记录，是本仓库一贯的失败关闭姿势。
+  ipcMain.handle(CH.loadSession, (_e, sourcePath: unknown): PersistedSession | null => {
+    return typeof sourcePath === 'string' ? getStore().readSession(sourcePath) : null
+  })
 
   ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
     getStore().writeSession(session)
