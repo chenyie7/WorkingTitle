@@ -380,6 +380,21 @@
   height: 10px;
 }
 
+/* ---- 格子布局（剪贴板组里「剪切/复制/格式刷」贴满「粘贴」的高度）----
+ * 列数由 JS 通过 inline style 给（见 Toolbar 的 `repeat(N, auto)`），这里只管行距。
+ *
+ * 【奇数项为什么不让最后一项横跨整行】试过。两项并排约 58px，扣掉 `.wt-btn` 的
+ * 左右内边距只剩 44px，装不下「格式刷」三个字 + 图标的约 53px，会溢出；
+ * 不放标签则是一个 58px 宽、中间孤零零一个小图标的按钮，比右下角留着空位更怪。
+ * 所以就让右下角空着——那一格没有边框，看不出来。
+ */
+.wt-grid {
+  display: grid;
+  gap: 2px;
+  align-items: center;
+  justify-items: center;
+}
+
 .wt-sep {
   width: 1px;
   height: 22px;

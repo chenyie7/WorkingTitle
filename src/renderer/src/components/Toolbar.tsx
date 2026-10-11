@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { useToolbar } from '../state/ToolbarContext'
@@ -40,6 +40,16 @@ export type ToolbarItem =
   | { kind: 'gallery'; id: string; title: string; entries: readonly string[] }
   /** 主按钮 + 右侧展开箭头（下划线 / 项目符号 / 编号）。主按钮是 toggle，箭头只弹提示。 */
   | { kind: 'split'; id: string; label: string; title: string; icon: FluentIcon }
+  /**
+   * 把一个组里的小按钮排成 `columns` 列。**存在的唯一理由是高度对齐**：
+   *
+   * 真 Word 的「剪贴板」组里，「粘贴」是大按钮（64px 高），而「剪切/复制/格式刷」是三个
+   * 小按钮——它们不是横着飘在旁边，而是排成两列**贴满那 64px**。少了这层，整组看起来就是
+   * 「一个大方块边上飘着三个小的」，实测被一眼指出「太大、很奇怪」。
+   *
+   * 所以这不是通用的栅格，是「让若干小按钮凑出与相邻大按钮同高的一块」。
+   */
+  | { kind: 'grid'; id: string; columns: number; items: ToolbarItem[] }
 
 export interface ToolbarGroup {
   label: string
@@ -252,84 +262,107 @@ export function Toolbar({
 }) {
   const { toggles, toggle, notify } = useToolbar()
 
+  /**
+   * 渲染一个「叶子」控件（不能再往下拆的那些）。
+   *
+   * 【为什么抽成函数】`grid` 里的每一项必须与直接摆在组里的一项走**同一套**渲染规则，
+   * 否则同一个按钮放进格子就换了样式。分开写两份迟早会漂移。
+   */
+  const renderLeaf = (item: ToolbarItem): ReactNode => {
+    if (item.kind === 'settings') {
+      return (
+        <button
+          key="settings"
+          type="button"
+          className={`wt-btn${item.large ? ' wt-btn--large' : ''}`}
+          data-testid="btn-settings"
+          title="设置 (⌘/Ctrl + ,)"
+          onClick={onOpenSettings}
+        >
+          <IconSettings className="wt-btn__icon" />
+          <span className="wt-btn__label">设置</span>
+        </button>
+      )
+    }
+
+    if (item.kind === 'combo') {
+      return (
+        <Combo
+          key={item.id}
+          id={item.id}
+          title={item.title}
+          options={item.options}
+          width={item.width}
+        />
+      )
+    }
+
+    if (item.kind === 'gallery') {
+      return <Gallery key={item.id} id={item.id} title={item.title} entries={item.entries} />
+    }
+
+    if (item.kind === 'split') {
+      return (
+        <SplitButton
+          key={item.id}
+          id={item.id}
+          label={item.label}
+          title={item.title}
+          icon={item.icon}
+        />
+      )
+    }
+
+    if (item.kind === 'grid') {
+      // 只会从 renderItem 进来；写在这里是为了让类型收敛，不是一条真实路径。
+      return null
+    }
+
+    const active = Boolean(toggles[item.id])
+    const Icon = item.icon
+    // 有图标、又不是大按钮 → 只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
+    // 标签仍渲染在 DOM 里但被 CSS 藏起来，`aria-label` 保证读屏拿得到名字。
+    const iconOnly = Boolean(Icon) && !item.large
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`wt-btn${item.large ? ' wt-btn--large' : ''}${iconOnly ? ' wt-btn--icon-only' : ''}${active ? ' wt-btn--active' : ''}`}
+        data-testid={`btn-${item.id}`}
+        title={item.title}
+        aria-label={iconOnly ? item.title : undefined}
+        aria-pressed={item.kind === 'toggle' ? active : undefined}
+        onClick={() => {
+          if (item.kind === 'toggle') toggle(item.id)
+          else notify('演示占位功能，未实现')
+        }}
+      >
+        {/* filled 切换线框/实心，就是 Word 切换按钮的语义（见 icons.tsx 的说明） */}
+        {Icon ? <Icon filled={active} className="wt-btn__icon" /> : null}
+        <span className="wt-btn__label">{item.label}</span>
+      </button>
+    )
+  }
+
+  const renderItem = (item: ToolbarItem): ReactNode => {
+    if (item.kind !== 'grid') return renderLeaf(item)
+    return (
+      <div
+        key={item.id}
+        className="wt-grid"
+        data-testid={`grid-${item.id}`}
+        style={{ gridTemplateColumns: `repeat(${item.columns}, auto)` }}
+      >
+        {item.items.map(renderItem)}
+      </div>
+    )
+  }
+
   return (
     <div className="wt-toolbar" data-testid="toolbar">
       {groups.map((group) => (
         <div className="wt-group" key={group.label}>
-          <div className="wt-group__body">
-            {group.items.map((item) => {
-              if (item.kind === 'settings') {
-                return (
-                  <button
-                    key="settings"
-                    type="button"
-                    className={`wt-btn${item.large ? ' wt-btn--large' : ''}`}
-                    data-testid="btn-settings"
-                    title="设置 (⌘/Ctrl + ,)"
-                    onClick={onOpenSettings}
-                  >
-                    <IconSettings className="wt-btn__icon" />
-                    <span className="wt-btn__label">设置</span>
-                  </button>
-                )
-              }
-
-              if (item.kind === 'combo') {
-                return (
-                  <Combo
-                    key={item.id}
-                    id={item.id}
-                    title={item.title}
-                    options={item.options}
-                    width={item.width}
-                  />
-                )
-              }
-
-              if (item.kind === 'gallery') {
-                return (
-                  <Gallery key={item.id} id={item.id} title={item.title} entries={item.entries} />
-                )
-              }
-
-              if (item.kind === 'split') {
-                return (
-                  <SplitButton
-                    key={item.id}
-                    id={item.id}
-                    label={item.label}
-                    title={item.title}
-                    icon={item.icon}
-                  />
-                )
-              }
-
-              const active = Boolean(toggles[item.id])
-              const Icon = item.icon
-              // 有图标、又不是大按钮 → 只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
-              // 标签仍渲染在 DOM 里但被 CSS 藏起来，`aria-label` 保证读屏拿得到名字。
-              const iconOnly = Boolean(Icon) && !item.large
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`wt-btn${item.large ? ' wt-btn--large' : ''}${iconOnly ? ' wt-btn--icon-only' : ''}${active ? ' wt-btn--active' : ''}`}
-                  data-testid={`btn-${item.id}`}
-                  title={item.title}
-                  aria-label={iconOnly ? item.title : undefined}
-                  aria-pressed={item.kind === 'toggle' ? active : undefined}
-                  onClick={() => {
-                    if (item.kind === 'toggle') toggle(item.id)
-                    else notify('演示占位功能，未实现')
-                  }}
-                >
-                  {/* filled 切换线框/实心，就是 Word 切换按钮的语义（见 icons.tsx 的说明） */}
-                  {Icon ? <Icon filled={active} className="wt-btn__icon" /> : null}
-                  <span className="wt-btn__label">{item.label}</span>
-                </button>
-              )
-            })}
-          </div>
+          <div className="wt-group__body">{group.items.map(renderItem)}</div>
           <div className="wt-group__label">{group.label}</div>
         </div>
       ))}

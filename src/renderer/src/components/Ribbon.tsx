@@ -100,11 +100,20 @@ const CLIPBOARD_GROUP: ToolbarGroup = {
   label: '剪贴板',
   items: [
     // 真 Word 的「粘贴」是带展开箭头的大按钮；这里没给 `split` 做大按钮尺寸（那要另写一套
-    // 箭头定位的样式），所以粘贴先用大按钮，箭头在下面几个真正需要它的地方用。
+    // 箭头定位的样式），所以粘贴用大按钮，箭头留给下面几个真正需要它的地方。
     { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
-    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
-    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
-    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
+    // 剩下三个排成两列**贴满粘贴那 64px**。横着排成一溜的话，整组看起来就是
+    // 「一个大方块边上飘着三个小的」——实测被一眼指出「太大、很奇怪」。
+    {
+      kind: 'grid',
+      id: 'clipboard-actions',
+      columns: 2,
+      items: [
+        { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+        { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
+        { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
+      ]
+    }
   ]
 }
 
