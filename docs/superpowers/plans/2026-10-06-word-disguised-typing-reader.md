@@ -9534,6 +9534,16 @@ describe('Page', () => {
     expect(screen.getByTestId('page-empty').textContent).not.toContain('Ctrl+O')
   })
 
+  it('不传 importShortcut 时按宿主平台推默认值（不是写死的 Ctrl+O）', () => {
+    // 这条钉的是**兜底那一路**：上面那条传了 prop，覆盖不到它。jsdom 的 `window.api` 桩
+    // 报的是 darwin（`tests/setup.ts`），所以该平台的默认值是 ⌘O——真机上真值由 App 喂下来，
+    // 这个默认值只在「还没喂」的调用方那里生效，而它照样得跟着平台走：
+    // 平台参数传成同一个（两平台都按 other 格式化）时，这里会显示 Ctrl+O，本条即红。
+    render(<Page visibleText="" expanded={false} onToggleExpand={() => {}} empty />)
+    expect(screen.getByTestId('page-empty').textContent).toContain('⌘O')
+    expect(screen.getByTestId('page-empty').textContent).not.toContain('Ctrl+O')
+  })
+
   it('把 visibleText 原样渲染进文档区', () => {
     render(<Page visibleText="第一章 风起\n正文。" expanded={false} onToggleExpand={() => {}} empty={false} />)
     expect(screen.getByTestId('page-text').textContent).toContain('第一章 风起')
