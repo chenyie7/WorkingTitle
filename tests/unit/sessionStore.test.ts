@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
+import { resolveShortcuts } from '../../src/core/shortcuts'
 import { DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
@@ -248,7 +249,9 @@ describe('sessionStore 会话读写', () => {
       themeSource: 'dark',
       darkPaper: true,
       lastSourcePath: '/tmp/A.txt',
-      ratio: 10
+      ratio: 10,
+      // shortcuts 是后加的必填字段；这里给空表，本用例要钉的是「清除记录不动设置」
+      shortcuts: {}
     })
     // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
     // 不存在」——无论 clearReadingHistory 做什么都会通过。
@@ -282,7 +285,8 @@ describe('sessionStore 会话读写', () => {
       themeSource: 'dark',
       darkPaper: true,
       lastSourcePath: '/tmp/A.txt',
-      ratio: 10
+      ratio: 10,
+      shortcuts: {}
     })
   })
 
@@ -544,7 +548,8 @@ describe('sessionStore 设置读写', () => {
       themeSource: 'dark',
       darkPaper: true,
       lastSourcePath: '/tmp/测试书.txt',
-      ratio: 10
+      ratio: 10,
+      shortcuts: {}
     }
     store.writeSettings(s)
     expect(store.readSettings()).toEqual(s)
@@ -579,7 +584,8 @@ describe('sessionStore 设置读写', () => {
       themeSource: 'dark',
       darkPaper: true,
       lastSourcePath: null,
-      ratio: 10
+      ratio: 10,
+      shortcuts: {}
     }
     const bad = mangle(good)
     // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
@@ -625,7 +631,9 @@ describe('sessionStore 设置读写', () => {
         themeSource: 'dark',
         darkPaper: true,
         lastSourcePath: '/tmp/A.txt',
-        ratio: DEFAULT_RATIO
+        ratio: DEFAULT_RATIO,
+        // 与 ratio 同为「旧文件里没有、读时补上」的字段
+        shortcuts: {}
       })
       // 补默认值这条正常路径不该报 warn（一条在正常路径上也会响的告警等于没有告警）
       expect(spy).not.toHaveBeenCalled()
@@ -780,7 +788,8 @@ describe('旧版单槽会话的迁移', () => {
       themeSource: 'dark',
       darkPaper: true,
       lastSourcePath: '/tmp/另一本.txt',
-      ratio: 10
+      ratio: 10,
+      shortcuts: {}
     })
 
     store.migrateLegacySession()
@@ -845,5 +854,107 @@ describe('旧版单槽会话的迁移', () => {
       spy.mockRestore()
     }
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+})
+
+describe('shortcuts 字段的向后兼容', () => {
+  it('旧版的 settings.json 没有 shortcuts 键，补成空表而不是整份退回默认值', () => {
+    // 这是本次改动最容易毁数据的地方：settingsProblem 的取舍是「一个字段不合格就整份退回
+    // 默认值」，而 shortcuts 是后加的必填字段——不特殊处理的话，老用户升级一次就把改过的
+    // 文档名 / 外观 / 纸张一起丢掉。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        docTitle: '我的文档',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/某本书.txt'
+      }),
+      'utf8'
+    )
+    const store = createSessionStore(dir)
+    const settings = store.readSettings()
+    expect(settings.docTitle).toBe('我的文档')
+    expect(settings.themeSource).toBe('dark')
+    expect(settings.darkPaper).toBe(true)
+    expect(settings.lastSourcePath).toBe('/tmp/某本书.txt')
+    expect(settings.shortcuts).toEqual({})
+  })
+
+  it('shortcuts 不是对象时整份退回默认值（坏文件，与别处姿态一致）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: 'Meta+KeyO' }),
+      'utf8'
+    )
+    expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+  })
+
+  it('shortcuts 里有一条坏串时整份退回默认值', () => {
+    // 【为什么是整份而不是只丢那一条】坏串意味着这个文件被人改过或写坏了；设置项全是
+    // 可再生的，退回默认值是既有姿态。逐条退让会让「哪几条是我改的」变得无法解释。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { import: 'KeyO' } }),
+      'utf8'
+    )
+    expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+  })
+
+  it('macOS 的保留键**不**导致整份退回——它归 core 按平台逐条处理', () => {
+    // 【这一条是钉住两层校验的分工，不是补一条覆盖率】`resolveShortcuts` 的逐条校验要是
+    // 永远走不到，它就是纸面路径。保留键是平台相关的，必须**穿过** sessionStore 这一层
+    // （它拿不到平台，判不了），到 core 那里才被退回默认值。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        ...defaultSettings(),
+        docTitle: '还在',
+        shortcuts: { import: 'Meta+KeyQ' }
+      }),
+      'utf8'
+    )
+    const settings = createSessionStore(dir).readSettings()
+    // 文件本身没被当坏文件，其它字段照旧
+    expect(settings.docTitle).toBe('还在')
+    expect(settings.shortcuts).toEqual({ import: 'Meta+KeyQ' })
+    // 到了 core 这一层才按平台分道扬镳
+    expect(resolveShortcuts(settings.shortcuts, 'darwin').import).toBe('Meta+KeyO')
+    expect(resolveShortcuts(settings.shortcuts, 'other').import).toBe('Meta+KeyQ')
+  })
+
+  it('shortcuts 里的未知 id 不拦——那是更新版本写的，本版本应当照常读', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { 'future-thing': 'Meta+KeyJ' } }),
+      'utf8'
+    )
+    const settings = createSessionStore(dir).readSettings()
+    expect(settings.shortcuts).toEqual({ 'future-thing': 'Meta+KeyJ' })
+    // 未知 id 不参与解析，所以默认值一条都不受影响
+    expect(resolveShortcuts(settings.shortcuts, 'other').import).toBe('Ctrl+KeyO')
+  })
+
+  it('合法的 shortcuts 原样读回来', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { import: 'Ctrl+KeyI' } }),
+      'utf8'
+    )
+    expect(createSessionStore(dir).readSettings().shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+  })
+
+  it('写进去的 shortcuts 能原样读回来（往返）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    const store = createSessionStore(dir)
+    const settings = { ...defaultSettings(), shortcuts: { 'toggle-sidebar': 'Ctrl+Alt+KeyB' } }
+    store.writeSettings(settings)
+    expect(store.readSettings()).toEqual(settings)
   })
 })

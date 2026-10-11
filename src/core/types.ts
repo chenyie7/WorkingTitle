@@ -1,3 +1,5 @@
+import type { ShortcutId } from './shortcuts'
+
 export interface Chapter {
   index: number
   title: string
@@ -107,6 +109,20 @@ export interface AppSettings {
    * 于是两者之间没有「跟随」这层状态，界面上两个普通输入框就够了。
    */
   ratio: number
+  /**
+   * 用户改过的快捷键。**稀疏表：缺条目 = 用该平台的默认值**，`{}` 就是「全默认」。
+   *
+   * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
+   * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
+   * 有六十多处调用点（写这句时实测 63 = `tests/` 下这两个名字的出现次数；这个数随测试
+   * 增长只多不少，别当成会停住的量）。稀疏之后这两个函数的签名一个都不用动，`core` 也不必
+   * 去读 `process`（那是 node 的东西，而 core 要能被渲染进程共用）。
+   *
+   * 【为什么值是规范串而不是 accelerator】`CmdOrCtrl+O` 把两个平台合并成一个记号，恰好
+   * 表达不了「各平台不一样」。规范串（`Meta+KeyO` / `Ctrl+KeyO`）把 Meta 与 Ctrl 分开存，
+   * 只在喂菜单那一刻才转成 accelerator。
+   */
+  shortcuts: Partial<Record<ShortcutId, string>>
 }
 
 /** 蓝条上那个文档名的默认值：刻意中性，不泄露在读什么。 */
@@ -124,6 +140,18 @@ export function defaultSettings(): AppSettings {
     themeSource: 'system',
     darkPaper: false,
     lastSourcePath: null,
-    ratio: DEFAULT_RATIO
+    ratio: DEFAULT_RATIO,
+    /**
+     * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
+     * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。
+     *
+     * 【为什么不在这里写死一份】写死就要求这个函数知道平台，而它是零参的
+     * （见 AppSettings.shortcuts 的说明）。
+     *
+     * 【为什么是就地写 `{}` 而不是提一个模块级常量】本函数上面那段说明的就是这件事：
+     * 共享常量会被消费方就地改掉（`s.shortcuts.import = 'Meta+KeyI'`），于是「默认值」
+     * 在下一次调用时已经变了。每次返回一个新的字面量才是这里要的形状。
+     */
+    shortcuts: {}
   }
 }
