@@ -79,3 +79,41 @@ export const MIN_RATIO = 1
 export const MAX_RATIO = 500
 /** 阅读区渲染窗口上限，超出则折叠前文 */
 export const RENDER_WINDOW_LIMIT = 30_000
+
+/** 外观偏好：跟随系统 / 强制浅色 / 强制深色。与主进程的 `nativeTheme.themeSource` 同构。 */
+export type ThemeSource = 'system' | 'light' | 'dark'
+
+/**
+ * 应用级设置：**不属于任何一本书**的那些偏好。
+ *
+ * 【为什么与 PersistedSession 分开】两者的生命周期不同。进度是「读到哪」，每本书一份、
+ * 随阅读不断变化；设置是「怎么读、长什么样」，全局一份、很少变。此前文档名 / 外观 / 纸张
+ * 三个只在渲染进程的内存里，关掉应用就没了；而比例与输入模式挤在会话里，换一本书就被打回默认。
+ */
+export interface AppSettings {
+  /** 蓝条上的文档名。刻意与 novelTitle（真实文件名）无关，见 App.tsx 里那段说明。 */
+  docTitle: string
+  themeSource: ThemeSource
+  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
+  darkPaper: boolean
+  /** 上次打开的书；启动时用它决定恢复哪一本。从未导入过时为 null。 */
+  lastSourcePath: string | null
+}
+
+/** 蓝条上那个文档名的默认值：刻意中性，不泄露在读什么。 */
+export const DEFAULT_DOC_TITLE = '文档1'
+
+/**
+ * 默认设置。
+ *
+ * 【写成函数而不是共享常量】常量会被消费方就地改掉（`s.themeSource = 'dark'`），
+ * 于是「默认值」在下一次读取时已经变了——那类 bug 只在测试之间串味时才显形。
+ */
+export function defaultSettings(): AppSettings {
+  return {
+    docTitle: DEFAULT_DOC_TITLE,
+    themeSource: 'system',
+    darkPaper: false,
+    lastSourcePath: null
+  }
+}
