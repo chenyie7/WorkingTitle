@@ -101,6 +101,11 @@ export default function App() {
    */
   // 【为什么这里先给空表】`shortcuts` 是必填字段，而稀疏表的 `{}` 就是「全默认」——
   // 行为与本次改动之前完全一致。真正的用户改动会在后续任务里接进来（届时这里换成状态）。
+  //
+  // 【接进来的时候别忘了依赖数组】上面那段刚说过「依赖数组必须与返回对象里的字段一一对应」，
+  // 而 `shortcuts` 眼下正是**唯一一个不在依赖数组里的字段**——它恒为 `{}`，所以现在没有后果。
+  // Task 7 把它换成状态时，必须同时把 `shortcuts` 加进下面那个依赖数组；否则这个字段的改动
+  // 哪条路都带不上去（见上段第二小节）。
   const settings: AppSettings = useMemo(
     () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts: {} }),
     [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]

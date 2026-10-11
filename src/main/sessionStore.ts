@@ -174,7 +174,7 @@ function settingsProblem(v: unknown): string | null {
     // 一样整份退回；保留键是**平台相关**的，而这一层拿不到平台，只能交给 core 的
     // `resolveShortcuts` 按平台逐条退回默认值。
     //
-    // 【那个 'darwin' 是惰性的，别试图"修正"它】`shortcutProblem` 的 `no-modifier` /
+    // 【那个 'darwin' 是惰性的，别试图「修正」它】`shortcutProblem` 的 `no-modifier` /
     // `unsupported-key` 两个出口在**查保留清单之前**就返回了，与 kind 无关；所以这里传
     // 什么都一样，真正吃重的是下面这个枚举。写成枚举而不是 `!== 'reserved'`，就是为了
     // 让这件事在调用点上自明。
@@ -202,10 +202,10 @@ function settingsProblem(v: unknown): string | null {
  * 再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个；写成一张表就没有
  * 这个「记得」了。
  */
-const FILLED_DEFAULTS: Readonly<Record<string, () => unknown>> = {
+const FILLED_DEFAULTS = {
   ratio: () => defaultSettings().ratio,
-  shortcuts: () => ({})
-}
+  shortcuts: () => defaultSettings().shortcuts
+} satisfies Readonly<Partial<Record<keyof AppSettings, () => unknown>>>
 
 function withDefaultsFilled(v: unknown): unknown {
   if (typeof v !== 'object' || v === null) return v

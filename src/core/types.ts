@@ -114,13 +114,23 @@ export interface AppSettings {
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
    * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
-   * 有六十多处调用点（写这句时实测 63 = `tests/` 下这两个名字的出现次数；这个数随测试
-   * 增长只多不少，别当成会停住的量）。稀疏之后这两个函数的签名一个都不用动，`core` 也不必
-   * 去读 `process`（那是 node 的东西，而 core 要能被渲染进程共用）。
+   * 有六十多处调用点（这个数随测试增长只多不少，别当成会停住的量）。稀疏之后这两个函数的
+   * 签名一个都不用动，`core` 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染
+   * 进程共用）。
    *
-   * 【为什么值是规范串而不是 accelerator】`CmdOrCtrl+O` 把两个平台合并成一个记号，恰好
-   * 表达不了「各平台不一样」。规范串（`Meta+KeyO` / `Ctrl+KeyO`）把 Meta 与 Ctrl 分开存，
-   * 只在喂菜单那一刻才转成 accelerator。
+   * 【为什么值是规范串而不是 accelerator】得把话说准：**单看现在这三条默认值，
+   * `CmdOrCtrl` 是够用的**——三条都只是 Meta↔Ctrl 互换（核 `SHORTCUTS` 即知），所以
+   * 「合并成一个记号恰好表达不了各平台不一样」这句在该表上并不成立。扣住这个选择的是
+   * 另外两件事：
+   *
+   * 1. core 这一整套（`KeyChord` / `fromChord` / `parseShortcut` / `RESERVED` /
+   *    `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 是**单向**的
+   *    `e.code → accelerator` 词表（全文件只有 `toAccelerator` 用它）——改存 accelerator
+   *    就得再造一张反向词表，否则校验与显示都得重写；
+   * 2. `ShortcutDef.defaults` 的形状是 `{ darwin, other }`，它容得下「两个平台根本不是
+   *    同一个键」这种默认值，而 `CmdOrCtrl` 只表达得了「同一个键换修饰键」。
+   *
+   * 于是「只在喂菜单那一刻才转成 accelerator」是这条链上唯一的单向转换点。
    */
   shortcuts: Partial<Record<ShortcutId, string>>
 }
