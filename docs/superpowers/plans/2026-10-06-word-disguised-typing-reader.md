@@ -8968,9 +8968,14 @@ export interface ChapterListProps {
    * 用例、以及任何不关心全局快捷键的场景）没人替它持这个状态，两个 prop 都不给就退回组件
    * 内部——与上面那个 `sidebarShortcut` 是同一套取舍。
    *
-   * 【受控不受控只看 `collapsed` 给没给值】给了就是受控（切换走 `onCollapsedChange`），
-   * 没给就自己管。**别写成「两个都给才受控」**：只给值不给回调时受控是坏的（点不动），
-   * 那时退回内部状态反而能用。
+   * 【受控不受控只看 `collapsed` 给没给值】判据就是这一条，理由是**给值这件事本身就说明
+   * 状态由调用方持有**——`App` 传 `collapsed={sidebarCollapsed}` 时，真值在它手里，本组件
+   * 再去动自己那份就是对不上号的第二个真相。所以给了值就必须受控。
+   *
+   * 【别把它写成「两个都给才受控」】那不是更宽容，是**错的**：只给值不给回调时，
+   * 本组件没有退回内部状态的余地——那样界面会显示调用方给的值、点击却改自己那份，
+   * 两者当场分岔。现在的行为是按钮点不动（`onCollapsedChange?.()` 吞掉），这是刻意的：
+   * 漏传回调是调用方的 bug，组件不该替它猜。**两个半给形态（只给值 / 只给回调）都没有用例**。
    *
    * 【无论哪种，状态都只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的
    * 字段——那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与
@@ -9211,8 +9216,10 @@ describe('ChapterList', () => {
   //
   //  - **「按 ⌘⇧H 等效于点按钮」拆成了两半**。前半（按键 → `toggle-sidebar` 这个 action）由
   //    `tests/unit/shortcutDispatch.test.ts` 覆盖：它断言 darwin 上按 ⌘⇧H 会调到那个 action。
-  //    后半（action → 本组件这个 `collapsed`）要等 Task 7 把状态提到 `App` 上才接得上，
-  //    而**目前没有任何用例覆盖它**——Task 7 计划里只加了 import 的两条。
+  //    后半（action → `App` 里那个状态 → 侧栏真的切换）由 `tests/unit/app.test.tsx` 的
+  //    「按章节栏快捷键真的收起、又展开」与「点章节栏那个按钮也真的收起、又展开」一起覆盖
+  //    ——一条走分发器那条路，一条走受控回调那条路。**这两条要渲染整棵 `App`**，本文件是
+  //    直接渲染 `ChapterList` 的，树里没有分发器，接不上那两段。
   //  - **「少了 Shift 或修饰键时不触发」也在分发器里**：裸键由那句
   //    `if (!e.ctrlKey && !e.metaKey && !e.altKey) return` 提前放行，修饰键少一个则落在
   //    表查找不中。`shortcutDispatch.test.ts` 的「裸按键一律放行」与「没配上的组合不触发」
@@ -10475,9 +10482,10 @@ export default function App() {
    * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
    * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
    *
-   * 它由 `SettingsDialog` 经 `Ribbon` 上报（那两根线都是「可选带默认值」的，所以漏接一根
-   * 不会报错、也不会红一条用例——`tests/unit/app.test.tsx` 里那条「录制期间分发器静音」
-   * 就是专门钉它的）。
+   * 它由 `SettingsDialog` 经 `Ribbon` 上报。那两根线（`onRecordingChange` 与
+   * `onShortcutsChange`）都是「可选带默认值」的，所以漏接一根**类型上不会报错、界面上也看不
+   * 出来**——而两条线**各有一条用例专门钉着**（`tests/unit/app.test.tsx` 的「录制期间分发器
+   * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
    */
   const [recording, setRecording] = useState(false)
   /**
@@ -10722,9 +10730,19 @@ export default function App() {
    * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
    * 跟着稳，反而更容易漏。
    *
-   * 【`platform` 这个实参传错，**单测查不出来，只有真机能判**】把它写死成某个值，整套 jsdom
-   * 用例照样全绿：测试里 `window.api.platform` 那个桩与这里传下去的值同源，表按哪个值补齐、
-   * 按键就按哪个值构造，两边一起错是自洽的。真机上的代价分两层：
+   * 【`platform` 这个实参，**写死成非 darwin 的值才是单测查不出来的**】把范围说准，别写成
+   * 「单测查不出来，只有真机能判」——那是假的：
+   *
+   * - 写死成 `'darwin'`：**三条 Windows 路径的用例当场红**（实测：`Windows 上 Ctrl+O 真的能
+   *   导入` / `设置里改过的键生效` / `在设置里录一条新快捷键并保存`）。因为 `kind` 是另一条路
+   *   算的（`platformKind(window.api.platform)`，仍然是对的），表照真实平台补齐，而分发器按
+   *   `'darwin'` 把 `import` 跳过了——Ctrl+O 成了死键。
+   * - 写死成 `'other'` / `'win32'`：**整套 jsdom 用例全绿**（实测）。渲染 `App` 的用例只有两份：
+   *   `app.test.tsx`（桩显式设 win32、或压根没有 `platform` 字段而走 `'other'`）与
+   *   `layout.test.tsx`（用的正是 `tests/setup.ts` 那个 `platform: 'darwin'` 的良性桩，但**它
+   *   不按任何组合键、也不看格式化后的键位文本**，所以分辨不出）。
+   *
+   * 真机上的代价分两层：
    *
    * 1. `resolveShortcuts` 按错的那一套补齐默认值（macOS 上会把 ⌘ 显示成 Ctrl），而
    *    `RESERVED` 的 darwin 清单也跟着失效；

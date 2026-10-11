@@ -2620,11 +2620,13 @@ Expected: FAIL —— 按下 Ctrl+O 后 `importNovel` 一次都没被调用（�
   })
 ```
 
-> **交付版在 `platform` 那个实参上多写了一段说明，片段里没有**：这个值传错**单测查不出来**
-> （测试里 `window.api.platform` 那个桩与它同源，表与按键按同一个值算，两边一起错是自洽的），
-> 只有真机能判——macOS 上它会同时让默认值补齐与 `RESERVED` 走错那一套，并让「darwin 上
-> import 让给原生菜单」那条跳过失效，于是表里 `import` 只要是条 ⌘ 组合，按下去菜单与分发器
-> 会各触发一次。见末尾真机验收清单。**别以为它被覆盖了。**
+> **交付版在 `platform` 那个实参上多写了一段说明，片段里没有**：把范围说准——**写死成非
+> darwin 的值才是单测查不出来的**（实测 `'other'` 整套全绿）；写死成 `'darwin'` 会被三条
+> Windows 路径的用例当场抓住（`kind` 是另一条路算的，表照真实平台补齐，而分发器按 `'darwin'`
+> 跳过了 `import`，Ctrl+O 成了死键）。渲染 `App` 的用例只有 `app.test.tsx`（桩是 win32 或缺
+> `platform` 字段）与 `layout.test.tsx`（用 `tests/setup.ts` 那个 `platform: 'darwin'` 的良性
+> 桩，但它不按组合键、也不看格式化后的键位文本，所以分辨不出）。真机上写错的代价见末尾验收清单
+> ——**别以为它被覆盖了**。
 
 > **注意**：`sidebarCollapsed` 现在住在 `ChapterList` 里（组件的 local state），而分发器在
 > `App` 上，所以要**把它提升到 `App`** 再作为受控 prop 传下去——改法与 `expanded` 那个状态

@@ -75,9 +75,10 @@ export default function App() {
    * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
    * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
    *
-   * 它由 `SettingsDialog` 经 `Ribbon` 上报（那两根线都是「可选带默认值」的，所以漏接一根
-   * 不会报错、也不会红一条用例——`tests/unit/app.test.tsx` 里那条「录制期间分发器静音」
-   * 就是专门钉它的）。
+   * 它由 `SettingsDialog` 经 `Ribbon` 上报。那两根线（`onRecordingChange` 与
+   * `onShortcutsChange`）都是「可选带默认值」的，所以漏接一根**类型上不会报错、界面上也看不
+   * 出来**——而两条线**各有一条用例专门钉着**（`tests/unit/app.test.tsx` 的「录制期间分发器
+   * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
    */
   const [recording, setRecording] = useState(false)
   /**
@@ -322,9 +323,19 @@ export default function App() {
    * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
    * 跟着稳，反而更容易漏。
    *
-   * 【`platform` 这个实参传错，**单测查不出来，只有真机能判**】把它写死成某个值，整套 jsdom
-   * 用例照样全绿：测试里 `window.api.platform` 那个桩与这里传下去的值同源，表按哪个值补齐、
-   * 按键就按哪个值构造，两边一起错是自洽的。真机上的代价分两层：
+   * 【`platform` 这个实参，**写死成非 darwin 的值才是单测查不出来的**】把范围说准，别写成
+   * 「单测查不出来，只有真机能判」——那是假的：
+   *
+   * - 写死成 `'darwin'`：**三条 Windows 路径的用例当场红**（实测：`Windows 上 Ctrl+O 真的能
+   *   导入` / `设置里改过的键生效` / `在设置里录一条新快捷键并保存`）。因为 `kind` 是另一条路
+   *   算的（`platformKind(window.api.platform)`，仍然是对的），表照真实平台补齐，而分发器按
+   *   `'darwin'` 把 `import` 跳过了——Ctrl+O 成了死键。
+   * - 写死成 `'other'` / `'win32'`：**整套 jsdom 用例全绿**（实测）。渲染 `App` 的用例只有两份：
+   *   `app.test.tsx`（桩显式设 win32、或压根没有 `platform` 字段而走 `'other'`）与
+   *   `layout.test.tsx`（用的正是 `tests/setup.ts` 那个 `platform: 'darwin'` 的良性桩，但**它
+   *   不按任何组合键、也不看格式化后的键位文本**，所以分辨不出）。
+   *
+   * 真机上的代价分两层：
    *
    * 1. `resolveShortcuts` 按错的那一套补齐默认值（macOS 上会把 ⌘ 显示成 Ctrl），而
    *    `RESERVED` 的 darwin 清单也跟着失效；
