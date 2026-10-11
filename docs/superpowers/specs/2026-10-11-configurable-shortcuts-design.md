@@ -39,7 +39,7 @@
 
 **为什么不拿 accelerator 当存储格式**：得把话说准——**单看现在这三条默认值，`CmdOrCtrl` 是够用的**，它们全都只是 Meta↔Ctrl 互换（核 `SHORTCUTS` 即知），所以「合并成一个记号表达不了各平台不同」在这张表上并不成立。扣住这个选择的是另外两件事：
 
-1. core 这一整套（`KeyChord` / `fromChord` / `parseShortcut` / `RESERVED` / `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 是**单向**的 `e.code → accelerator` 词表（全文件只有 `toAccelerator` 用它）——改存 accelerator 就得再造一张反向词表，否则校验与显示都得重写；
+1. core 这一整套（`KeyChord` / `fromChord` / `parseShortcut` / `RESERVED` / `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 只提供 `e.code → 键名` 这一个方向（它的**键**被 `isRecordable` 当白名单用，**值**被 `formatShortcut` 与 `toAccelerator` 当键名用），没有反向表——改存 accelerator 就得再造一张 `accelerator → e.code` 的反查表，否则校验与显示都得重写；
 2. `ShortcutDef.defaults` 的形状是 `{ darwin, other }`，它容得下「两个平台根本不是同一个键」这种默认值，而 `CmdOrCtrl` 只表达得了「同一个键换修饰键」。
 
 只在喂菜单那一刻转过去，是这条链上唯一的单向转换点。
@@ -98,7 +98,7 @@ shortcuts: Partial<Record<ShortcutId, string>>
 
 **稀疏表：缺条目 = 用该平台的默认值**，由 core 的 `resolveShortcuts(raw, kind)` 补齐；`{}` 就是「全默认」。
 
-【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是 `defaultSettings()` 与 `createSessionStore()` 都得加一个 `PlatformKind` 参数——而它们在测试里有六十多处调用点（**这个数随测试增长只多不少，所以别写成精确值**——这份文档先后写过「40 处 / 15 处」和「实测 63」，两个都在写下之后不久就过期了）。稀疏之后这两个函数的签名**一个都不用动**，core 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染层共用）。顺带一个好处：将来加第四条快捷键时，老用户的文件天然就是「缺这一条」。
+【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是 `defaultSettings()` 与 `createSessionStore()` 都得加一个 `PlatformKind` 参数——而它们在测试里被调用很多次（**这份文档刻意不写数**：这个量随测试增长，先后写过的「40 处 / 15 处」「实测 63」「六十多处」三个版本全在写下之后不久就过期了，最后一个连下界都没保住）。稀疏之后这两个函数的签名**一个都不用动**，core 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染层共用）。顺带一个好处：将来加第四条快捷键时，老用户的文件天然就是「缺这一条」。
 
 **向后兼容是本次最容易毁数据的地方。** `sessionStore.ts` 现在的 `withRatioFilled` 只认 `ratio` 一个字段。旧 `settings.json` 里没有 `shortcuts`，而 `settingsProblem` 的取舍是「**一个字段不合格就整份退回默认值**」——直接加这个必填字段，会让老用户升级一次就把改过的**文档名 / 外观 / 纸张一起丢掉**。
 

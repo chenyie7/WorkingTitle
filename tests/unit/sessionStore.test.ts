@@ -949,10 +949,18 @@ describe('shortcuts 字段的向后兼容', () => {
   })
 
   it('白名单外的键位整份退回默认值，且警告点出原因', () => {
-    // 【为什么这条钉的是枚举里 `unsupported-key` 那半边】`problem === 'no-modifier'` 由
-    // 「没带修饰键」那条用例覆盖，而 `'unsupported-key'` 此前零覆盖：把它从枚举里删掉，
-    // 白名单外的键位会被放行，`resolveShortcuts` 到 core 那层照样退回默认值，于是最终
-    // 结果表**还是对的**——只有这行 warn 能证明它在 sessionStore 这一层就被拦下了。
+    // 【这一条钉的是枚举里 `unsupported-key` 那半边】`problem === 'no-modifier'` 由
+    // 「没带修饰键」那条用例覆盖，而 `'unsupported-key'` 此前零覆盖。
+    //
+    // 【拦住这只变异的是**返回值**断言，不是 warn】把枚举收成只剩 `'no-modifier'` 之后，
+    // 白名单外的键位会被放行、**原样留在读回来的设置里**——实测红的就是
+    // `toEqual(defaultSettings())` 那一行，warn 那行根本走不到。（这一点与上面那条 null
+    // 用例相反：那条的变异是被 catch 接住的，返回值两边一样，只能靠 warn 分。）
+    //
+    // 下面那行 warn 断言钉的是**理由**：它要求这条是在 sessionStore 这一层被判成
+    // 「不合法的快捷键（unsupported-key）」并报出来的。少了它，将来有人把这个校验块整个
+    // 删掉、改由 core 的 `resolveShortcuts` 事后退默认值，最终生效的表看着一样，日志里却
+    // 再也说不出是哪一条、按什么理由退的。
     const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
     writeFileSync(
       join(dir, 'settings.json'),

@@ -114,9 +114,10 @@ export interface AppSettings {
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
    * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
-   * 有六十多处调用点（这个数随测试增长只多不少，别当成会停住的量）。稀疏之后这两个函数的
-   * 签名一个都不用动，`core` 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染
-   * 进程共用）。
+   * 被调用很多次（**这里刻意不写数**：这个量随测试增长，而本句先后写过的「40 / 15」
+   * 「55」「63」「六十多」四个版本，全在写下之后不久就过期了）。稀疏之后这两个函数的签名
+   * 一个都不用动，`core` 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染进程
+   * 共用）。
    *
    * 【为什么值是规范串而不是 accelerator】得把话说准：**单看现在这三条默认值，
    * `CmdOrCtrl` 是够用的**——三条都只是 Meta↔Ctrl 互换（核 `SHORTCUTS` 即知），所以
@@ -124,9 +125,10 @@ export interface AppSettings {
    * 另外两件事：
    *
    * 1. core 这一整套（`KeyChord` / `fromChord` / `parseShortcut` / `RESERVED` /
-   *    `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 是**单向**的
-   *    `e.code → accelerator` 词表（全文件只有 `toAccelerator` 用它）——改存 accelerator
-   *    就得再造一张反向词表，否则校验与显示都得重写；
+   *    `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 只提供 `e.code → 键名` 这一个
+   *    方向（它的**键**被 `isRecordable` 当白名单用，**值**被 `formatShortcut` 与
+   *    `toAccelerator` 当键名用），没有反向表——改存 accelerator 就得再造一张
+   *    accelerator → `e.code` 的反查表，否则校验与显示都得重写；
    * 2. `ShortcutDef.defaults` 的形状是 `{ darwin, other }`，它容得下「两个平台根本不是
    *    同一个键」这种默认值，而 `CmdOrCtrl` 只表达得了「同一个键换修饰键」。
    *
