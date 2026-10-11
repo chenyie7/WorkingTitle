@@ -1451,6 +1451,30 @@ git commit -F /tmp/wt-msg.txt
 # 口径：md5('\n'.join(块内行) + '\n') == md5(文件内容)，含末尾换行，不要 rstrip
 ```
 
+**同步对象要量、不要推。** 一个复核者在 `ebaccb8` 处量出的失配清单是这 10 个（Task 7 之后还要加上它动过的 4 个，
+合计 14 个）。**别用「本计划改过哪些文件」去推**——那个推法会漏掉 `channels.ts` / `preload` / `ipcContract.test.ts`
+这类「本来有围栏、被本计划弄不符」的文件：
+
+| 文件 | 来由 |
+|---|---|
+| `src/core/types.ts` | 本来就不符 |
+| `src/main/channels.ts` | 被本计划弄不符 |
+| `src/main/ipc.ts` | 本来就不符 |
+| `src/main/session.ts` | 本来就不符 |
+| `src/main/sessionStore.ts` | 本来就不符 |
+| `src/preload/index.ts` | 被本计划弄不符 |
+| `tests/unit/guardA.test.ts` | 本来就不符 |
+| `tests/unit/guardB.test.ts` | 本来就不符 |
+| `tests/unit/ipcContract.test.ts` | 被本计划弄不符 |
+| `tests/unit/sessionStore.test.ts` | 本来就不符 |
+| `src/renderer/src/App.tsx` | Task 7 之后 |
+| `src/renderer/src/types/global.d.ts` | Task 7 之后 |
+| `tests/setup.ts` | Task 7 之后 |
+| `tests/unit/app.test.tsx` | Task 7 之后 |
+
+三个「被本计划弄不符」的在旧计划里的候选围栏位置（按内容定位，别按行号）：
+channels ≈ 4008-4029、preload ≈ 354 / 3899-3921 / 4049-4099、ipcContract ≈ 3653-3681。
+
 替换时按「旧内容的 md5」定位（改动前先记下每个文件的 md5），而不是按行号或锚点行——
 同一份代码在计划里可能出现多次，且有些块是**历史版本**（注定与当前文件不符，不要动它们）。
 
