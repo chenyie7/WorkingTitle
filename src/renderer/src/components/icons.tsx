@@ -84,6 +84,8 @@ import {
   ChevronLeftRegular,
   ChevronRightFilled,
   ChevronRightRegular,
+  ChevronDownFilled,
+  ChevronDownRegular,
   DismissFilled,
   DismissRegular,
   RenameRegular,
@@ -101,7 +103,47 @@ import {
   WeatherSunnyRegular,
   WeatherSunnyFilled,
   WeatherMoonRegular,
-  WeatherMoonFilled
+  WeatherMoonFilled,
+  ClipboardPasteFilled,
+  ClipboardPasteRegular,
+  CutFilled,
+  CutRegular,
+  CopyFilled,
+  CopyRegular,
+  FontIncreaseFilled,
+  FontIncreaseRegular,
+  FontDecreaseFilled,
+  FontDecreaseRegular,
+  TextClearFormattingFilled,
+  TextClearFormattingRegular,
+  TextSubscriptFilled,
+  TextSubscriptRegular,
+  TextSuperscriptFilled,
+  TextSuperscriptRegular,
+  TextEffectsFilled,
+  TextEffectsRegular,
+  HighlightFilled,
+  HighlightRegular,
+  TextColorFilled,
+  TextColorRegular,
+  TextListAbcUppercaseLtrFilled,
+  TextListAbcUppercaseLtrRegular,
+  TextIndentDecreaseFilled,
+  TextIndentDecreaseRegular,
+  TextIndentIncreaseFilled,
+  TextIndentIncreaseRegular,
+  ArrowSortFilled,
+  ArrowSortRegular,
+  TextGrammarWandFilled,
+  TextGrammarWandRegular,
+  PaintBucketFilled,
+  PaintBucketRegular,
+  BorderAllFilled,
+  BorderAllRegular,
+  ArrowSwapFilled,
+  ArrowSwapRegular,
+  CursorFilled,
+  CursorRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -160,7 +202,38 @@ export const IconRuler = bundleIcon(RulerFilled, RulerRegular)
 export const IconGrid = bundleIcon(GridFilled, GridRegular)
 export const IconCollapse = bundleIcon(ChevronLeftFilled, ChevronLeftRegular)
 export const IconExpand = bundleIcon(ChevronRightFilled, ChevronRightRegular)
+
+/* 下拉框与分割按钮右侧那个小箭头。用 Chevron（细）而不是 Caret/Triangle（实心块）：
+   真 Word 功能区里那两种箭头都是细线，实心三角看起来像十几年前的控件。 */
+export const IconCaretDown = bundleIcon(ChevronDownFilled, ChevronDownRegular)
 export const IconClose = bundleIcon(DismissFilled, DismissRegular)
+
+/* 「开始」页补密度用到的一组（剪贴板 / 字体 / 段落 / 编辑）。
+   名字同样是从包里枚举核对过的，不是想当然——`TextColor` 这类看着该有的名字确实有，
+   而 `FontColor`、`Shading`、`MultilevelList` 这些看着更顺的名字反而没有。 */
+export const IconPaste = bundleIcon(ClipboardPasteFilled, ClipboardPasteRegular)
+export const IconCut = bundleIcon(CutFilled, CutRegular)
+export const IconCopy = bundleIcon(CopyFilled, CopyRegular)
+export const IconFontGrow = bundleIcon(FontIncreaseFilled, FontIncreaseRegular)
+export const IconFontShrink = bundleIcon(FontDecreaseFilled, FontDecreaseRegular)
+export const IconClearFormat = bundleIcon(TextClearFormattingFilled, TextClearFormattingRegular)
+export const IconSubscript = bundleIcon(TextSubscriptFilled, TextSubscriptRegular)
+export const IconSuperscript = bundleIcon(TextSuperscriptFilled, TextSuperscriptRegular)
+export const IconTextEffects = bundleIcon(TextEffectsFilled, TextEffectsRegular)
+export const IconHighlight = bundleIcon(HighlightFilled, HighlightRegular)
+export const IconFontColor = bundleIcon(TextColorFilled, TextColorRegular)
+export const IconMultiLevelList = bundleIcon(
+  TextListAbcUppercaseLtrFilled,
+  TextListAbcUppercaseLtrRegular
+)
+export const IconIndentDecrease = bundleIcon(TextIndentDecreaseFilled, TextIndentDecreaseRegular)
+export const IconIndentIncrease = bundleIcon(TextIndentIncreaseFilled, TextIndentIncreaseRegular)
+export const IconSort = bundleIcon(ArrowSortFilled, ArrowSortRegular)
+export const IconShowMarks = bundleIcon(TextGrammarWandFilled, TextGrammarWandRegular)
+export const IconShading = bundleIcon(PaintBucketFilled, PaintBucketRegular)
+export const IconBorders = bundleIcon(BorderAllFilled, BorderAllRegular)
+export const IconReplace = bundleIcon(ArrowSwapFilled, ArrowSwapRegular)
+export const IconSelect = bundleIcon(CursorFilled, CursorRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)

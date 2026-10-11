@@ -4813,8 +4813,6 @@ body {
 }
 
 /* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
-   真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。 */
-/* 没有图标的按钮（宋体 / 五号 / 标题 1 / 正文）画成带框的组合框观感——
    真 Word 里这几个正是有边框的下拉框，光秃秃一片文字会显得没做完。
  *
  * 【`:not(.wt-btn--active)` 不能省】这条规则的特异性是 (0,4,0)（三个 `:not()` 各自都算），
@@ -4833,6 +4831,170 @@ body {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* ---- 下拉框（字体名 / 字号 / 行距） ----
+ *
+ * 它是 `<button>` 而不是原生 `<select>`。原因见 `Toolbar.tsx` 里 Combo 的注释：
+ * `select` 在 InputCapture 的焦点豁免名单里，点一下焦点就留在它身上，之后敲键盘
+ * 既不打字也不抽字。做成按钮才会走「mousedown 时把焦点抢回 textarea」那条路。
+ */
+.wt-combo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
+  background: #fbfbfc;
+  color: var(--wt-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.wt-combo:hover {
+  background: var(--wt-blue-light);
+  border-color: #a8c7ef;
+}
+
+.wt-combo__value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wt-combo__caret {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--wt-text-muted);
+}
+
+/* 弹出层 portal 到了 body，所以 `position: fixed` 相对视口；坐标由 JS 从按钮的
+   getBoundingClientRect() 算。jsdom 没有布局、rect 全是 0，那不影响测试断言。 */
+.wt-combo__panel {
+  position: fixed;
+  z-index: 60;
+  min-width: 96px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--wt-chrome-border-strong);
+  border-radius: var(--wt-radius);
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.wt-combo__option {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--wt-radius);
+  background: transparent;
+  color: var(--wt-text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wt-combo__option:hover {
+  background: var(--wt-blue-light);
+}
+
+.wt-combo__option--active {
+  background: #d3e3fa;
+}
+
+/* ---- 样式库 ----
+ * 与下拉框不同，展开就是全部选项，所以直接在流内排开、不需要弹层，
+ * 也就不涉及焦点问题——每一项本身是 `<button>`。
+ */
+.wt-gallery {
+  display: flex;
+  gap: 2px;
+}
+
+.wt-gallery__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 58px;
+  padding: 5px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--wt-radius);
+  background: transparent;
+  color: var(--wt-text);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.wt-gallery__item:hover {
+  background: var(--wt-blue-light);
+  border-color: #c4d9f5;
+}
+
+.wt-gallery__item--active {
+  background: #ffffff;
+  border-color: var(--wt-chrome-border-strong);
+}
+
+.wt-gallery__preview {
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.wt-gallery__name {
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--wt-text-muted);
+  white-space: nowrap;
+}
+
+/* ---- 分割按钮（下划线 / 项目符号 / 编号）----
+ * 主体与箭头贴在一起、合起来看才像一个控件，所以贴边那侧的圆角归零。
+ * 两条规则的特异性都是 (0,1,0)，靠**源码顺序**压过上面 `.wt-btn` 的全圆角——别往上挪。
+ */
+.wt-split {
+  display: flex;
+  align-items: center;
+}
+
+.wt-split__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.wt-split__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-left: none;
+  border-top-right-radius: var(--wt-radius);
+  border-bottom-right-radius: var(--wt-radius);
+  background: transparent;
+  color: var(--wt-text-muted);
+  cursor: pointer;
+}
+
+.wt-split__arrow:hover {
+  background: var(--wt-blue-light);
+  border-color: #c4d9f5;
+}
+
+.wt-split__caret {
+  width: 10px;
+  height: 10px;
 }
 
 .wt-sep {
@@ -5043,6 +5205,24 @@ body {
 
 [data-theme='dark'] .wt-toolbar {
   background: #202024;
+}
+
+/* 下拉框与样式库那几处写死的浅色值。悬停用的是 --wt-blue-light，那个 token 自己会翻。 */
+[data-theme='dark'] .wt-combo {
+  background: #2a2a31;
+}
+
+[data-theme='dark'] .wt-combo__panel {
+  background: #26262c;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme='dark'] .wt-combo__option--active {
+  background: #3a3a44;
+}
+
+[data-theme='dark'] .wt-gallery__item--active {
+  background: #2a2a31;
 }
 
 [data-theme='dark'] .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
@@ -5508,6 +5688,18 @@ import { DEFAULT_RATIO, MAX_RATIO, MIN_RATIO, type InputMode } from '../../../co
 export interface ToolbarValue {
   toggles: Record<string, boolean>
   toggle: (id: string) => void
+  /**
+   * 下拉框与样式库当前选中的值，键是控件的 `id`。
+   *
+   * 【为什么与 toggles 分开、而不是塞进同一个 map】两者是**不同的状态种类**：toggle 是
+   * 布尔（加粗：开/关），choice 是「从一组里选一个」（字体名、字号、样式）。合成一个
+   * `Record<string, boolean | string>` 会让每个读它的地方都要先判类型，而它们读法完全不同。
+   *
+   * 【默认值不进这里】没选过的控件读出来是 `undefined`，由控件自己退回到第一个选项。
+   * 这样切换选项卡再切回来不会丢，也不需要在初始化时把所有控件遍历一遍。
+   */
+  choices: Record<string, string>
+  choose: (id: string, value: string) => void
   notify: (message: string) => void
   toast: string | null
   ratio: number
@@ -5545,6 +5737,7 @@ export function ToolbarProvider({
   onClearSession
 }: ToolbarProviderProps) {
   const [toggles, setToggles] = useState<Record<string, boolean>>({})
+  const [choices, setChoices] = useState<Record<string, string>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
@@ -5554,6 +5747,10 @@ export function ToolbarProvider({
 
   const toggle = useCallback((id: string) => {
     setToggles((prev) => ({ ...prev, [id]: !prev[id] }))
+  }, [])
+
+  const choose = useCallback((id: string, value: string) => {
+    setChoices((prev) => ({ ...prev, [id]: value }))
   }, [])
 
   const notify = useCallback((message: string) => {
@@ -5584,6 +5781,8 @@ export function ToolbarProvider({
     () => ({
       toggles,
       toggle,
+      choices,
+      choose,
       notify,
       toast,
       ratio,
@@ -5593,7 +5792,20 @@ export function ToolbarProvider({
       onImport: onImport ?? (() => notify('演示占位功能，未实现')),
       onClearSession: onClearSession ?? (() => notify('演示占位功能，未实现'))
     }),
-    [toggles, toggle, notify, toast, ratio, setRatio, mode, setMode, onImport, onClearSession]
+    [
+      toggles,
+      toggle,
+      choices,
+      choose,
+      notify,
+      toast,
+      ratio,
+      setRatio,
+      mode,
+      setMode,
+      onImport,
+      onClearSession
+    ]
   )
 
   return <ToolbarContext.Provider value={value}>{children}</ToolbarContext.Provider>
@@ -5625,12 +5837,14 @@ export function Toast() {
 - [ ] **Step 3: 写 `src/renderer/src/components/Toolbar.tsx`**
 
 ```tsx
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { useToolbar } from '../state/ToolbarContext'
-import { IconSettings } from './icons'
+import { IconSettings, IconCaretDown } from './icons'
 
 /**
- * 工具栏里能出现的三种东西。
+ * 工具栏里能出现的东西。
  *
  * 【`ratio` / `mode` / `import` / `clear-session` 四种 kind 已经不在这里了】它们渲染的是
  * 应用的真实功能，现在统一由 `SettingsDialog` 渲染（那四种控件连同各自的 testid 一起搬了
@@ -5642,15 +5856,230 @@ import { IconSettings } from './icons'
  * 【`large` 对应 Word 功能区的两种尺寸】大按钮是「图标在上、标签在下」（新建/保存/导入这类），
  * 小按钮是纯图标（加粗/对齐那一排）。真 Word 就是这么混着排的，全用小按钮会显得空、全用大的
  * 又放不下。
+ *
+ * 【六种 kind 的来源】`toggle` / `placeholder` / `settings` 是最初三种。补「开始/插入/布局」
+ * 三页时发现光靠按钮做不像 Word：字体名、字号、行距在真 Word 里是**下拉框**，「样式」是
+ * 带预览的**库**，「下划线」右侧还有一个**展开箭头**。于是加了 `combo` / `gallery` / `split`。
+ * 三者都只做外观与「选中态」，点开后的真实功能一律走 `notify` 的占位提示——它们不是真功能。
  */
 export type ToolbarItem =
   | { kind: 'toggle'; id: string; label: string; title: string; icon?: FluentIcon; large?: boolean }
-  | { kind: 'placeholder'; id: string; label: string; title: string; icon?: FluentIcon; large?: boolean }
+  | {
+      kind: 'placeholder'
+      id: string
+      label: string
+      title: string
+      icon?: FluentIcon
+      large?: boolean
+    }
   | { kind: 'settings'; large?: boolean }
+  /** 下拉框（字体名 / 字号 / 行距）。`width` 用来对齐真 Word 里那几栏宽窄不一的观感。 */
+  | { kind: 'combo'; id: string; title: string; options: readonly string[]; width?: number }
+  /** 带预览的样式库。每一项都画成 `AaBbCc` + 样式名。 */
+  | { kind: 'gallery'; id: string; title: string; entries: readonly string[] }
+  /** 主按钮 + 右侧展开箭头（下划线 / 项目符号 / 编号）。主按钮是 toggle，箭头只弹提示。 */
+  | { kind: 'split'; id: string; label: string; title: string; icon: FluentIcon }
 
 export interface ToolbarGroup {
   label: string
   items: ToolbarItem[]
+}
+
+/**
+ * 下拉框。
+ *
+ * 【为什么不用原生 `<select>` —— 这是本组件最要紧的一条】全应用的按键都落在
+ * `InputCapture` 那个透明 textarea 上（按键处理挂在**它**的 onKeyDown 上，不是 window）。
+ * 而 `focusIfNotTextInput` 的豁免名单里**有 `select`**——那是给设置对话框里的输入框用的。
+ * 于是原生 `<select>` 一点下去焦点就留在它身上，之后敲键盘**既不打字也不抽字**，
+ * 整个应用等于废了。做成 `<button>` + 一列 `<button>` 就不在豁免名单里：`mousedown` 时
+ * 焦点会被自动抢回 textarea，与工具栏里其它按钮走的是同一条路径。
+ *
+ * 【为什么面板要 portal 到 body】`.wt-toolbar` 有 `overflow-x: auto`（窄窗口时横向滚动）。
+ * 按 CSS 规则，一个轴不是 visible 时另一个轴也会变成 auto，于是绝对定位的面板会被**裁掉**。
+ * portal 到 body 再用 `position: fixed` 就完全跳出了那个裁剪上下文。
+ *
+ * 【面板里不接键盘】不做输入过滤、不接 Esc。按键要继续去抽字，面板只认鼠标：
+ * 选中一项、或点到面板外面，就关。真 Word 的字体框能打字过滤，这里刻意不做。
+ */
+function Combo({
+  id,
+  title,
+  options,
+  width
+}: {
+  id: string
+  title: string
+  options: readonly string[]
+  width?: number
+}) {
+  const { choices, choose } = useToolbar()
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  // 没选过就退回第一项，而不是在 Provider 里预填一遍所有控件——那样得先知道有哪些控件。
+  const value = choices[id] ?? options[0]
+
+  const openPanel = (): void => {
+    const r = btnRef.current?.getBoundingClientRect()
+    // jsdom 没有布局，rect 全是 0；那不是错误路径，面板照样要挂出来（测试靠这个断言）。
+    setPos({ left: r?.left ?? 0, top: (r?.bottom ?? 0) + 2, width: r?.width ?? 0 })
+    setOpen(true)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target
+      if (!(t instanceof Element)) return
+      if (btnRef.current?.contains(t)) return
+      if (t.closest('.wt-combo__panel')) return
+      setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="wt-combo"
+        data-testid={`combo-${id}`}
+        title={title}
+        aria-label={title}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={width === undefined ? undefined : { width }}
+        onClick={() => (open ? setOpen(false) : openPanel())}
+      >
+        <span className="wt-combo__value">{value}</span>
+        <IconCaretDown className="wt-combo__caret" />
+      </button>
+      {open && pos
+        ? createPortal(
+            <div
+              className="wt-combo__panel"
+              role="listbox"
+              aria-label={title}
+              data-testid={`combo-${id}-panel`}
+              style={{ left: pos.left, top: pos.top, minWidth: Math.max(pos.width, 96) }}
+            >
+              {options.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  role="option"
+                  aria-selected={o === value}
+                  className={`wt-combo__option${o === value ? ' wt-combo__option--active' : ''}`}
+                  onClick={() => {
+                    choose(id, o)
+                    setOpen(false)
+                  }}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  )
+}
+
+/**
+ * 样式库。真 Word 的「样式」组就是几个白色小方块，每块里是 `AaBbCc` 加样式名。
+ *
+ * 与 `Combo` 不同，这里展开就是全部选项，所以直接在流内排开、不需要弹层，
+ * 也就不涉及焦点问题——每一项本身是 `<button>`。
+ */
+function Gallery({
+  id,
+  title,
+  entries
+}: {
+  id: string
+  title: string
+  entries: readonly string[]
+}) {
+  const { choices, choose } = useToolbar()
+  const value = choices[id] ?? entries[0]
+
+  return (
+    <div className="wt-gallery" role="group" aria-label={title} data-testid={`gallery-${id}`}>
+      {entries.map((name) => {
+        const active = name === value
+        return (
+          <button
+            key={name}
+            type="button"
+            className={`wt-gallery__item${active ? ' wt-gallery__item--active' : ''}`}
+            data-testid={`gallery-${id}-${name}`}
+            aria-pressed={active}
+            title={`${title}：${name}`}
+            onClick={() => choose(id, name)}
+          >
+            {/* 预览那行 `AaBbCc` 只是形状，读屏念出来是噪音，所以 aria-hidden */}
+            <span className="wt-gallery__preview" aria-hidden="true">
+              AaBbCc
+            </span>
+            <span className="wt-gallery__name">{name}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 主按钮 + 右侧展开箭头。真 Word 的「下划线」「项目符号」「编号」都是这个形状：
+ * 点主体是直接应用，点箭头是展开更多选择。
+ *
+ * 箭头只弹占位提示——本应用没有「更多选择」那套东西，为它造一个空菜单反而更像没做完。
+ */
+function SplitButton({
+  id,
+  label,
+  title,
+  icon: Icon
+}: {
+  id: string
+  label: string
+  title: string
+  icon: FluentIcon
+}) {
+  const { toggles, toggle, notify } = useToolbar()
+  const active = Boolean(toggles[id])
+
+  return (
+    <div className="wt-split" data-testid={`split-${id}`}>
+      <button
+        type="button"
+        className={`wt-btn wt-btn--icon-only wt-split__main${active ? ' wt-btn--active' : ''}`}
+        data-testid={`btn-${id}`}
+        title={title}
+        aria-label={title}
+        aria-pressed={active}
+        onClick={() => toggle(id)}
+      >
+        <Icon filled={active} className="wt-btn__icon" />
+        <span className="wt-btn__label">{label}</span>
+      </button>
+      <button
+        type="button"
+        className="wt-split__arrow"
+        data-testid={`split-${id}-more`}
+        title={`${title}（更多）`}
+        aria-label={`${title}（更多）`}
+        onClick={() => notify('演示占位功能，未实现')}
+      >
+        <IconCaretDown className="wt-split__caret" />
+      </button>
+    </div>
+  )
 }
 
 export function Toolbar({
@@ -5681,6 +6110,36 @@ export function Toolbar({
                     <IconSettings className="wt-btn__icon" />
                     <span className="wt-btn__label">设置</span>
                   </button>
+                )
+              }
+
+              if (item.kind === 'combo') {
+                return (
+                  <Combo
+                    key={item.id}
+                    id={item.id}
+                    title={item.title}
+                    options={item.options}
+                    width={item.width}
+                  />
+                )
+              }
+
+              if (item.kind === 'gallery') {
+                return (
+                  <Gallery key={item.id} id={item.id} title={item.title} entries={item.entries} />
+                )
+              }
+
+              if (item.kind === 'split') {
+                return (
+                  <SplitButton
+                    key={item.id}
+                    id={item.id}
+                    label={item.label}
+                    title={item.title}
+                    icon={item.icon}
+                  />
                 )
               }
 
@@ -5733,31 +6192,51 @@ import {
   IconAlignLeft,
   IconAlignRight,
   IconBold,
+  IconBorders,
   IconBullets,
+  IconClearFormat,
   IconColumns,
   IconComment,
+  IconCopy,
+  IconCut,
   IconExport,
+  IconFontColor,
+  IconFontGrow,
+  IconFontShrink,
   IconFootnote,
   IconFormatPainter,
   IconGrid,
+  IconHighlight,
+  IconIndentDecrease,
+  IconIndentIncrease,
   IconItalic,
   IconLineSpacing,
   IconMargins,
+  IconMultiLevelList,
   IconNew,
   IconNumbering,
   IconOrientation,
   IconPageBreak,
+  IconPaste,
   IconPicture,
   IconPrint,
   IconReadingView,
   IconRedo,
+  IconReplace,
   IconRuler,
   IconSave,
   IconSearch,
+  IconSelect,
+  IconShading,
   IconShape,
+  IconShowMarks,
+  IconSort,
   IconSpellCheck,
   IconStrike,
+  IconSubscript,
+  IconSuperscript,
   IconTable,
+  IconTextEffects,
   IconToc,
   IconUnderline,
   IconUndo,
@@ -5767,32 +6246,147 @@ import {
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
 export type RibbonTab = (typeof RIBBON_TABS)[number]
 
+/**
+ * 「开始」页那几个下拉框与样式库里的候选。都是真 Word 里装的东西，顺序也照它排——
+ * 这类列表的可信度全在「里面装的东西像不像」上，随便编几个名字反而更假。
+ */
+const FONT_FAMILIES = [
+  '宋体',
+  '黑体',
+  '楷体',
+  '仿宋',
+  '微软雅黑',
+  '等线',
+  'Times New Roman',
+  'Arial'
+] as const
+
+const FONT_SIZES = [
+  '初号',
+  '小初',
+  '一号',
+  '小一',
+  '二号',
+  '小二',
+  '三号',
+  '小三',
+  '四号',
+  '小四',
+  '五号',
+  '小五'
+] as const
+
+const LINE_SPACINGS = ['1.0', '1.15', '1.5', '2.0', '2.5', '3.0'] as const
+
+const STYLE_ENTRIES = ['正文', '标题 1', '标题 2', '标题 3', '无间隔', '引用', '强调'] as const
+
+const CLIPBOARD_GROUP: ToolbarGroup = {
+  label: '剪贴板',
+  items: [
+    // 真 Word 的「粘贴」是带展开箭头的大按钮；这里没给 `split` 做大按钮尺寸（那要另写一套
+    // 箭头定位的样式），所以粘贴先用大按钮，箭头在下面几个真正需要它的地方用。
+    { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
+    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
+    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
+  ]
+}
+
 const FONT_GROUP: ToolbarGroup = {
   label: '字体',
   items: [
-    // 字体名与字号在真 Word 里是下拉框，这里是文字按钮——**刻意不给它们图标**：
-    // 有图标的非大按钮会把标签藏起来（见 Toolbar 的 `--icon-only`），而这两项的
-    // 可读文字本身就是它的样子。
-    { kind: 'placeholder', id: 'font-family', label: '宋体', title: '字体' },
-    { kind: 'placeholder', id: 'font-size', label: '五号', title: '字号' },
+    // 字体名与字号在真 Word 里就是**下拉框**（combo），不再是文字按钮。
+    // 宽度照真 Word 那两栏的观感给：字体名宽、字号窄。
+    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 118 },
+    { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 58 },
+    { kind: 'placeholder', id: 'font-grow', label: '增大字号', title: '增大字号', icon: IconFontGrow },
+    {
+      kind: 'placeholder',
+      id: 'font-shrink',
+      label: '减小字号',
+      title: '减小字号',
+      icon: IconFontShrink
+    },
+    {
+      kind: 'placeholder',
+      id: 'clear-format',
+      label: '清除格式',
+      title: '清除所有格式',
+      icon: IconClearFormat
+    },
     { kind: 'toggle', id: 'bold', label: '加粗', title: '加粗', icon: IconBold },
     { kind: 'toggle', id: 'italic', label: '斜体', title: '斜体', icon: IconItalic },
-    { kind: 'toggle', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
+    // 下划线在真 Word 里是「主按钮 + 展开箭头」，箭头里是双下划线、波浪线那些。
+    { kind: 'split', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
     { kind: 'toggle', id: 'strike', label: '删除线', title: '删除线', icon: IconStrike },
-    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter, large: true }
+    { kind: 'toggle', id: 'subscript', label: '下标', title: '下标', icon: IconSubscript },
+    { kind: 'toggle', id: 'superscript', label: '上标', title: '上标', icon: IconSuperscript },
+    {
+      kind: 'toggle',
+      id: 'text-effects',
+      label: '文本效果',
+      title: '文本效果',
+      icon: IconTextEffects
+    },
+    { kind: 'toggle', id: 'highlight', label: '突出显示', title: '突出显示', icon: IconHighlight },
+    {
+      kind: 'placeholder',
+      id: 'font-color',
+      label: '字体颜色',
+      title: '字体颜色',
+      icon: IconFontColor
+    }
   ]
 }
 
 const PARAGRAPH_GROUP: ToolbarGroup = {
   label: '段落',
   items: [
-    { kind: 'placeholder', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
-    { kind: 'placeholder', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    // 项目符号与编号在真 Word 里同样是分割按钮（箭头里是各种符号 / 编号样式）。
+    { kind: 'split', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
+    { kind: 'split', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    {
+      kind: 'placeholder',
+      id: 'multilevel',
+      label: '多级列表',
+      title: '多级列表',
+      icon: IconMultiLevelList
+    },
+    {
+      kind: 'placeholder',
+      id: 'indent-decrease',
+      label: '减少缩进',
+      title: '减少缩进量',
+      icon: IconIndentDecrease
+    },
+    {
+      kind: 'placeholder',
+      id: 'indent-increase',
+      label: '增加缩进',
+      title: '增加缩进量',
+      icon: IconIndentIncrease
+    },
+    { kind: 'placeholder', id: 'sort', label: '排序', title: '排序', icon: IconSort },
+    {
+      kind: 'toggle',
+      id: 'show-marks',
+      label: '编辑标记',
+      title: '显示/隐藏编辑标记',
+      icon: IconShowMarks
+    },
     { kind: 'toggle', id: 'align-left', label: '左对齐', title: '左对齐', icon: IconAlignLeft },
     { kind: 'toggle', id: 'align-center', label: '居中', title: '居中', icon: IconAlignCenter },
     { kind: 'toggle', id: 'align-right', label: '右对齐', title: '右对齐', icon: IconAlignRight },
-    { kind: 'toggle', id: 'align-justify', label: '两端对齐', title: '两端对齐', icon: IconAlignJustify },
-    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距', icon: IconLineSpacing }
+    {
+      kind: 'toggle',
+      id: 'align-justify',
+      label: '两端对齐',
+      title: '两端对齐',
+      icon: IconAlignJustify
+    },
+    { kind: 'combo', id: 'line-spacing', title: '行距', options: LINE_SPACINGS, width: 58 },
+    { kind: 'placeholder', id: 'shading', label: '底纹', title: '底纹', icon: IconShading },
+    { kind: 'placeholder', id: 'borders', label: '边框', title: '边框', icon: IconBorders }
   ]
 }
 
@@ -5828,21 +6422,27 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     { label: '设置', items: [{ kind: 'settings', large: true }] }
   ],
   开始: [
+    CLIPBOARD_GROUP,
     FONT_GROUP,
     PARAGRAPH_GROUP,
     {
+      // 样式在真 Word 里是一排带 `AaBbCc` 预览的小方块，不是按钮——所以用 gallery。
       label: '样式',
-      items: [
-        { kind: 'placeholder', id: 'style-heading', label: '标题 1', title: '标题 1' },
-        { kind: 'placeholder', id: 'style-normal', label: '正文', title: '正文' }
-      ]
+      items: [{ kind: 'gallery', id: 'style', title: '样式', entries: STYLE_ENTRIES }]
     },
     {
       label: '编辑',
       items: [
-        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换', icon: IconSearch, large: true },
-        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销', icon: IconUndo },
-        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做', icon: IconRedo }
+        {
+          kind: 'placeholder',
+          id: 'find',
+          label: '查找',
+          title: '查找',
+          icon: IconSearch,
+          large: true
+        },
+        { kind: 'placeholder', id: 'replace', label: '替换', title: '替换', icon: IconReplace },
+        { kind: 'placeholder', id: 'select', label: '选择', title: '选择', icon: IconSelect }
       ]
     }
   ],
@@ -9484,6 +10084,8 @@ import {
   ChevronLeftRegular,
   ChevronRightFilled,
   ChevronRightRegular,
+  ChevronDownFilled,
+  ChevronDownRegular,
   DismissFilled,
   DismissRegular,
   RenameRegular,
@@ -9501,7 +10103,47 @@ import {
   WeatherSunnyRegular,
   WeatherSunnyFilled,
   WeatherMoonRegular,
-  WeatherMoonFilled
+  WeatherMoonFilled,
+  ClipboardPasteFilled,
+  ClipboardPasteRegular,
+  CutFilled,
+  CutRegular,
+  CopyFilled,
+  CopyRegular,
+  FontIncreaseFilled,
+  FontIncreaseRegular,
+  FontDecreaseFilled,
+  FontDecreaseRegular,
+  TextClearFormattingFilled,
+  TextClearFormattingRegular,
+  TextSubscriptFilled,
+  TextSubscriptRegular,
+  TextSuperscriptFilled,
+  TextSuperscriptRegular,
+  TextEffectsFilled,
+  TextEffectsRegular,
+  HighlightFilled,
+  HighlightRegular,
+  TextColorFilled,
+  TextColorRegular,
+  TextListAbcUppercaseLtrFilled,
+  TextListAbcUppercaseLtrRegular,
+  TextIndentDecreaseFilled,
+  TextIndentDecreaseRegular,
+  TextIndentIncreaseFilled,
+  TextIndentIncreaseRegular,
+  ArrowSortFilled,
+  ArrowSortRegular,
+  TextGrammarWandFilled,
+  TextGrammarWandRegular,
+  PaintBucketFilled,
+  PaintBucketRegular,
+  BorderAllFilled,
+  BorderAllRegular,
+  ArrowSwapFilled,
+  ArrowSwapRegular,
+  CursorFilled,
+  CursorRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -9560,7 +10202,38 @@ export const IconRuler = bundleIcon(RulerFilled, RulerRegular)
 export const IconGrid = bundleIcon(GridFilled, GridRegular)
 export const IconCollapse = bundleIcon(ChevronLeftFilled, ChevronLeftRegular)
 export const IconExpand = bundleIcon(ChevronRightFilled, ChevronRightRegular)
+
+/* 下拉框与分割按钮右侧那个小箭头。用 Chevron（细）而不是 Caret/Triangle（实心块）：
+   真 Word 功能区里那两种箭头都是细线，实心三角看起来像十几年前的控件。 */
+export const IconCaretDown = bundleIcon(ChevronDownFilled, ChevronDownRegular)
 export const IconClose = bundleIcon(DismissFilled, DismissRegular)
+
+/* 「开始」页补密度用到的一组（剪贴板 / 字体 / 段落 / 编辑）。
+   名字同样是从包里枚举核对过的，不是想当然——`TextColor` 这类看着该有的名字确实有，
+   而 `FontColor`、`Shading`、`MultilevelList` 这些看着更顺的名字反而没有。 */
+export const IconPaste = bundleIcon(ClipboardPasteFilled, ClipboardPasteRegular)
+export const IconCut = bundleIcon(CutFilled, CutRegular)
+export const IconCopy = bundleIcon(CopyFilled, CopyRegular)
+export const IconFontGrow = bundleIcon(FontIncreaseFilled, FontIncreaseRegular)
+export const IconFontShrink = bundleIcon(FontDecreaseFilled, FontDecreaseRegular)
+export const IconClearFormat = bundleIcon(TextClearFormattingFilled, TextClearFormattingRegular)
+export const IconSubscript = bundleIcon(TextSubscriptFilled, TextSubscriptRegular)
+export const IconSuperscript = bundleIcon(TextSuperscriptFilled, TextSuperscriptRegular)
+export const IconTextEffects = bundleIcon(TextEffectsFilled, TextEffectsRegular)
+export const IconHighlight = bundleIcon(HighlightFilled, HighlightRegular)
+export const IconFontColor = bundleIcon(TextColorFilled, TextColorRegular)
+export const IconMultiLevelList = bundleIcon(
+  TextListAbcUppercaseLtrFilled,
+  TextListAbcUppercaseLtrRegular
+)
+export const IconIndentDecrease = bundleIcon(TextIndentDecreaseFilled, TextIndentDecreaseRegular)
+export const IconIndentIncrease = bundleIcon(TextIndentIncreaseFilled, TextIndentIncreaseRegular)
+export const IconSort = bundleIcon(ArrowSortFilled, ArrowSortRegular)
+export const IconShowMarks = bundleIcon(TextGrammarWandFilled, TextGrammarWandRegular)
+export const IconShading = bundleIcon(PaintBucketFilled, PaintBucketRegular)
+export const IconBorders = bundleIcon(BorderAllFilled, BorderAllRegular)
+export const IconReplace = bundleIcon(ArrowSwapFilled, ArrowSwapRegular)
+export const IconSelect = bundleIcon(CursorFilled, CursorRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)

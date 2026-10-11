@@ -8,31 +8,51 @@ import {
   IconAlignLeft,
   IconAlignRight,
   IconBold,
+  IconBorders,
   IconBullets,
+  IconClearFormat,
   IconColumns,
   IconComment,
+  IconCopy,
+  IconCut,
   IconExport,
+  IconFontColor,
+  IconFontGrow,
+  IconFontShrink,
   IconFootnote,
   IconFormatPainter,
   IconGrid,
+  IconHighlight,
+  IconIndentDecrease,
+  IconIndentIncrease,
   IconItalic,
   IconLineSpacing,
   IconMargins,
+  IconMultiLevelList,
   IconNew,
   IconNumbering,
   IconOrientation,
   IconPageBreak,
+  IconPaste,
   IconPicture,
   IconPrint,
   IconReadingView,
   IconRedo,
+  IconReplace,
   IconRuler,
   IconSave,
   IconSearch,
+  IconSelect,
+  IconShading,
   IconShape,
+  IconShowMarks,
+  IconSort,
   IconSpellCheck,
   IconStrike,
+  IconSubscript,
+  IconSuperscript,
   IconTable,
+  IconTextEffects,
   IconToc,
   IconUnderline,
   IconUndo,
@@ -42,32 +62,147 @@ import {
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
 export type RibbonTab = (typeof RIBBON_TABS)[number]
 
+/**
+ * 「开始」页那几个下拉框与样式库里的候选。都是真 Word 里装的东西，顺序也照它排——
+ * 这类列表的可信度全在「里面装的东西像不像」上，随便编几个名字反而更假。
+ */
+const FONT_FAMILIES = [
+  '宋体',
+  '黑体',
+  '楷体',
+  '仿宋',
+  '微软雅黑',
+  '等线',
+  'Times New Roman',
+  'Arial'
+] as const
+
+const FONT_SIZES = [
+  '初号',
+  '小初',
+  '一号',
+  '小一',
+  '二号',
+  '小二',
+  '三号',
+  '小三',
+  '四号',
+  '小四',
+  '五号',
+  '小五'
+] as const
+
+const LINE_SPACINGS = ['1.0', '1.15', '1.5', '2.0', '2.5', '3.0'] as const
+
+const STYLE_ENTRIES = ['正文', '标题 1', '标题 2', '标题 3', '无间隔', '引用', '强调'] as const
+
+const CLIPBOARD_GROUP: ToolbarGroup = {
+  label: '剪贴板',
+  items: [
+    // 真 Word 的「粘贴」是带展开箭头的大按钮；这里没给 `split` 做大按钮尺寸（那要另写一套
+    // 箭头定位的样式），所以粘贴先用大按钮，箭头在下面几个真正需要它的地方用。
+    { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
+    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
+    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
+  ]
+}
+
 const FONT_GROUP: ToolbarGroup = {
   label: '字体',
   items: [
-    // 字体名与字号在真 Word 里是下拉框，这里是文字按钮——**刻意不给它们图标**：
-    // 有图标的非大按钮会把标签藏起来（见 Toolbar 的 `--icon-only`），而这两项的
-    // 可读文字本身就是它的样子。
-    { kind: 'placeholder', id: 'font-family', label: '宋体', title: '字体' },
-    { kind: 'placeholder', id: 'font-size', label: '五号', title: '字号' },
+    // 字体名与字号在真 Word 里就是**下拉框**（combo），不再是文字按钮。
+    // 宽度照真 Word 那两栏的观感给：字体名宽、字号窄。
+    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 118 },
+    { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 58 },
+    { kind: 'placeholder', id: 'font-grow', label: '增大字号', title: '增大字号', icon: IconFontGrow },
+    {
+      kind: 'placeholder',
+      id: 'font-shrink',
+      label: '减小字号',
+      title: '减小字号',
+      icon: IconFontShrink
+    },
+    {
+      kind: 'placeholder',
+      id: 'clear-format',
+      label: '清除格式',
+      title: '清除所有格式',
+      icon: IconClearFormat
+    },
     { kind: 'toggle', id: 'bold', label: '加粗', title: '加粗', icon: IconBold },
     { kind: 'toggle', id: 'italic', label: '斜体', title: '斜体', icon: IconItalic },
-    { kind: 'toggle', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
+    // 下划线在真 Word 里是「主按钮 + 展开箭头」，箭头里是双下划线、波浪线那些。
+    { kind: 'split', id: 'underline', label: '下划线', title: '下划线', icon: IconUnderline },
     { kind: 'toggle', id: 'strike', label: '删除线', title: '删除线', icon: IconStrike },
-    { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter, large: true }
+    { kind: 'toggle', id: 'subscript', label: '下标', title: '下标', icon: IconSubscript },
+    { kind: 'toggle', id: 'superscript', label: '上标', title: '上标', icon: IconSuperscript },
+    {
+      kind: 'toggle',
+      id: 'text-effects',
+      label: '文本效果',
+      title: '文本效果',
+      icon: IconTextEffects
+    },
+    { kind: 'toggle', id: 'highlight', label: '突出显示', title: '突出显示', icon: IconHighlight },
+    {
+      kind: 'placeholder',
+      id: 'font-color',
+      label: '字体颜色',
+      title: '字体颜色',
+      icon: IconFontColor
+    }
   ]
 }
 
 const PARAGRAPH_GROUP: ToolbarGroup = {
   label: '段落',
   items: [
-    { kind: 'placeholder', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
-    { kind: 'placeholder', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    // 项目符号与编号在真 Word 里同样是分割按钮（箭头里是各种符号 / 编号样式）。
+    { kind: 'split', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
+    { kind: 'split', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
+    {
+      kind: 'placeholder',
+      id: 'multilevel',
+      label: '多级列表',
+      title: '多级列表',
+      icon: IconMultiLevelList
+    },
+    {
+      kind: 'placeholder',
+      id: 'indent-decrease',
+      label: '减少缩进',
+      title: '减少缩进量',
+      icon: IconIndentDecrease
+    },
+    {
+      kind: 'placeholder',
+      id: 'indent-increase',
+      label: '增加缩进',
+      title: '增加缩进量',
+      icon: IconIndentIncrease
+    },
+    { kind: 'placeholder', id: 'sort', label: '排序', title: '排序', icon: IconSort },
+    {
+      kind: 'toggle',
+      id: 'show-marks',
+      label: '编辑标记',
+      title: '显示/隐藏编辑标记',
+      icon: IconShowMarks
+    },
     { kind: 'toggle', id: 'align-left', label: '左对齐', title: '左对齐', icon: IconAlignLeft },
     { kind: 'toggle', id: 'align-center', label: '居中', title: '居中', icon: IconAlignCenter },
     { kind: 'toggle', id: 'align-right', label: '右对齐', title: '右对齐', icon: IconAlignRight },
-    { kind: 'toggle', id: 'align-justify', label: '两端对齐', title: '两端对齐', icon: IconAlignJustify },
-    { kind: 'placeholder', id: 'line-spacing', label: '行距', title: '行距', icon: IconLineSpacing }
+    {
+      kind: 'toggle',
+      id: 'align-justify',
+      label: '两端对齐',
+      title: '两端对齐',
+      icon: IconAlignJustify
+    },
+    { kind: 'combo', id: 'line-spacing', title: '行距', options: LINE_SPACINGS, width: 58 },
+    { kind: 'placeholder', id: 'shading', label: '底纹', title: '底纹', icon: IconShading },
+    { kind: 'placeholder', id: 'borders', label: '边框', title: '边框', icon: IconBorders }
   ]
 }
 
@@ -103,21 +238,27 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
     { label: '设置', items: [{ kind: 'settings', large: true }] }
   ],
   开始: [
+    CLIPBOARD_GROUP,
     FONT_GROUP,
     PARAGRAPH_GROUP,
     {
+      // 样式在真 Word 里是一排带 `AaBbCc` 预览的小方块，不是按钮——所以用 gallery。
       label: '样式',
-      items: [
-        { kind: 'placeholder', id: 'style-heading', label: '标题 1', title: '标题 1' },
-        { kind: 'placeholder', id: 'style-normal', label: '正文', title: '正文' }
-      ]
+      items: [{ kind: 'gallery', id: 'style', title: '样式', entries: STYLE_ENTRIES }]
     },
     {
       label: '编辑',
       items: [
-        { kind: 'placeholder', id: 'find', label: '查找替换', title: '查找和替换', icon: IconSearch, large: true },
-        { kind: 'placeholder', id: 'undo', label: '撤销', title: '撤销', icon: IconUndo },
-        { kind: 'placeholder', id: 'redo', label: '重做', title: '重做', icon: IconRedo }
+        {
+          kind: 'placeholder',
+          id: 'find',
+          label: '查找',
+          title: '查找',
+          icon: IconSearch,
+          large: true
+        },
+        { kind: 'placeholder', id: 'replace', label: '替换', title: '替换', icon: IconReplace },
+        { kind: 'placeholder', id: 'select', label: '选择', title: '选择', icon: IconSelect }
       ]
     }
   ],
