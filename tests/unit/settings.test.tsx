@@ -66,6 +66,11 @@ function setup(opts: SetupOptions = {}): {
    */
   function Harness() {
     const [recording, setRecording] = useState(false)
+    /**
+     * 对话框开不开。`Ribbon` 从 Task 6 起是**受控**的（原先这个状态住在它里面），
+     * 所以壳得拿着它——「按 ⌘/Ctrl + , 打开设置」那几条用例现在只能走分发器那条路。
+     */
+    const [settingsOpen, setSettingsOpen] = useState(false)
     const reportRef = useRef(opts.onRecordingChange)
     reportRef.current = opts.onRecordingChange
     /**
@@ -86,10 +91,11 @@ function setup(opts: SetupOptions = {}): {
       actions: {
         // 与 `ToolbarProvider` 收到的是**同一个** spy：App 里两边也都指向同一个 handleImport
         import: dispatchImport,
-        // 这两条动作在 App 里是「提升上去的状态」，单测里没有那一层，占位即可
-        // （Ribbon 现在还自己监听 ⌘, 打开设置，所以打开设置的用例不经过分发器）
+        // 章节栏那条在 App 里是「提升上去的状态」（Task 7 才提），单测里没有那一层，占位即可
         'toggle-sidebar': () => {},
-        'open-settings': () => {}
+        // 【这一条必须真的打开对话框】Ribbon 不再自己监听 ⌘,，「按 ⌘/Ctrl + , 对话框出现」
+        // 那几条既有用例现在只剩分发器这一条路——占位空函数会让它们全红。
+        'open-settings': () => setSettingsOpen(true)
       }
     })
     return (
@@ -102,6 +108,8 @@ function setup(opts: SetupOptions = {}): {
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
           novelOpen={novelOpen}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
           onShortcutsChange={onShortcutsChange}
@@ -139,6 +147,9 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
   function Harness() {
     const [title, setTitle] = useState(init.docTitle ?? '文档1')
     const [ratio, setRatio] = useState(init.ratio ?? 10)
+    // 受控的 `settingsOpen`：这个壳只关心「保存之后文档名/比例真的回写」，开合本身用不上，
+    // 但它是 Ribbon 的必填 prop，得给一个。
+    const [settingsOpen, setSettingsOpen] = useState(false)
     return (
       <ToolbarProvider
         ratio={ratio}
@@ -158,6 +169,8 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           themeSource="system"
           onThemeSourceChange={vi.fn()}
           novelOpen
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
         />
         <Toast />
       </ToolbarProvider>
@@ -184,8 +197,15 @@ describe('设置对话框的打开方式', () => {
     expect(settings().getAttribute('aria-modal')).toBe('true')
   })
 
-  it('⌘/Ctrl + , 都能打开（按物理键位 Comma 判定）', () => {
-    setup()
+  // 【这一条原先叫「⌘/Ctrl + , 都能打开」】改动前 Ribbon 自己那个监听是 `e.metaKey || e.ctrlKey`，
+  // 与平台无关，所以两套修饰键都开。现在键位来自注册表、按平台各有一套：macOS 那条是 ⌘,，
+  // Windows 那条是 Ctrl+,——拿 win32 的壳去按 ⌘, 本来就不该开。断言跟着平台分开写，
+  // 覆盖的是同一件事（各自平台上的那一个组合真的打得开），不是把断言删掉。
+  it('macOS 上 ⌘ + , 打开（按物理键位 Comma 判定）', () => {
+    // `shortcuts` 得一起换成 darwin 的那一份：这个壳收的是「**当前生效**的快捷键」
+    // （真机上就是 `resolveShortcuts(稀疏表, 平台)` 的结果），默认值是按 other 补齐的。
+    // 只换 platform、不换 shortcuts，壳里就是一张自相矛盾的表（平台是 mac、键位是 Win 的）。
+    setup({ platform: 'darwin', shortcuts: resolveShortcuts({}, 'darwin') })
     fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true })
     expect(screen.getByTestId('settings')).toBeTruthy()
   })
@@ -194,6 +214,15 @@ describe('设置对话框的打开方式', () => {
     setup()
     fireEvent.keyDown(window, { key: ',', code: 'Comma', ctrlKey: true })
     expect(screen.getByTestId('settings')).toBeTruthy()
+  })
+
+  it('另一个平台的修饰键不打开（键位是按平台配的，不是「随便哪个修饰键都行」）', () => {
+    // 这是本任务删掉 Ribbon 那个平台无关监听之后**新出现**的语义：win32 的壳里按 ⌘,
+    // 既不是配上的那条、也不在任何一张表里，不该开。少了这一条，上面两条换成
+    // 「metaKey || ctrlKey 一律放行」的实现照样绿。
+    setup()
+    fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true })
+    expect(screen.queryByTestId('settings')).toBeNull()
   })
 
   it('不带修饰键的逗号不打开（那是正文里的标点，不该被吃掉）', () => {

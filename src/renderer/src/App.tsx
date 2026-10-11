@@ -49,6 +49,11 @@ export default function App() {
   /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
   const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
   /**
+   * 设置对话框开不开。**从 Ribbon 里提上来的**：Ribbon 不再自己监听 ⌘/Ctrl + ,（那条归
+   * 全局分发器，而分发器长在这一层），所以这个状态得由本组件持有再传下去。
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  /**
    * **全局**阅读替换比例：新导入的书拿它当起点。
    *
    * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
@@ -373,6 +378,8 @@ export default function App() {
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
           novelOpen={novel !== null}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
         />
 
         <div className="wt-body">
