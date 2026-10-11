@@ -143,7 +143,83 @@ import {
   ArrowSwapFilled,
   ArrowSwapRegular,
   CursorFilled,
-  CursorRegular
+  CursorRegular,
+  LinkFilled,
+  LinkRegular,
+  BookmarkFilled,
+  BookmarkRegular,
+  BookmarkMultipleFilled,
+  BookmarkMultipleRegular,
+  EmojiFilled,
+  EmojiRegular,
+  CubeFilled,
+  CubeRegular,
+  ChartMultipleFilled,
+  ChartMultipleRegular,
+  FlowchartFilled,
+  FlowchartRegular,
+  ScreenshotFilled,
+  ScreenshotRegular,
+  PuzzlePieceFilled,
+  PuzzlePieceRegular,
+  VideoFilled,
+  VideoRegular,
+  MusicNote2Filled,
+  MusicNote2Regular,
+  DocumentOnePageFilled,
+  DocumentOnePageRegular,
+  DocumentOnePageAddFilled,
+  DocumentOnePageAddRegular,
+  DocumentHeaderFilled,
+  DocumentHeaderRegular,
+  DocumentFooterFilled,
+  DocumentFooterRegular,
+  DocumentPageNumberFilled,
+  DocumentPageNumberRegular,
+  TextboxFilled,
+  TextboxRegular,
+  DropFilled,
+  DropRegular,
+  SignatureFilled,
+  SignatureRegular,
+  CalendarFilled,
+  CalendarRegular,
+  SelectObjectFilled,
+  SelectObjectRegular,
+  MathFormulaFilled,
+  MathFormulaRegular,
+  SymbolsFilled,
+  SymbolsRegular,
+  ResizeFilled,
+  ResizeRegular,
+  NumberSymbolSquareFilled,
+  NumberSymbolSquareRegular,
+  AlignStraightenFilled,
+  AlignStraightenRegular,
+  GroupFilled,
+  GroupRegular,
+  ArrowRotateClockwiseFilled,
+  ArrowRotateClockwiseRegular,
+  PositionToFrontFilled,
+  PositionToFrontRegular,
+  PositionToBackFilled,
+  PositionToBackRegular,
+  TextPositionSquareFilled,
+  TextPositionSquareRegular,
+  PanelLeftFilled,
+  PanelLeftRegular,
+  PaddingTopFilled,
+  PaddingTopRegular,
+  PaddingDownFilled,
+  PaddingDownRegular,
+  TextWrapFilled,
+  TextWrapRegular,
+  SaveCopyFilled,
+  SaveCopyRegular,
+  SendFilled,
+  SendRegular,
+  TextProofingToolsFilled,
+  TextProofingToolsRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -234,6 +310,52 @@ export const IconShading = bundleIcon(PaintBucketFilled, PaintBucketRegular)
 export const IconBorders = bundleIcon(BorderAllFilled, BorderAllRegular)
 export const IconReplace = bundleIcon(ArrowSwapFilled, ArrowSwapRegular)
 export const IconSelect = bundleIcon(CursorFilled, CursorRegular)
+
+/* 「插入」页用到的一组。
+   名字同样逐个枚举核对过。几个换过名的：查不到 `CoverPage`，封面用的是 `DocumentOnePage`；
+   查不到 `BlankPage`，空白页用 `DocumentOnePageAdd`；查不到 `Object`，对象用 `SelectObject`。 */
+export const IconCoverPage = bundleIcon(DocumentOnePageFilled, DocumentOnePageRegular)
+export const IconBlankPage = bundleIcon(DocumentOnePageAddFilled, DocumentOnePageAddRegular)
+export const IconIcons = bundleIcon(EmojiFilled, EmojiRegular)
+export const Icon3DModel = bundleIcon(CubeFilled, CubeRegular)
+export const IconChart = bundleIcon(ChartMultipleFilled, ChartMultipleRegular)
+export const IconSmartArt = bundleIcon(FlowchartFilled, FlowchartRegular)
+export const IconScreenshot = bundleIcon(ScreenshotFilled, ScreenshotRegular)
+export const IconAddin = bundleIcon(PuzzlePieceFilled, PuzzlePieceRegular)
+export const IconVideo = bundleIcon(VideoFilled, VideoRegular)
+export const IconAudio = bundleIcon(MusicNote2Filled, MusicNote2Regular)
+export const IconHyperlink = bundleIcon(LinkFilled, LinkRegular)
+export const IconBookmark = bundleIcon(BookmarkFilled, BookmarkRegular)
+export const IconCrossRef = bundleIcon(BookmarkMultipleFilled, BookmarkMultipleRegular)
+export const IconHeader = bundleIcon(DocumentHeaderFilled, DocumentHeaderRegular)
+export const IconFooter = bundleIcon(DocumentFooterFilled, DocumentFooterRegular)
+export const IconPageNumber = bundleIcon(DocumentPageNumberFilled, DocumentPageNumberRegular)
+export const IconTextbox = bundleIcon(TextboxFilled, TextboxRegular)
+export const IconDropCap = bundleIcon(DropFilled, DropRegular)
+export const IconSignature = bundleIcon(SignatureFilled, SignatureRegular)
+export const IconDateTime = bundleIcon(CalendarFilled, CalendarRegular)
+export const IconObject = bundleIcon(SelectObjectFilled, SelectObjectRegular)
+export const IconFormula = bundleIcon(MathFormulaFilled, MathFormulaRegular)
+export const IconSymbols = bundleIcon(SymbolsFilled, SymbolsRegular)
+
+/* 「布局」页用到的一组。 */
+export const IconPaperSize = bundleIcon(ResizeFilled, ResizeRegular)
+export const IconLineNumbers = bundleIcon(NumberSymbolSquareFilled, NumberSymbolSquareRegular)
+export const IconHyphenation = bundleIcon(TextProofingToolsFilled, TextProofingToolsRegular)
+export const IconSpaceBefore = bundleIcon(PaddingTopFilled, PaddingTopRegular)
+export const IconSpaceAfter = bundleIcon(PaddingDownFilled, PaddingDownRegular)
+export const IconPosition = bundleIcon(TextPositionSquareFilled, TextPositionSquareRegular)
+export const IconWrapText = bundleIcon(TextWrapFilled, TextWrapRegular)
+export const IconBringForward = bundleIcon(PositionToFrontFilled, PositionToFrontRegular)
+export const IconSendBackward = bundleIcon(PositionToBackFilled, PositionToBackRegular)
+export const IconSelectionPane = bundleIcon(PanelLeftFilled, PanelLeftRegular)
+export const IconAlignObjects = bundleIcon(AlignStraightenFilled, AlignStraightenRegular)
+export const IconGroupObjects = bundleIcon(GroupFilled, GroupRegular)
+export const IconRotate = bundleIcon(ArrowRotateClockwiseFilled, ArrowRotateClockwiseRegular)
+
+/* 「文件」页补充的几个。 */
+export const IconSaveAs = bundleIcon(SaveCopyFilled, SaveCopyRegular)
+export const IconShare = bundleIcon(SendFilled, SendRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)

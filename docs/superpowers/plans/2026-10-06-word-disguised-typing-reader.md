@@ -6263,7 +6263,49 @@ import {
   IconToc,
   IconUnderline,
   IconUndo,
-  IconWordCount
+  IconWordCount,
+  /* 「插入 / 布局 / 文件」三页补密度时新增的。上面那批是按名字排的，这批按用途聚在一起，
+     不再跟着排——它们只在这三页用，混进去反而更难读。 */
+  Icon3DModel,
+  IconAddin,
+  IconAlignObjects,
+  IconAudio,
+  IconBlankPage,
+  IconBookmark,
+  IconBringForward,
+  IconChart,
+  IconClose,
+  IconCoverPage,
+  IconCrossRef,
+  IconDateTime,
+  IconDropCap,
+  IconFooter,
+  IconFormula,
+  IconGroupObjects,
+  IconHeader,
+  IconHyperlink,
+  IconHyphenation,
+  IconIcons,
+  IconImport,
+  IconLineNumbers,
+  IconObject,
+  IconPageNumber,
+  IconPaperSize,
+  IconPosition,
+  IconRotate,
+  IconSaveAs,
+  IconScreenshot,
+  IconSelectionPane,
+  IconSendBackward,
+  IconShare,
+  IconSignature,
+  IconSmartArt,
+  IconSpaceAfter,
+  IconSpaceBefore,
+  IconSymbols,
+  IconTextbox,
+  IconVideo,
+  IconWrapText
 } from './icons'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -6446,10 +6488,24 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
 const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   文件: [
     {
+      // 真 Word 里「文件」不是选项卡，是整页的 backstage（新建/打开/信息/打印…竖排）。
+      // 这里刻意**没做**那一层：backstage 会整页盖住正文，而本应用的正事就是那块正文，
+      // 点错一下就把阅读区盖了。所以它保持成一个普通选项卡，只把内容补丰富。
       label: '文件',
       items: [
         { kind: 'placeholder', id: 'new', label: '新建', title: '新建', icon: IconNew, large: true },
+        { kind: 'placeholder', id: 'open', label: '打开', title: '打开', icon: IconImport, large: true },
         { kind: 'placeholder', id: 'save', label: '保存', title: '保存', icon: IconSave, large: true },
+        {
+          kind: 'placeholder',
+          id: 'save-as',
+          label: '另存为',
+          title: '另存为',
+          icon: IconSaveAs,
+          large: true
+        },
+        { kind: 'placeholder', id: 'print', label: '打印', title: '打印', icon: IconPrint, large: true },
+        { kind: 'placeholder', id: 'share', label: '共享', title: '共享', icon: IconShare, large: true },
         {
           kind: 'placeholder',
           id: 'export-docx',
@@ -6458,7 +6514,7 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           icon: IconExport,
           large: true
         },
-        { kind: 'placeholder', id: 'print', label: '打印', title: '打印', icon: IconPrint, large: true }
+        { kind: 'placeholder', id: 'close-doc', label: '关闭', title: '关闭', icon: IconClose, large: true }
       ]
     },
     // 真实功能的唯一入口。排在占位组【后面】——它是整个界面上唯一「有用」的按钮，
@@ -6492,17 +6548,192 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ],
   插入: [
     {
-      label: '插入',
+      label: '页面',
       items: [
-        { kind: 'placeholder', id: 'table', label: '表格', title: '表格', icon: IconTable, large: true },
-        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片', icon: IconPicture, large: true },
-        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状', icon: IconShape, large: true },
+        {
+          kind: 'placeholder',
+          id: 'cover-page',
+          label: '封面',
+          title: '封面',
+          icon: IconCoverPage,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'blank-page',
+          label: '空白页',
+          title: '空白页',
+          icon: IconBlankPage,
+          large: true
+        },
         {
           kind: 'placeholder',
           id: 'pagebreak',
           label: '分页',
           title: '分页符',
           icon: IconPageBreak,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '表格',
+      items: [
+        { kind: 'placeholder', id: 'table', label: '表格', title: '表格', icon: IconTable, large: true }
+      ]
+    },
+    {
+      label: '插图',
+      items: [
+        { kind: 'placeholder', id: 'picture', label: '图片', title: '图片', icon: IconPicture, large: true },
+        { kind: 'placeholder', id: 'shape', label: '形状', title: '形状', icon: IconShape, large: true },
+        { kind: 'placeholder', id: 'icons', label: '图标', title: '图标', icon: IconIcons, large: true },
+        { kind: 'placeholder', id: 'model3d', label: '3D 模型', title: '3D 模型', icon: Icon3DModel, large: true },
+        { kind: 'placeholder', id: 'smartart', label: 'SmartArt', title: 'SmartArt', icon: IconSmartArt, large: true },
+        { kind: 'placeholder', id: 'chart', label: '图表', title: '图表', icon: IconChart, large: true },
+        {
+          kind: 'placeholder',
+          id: 'screenshot',
+          label: '屏幕截图',
+          title: '屏幕截图',
+          icon: IconScreenshot,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '加载项',
+      items: [
+        { kind: 'placeholder', id: 'addin', label: '加载项', title: '加载项', icon: IconAddin, large: true }
+      ]
+    },
+    {
+      label: '媒体',
+      items: [
+        { kind: 'placeholder', id: 'video', label: '视频', title: '视频', icon: IconVideo, large: true },
+        { kind: 'placeholder', id: 'audio', label: '音频', title: '音频', icon: IconAudio, large: true }
+      ]
+    },
+    {
+      label: '链接',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'link',
+          label: '链接',
+          title: '链接',
+          icon: IconHyperlink,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'bookmark',
+          label: '书签',
+          title: '书签',
+          icon: IconBookmark,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'crossref',
+          label: '交叉引用',
+          title: '交叉引用',
+          icon: IconCrossRef,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '批注',
+      items: [
+        { kind: 'placeholder', id: 'comment', label: '批注', title: '批注', icon: IconComment, large: true }
+      ]
+    },
+    {
+      label: '页眉和页脚',
+      items: [
+        { kind: 'placeholder', id: 'header', label: '页眉', title: '页眉', icon: IconHeader, large: true },
+        { kind: 'placeholder', id: 'footer', label: '页脚', title: '页脚', icon: IconFooter, large: true },
+        {
+          kind: 'placeholder',
+          id: 'page-number',
+          label: '页码',
+          title: '页码',
+          icon: IconPageNumber,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '文本',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'textbox',
+          label: '文本框',
+          title: '文本框',
+          icon: IconTextbox,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'wordart',
+          label: '艺术字',
+          title: '艺术字',
+          icon: IconTextEffects,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'dropcap',
+          label: '首字下沉',
+          title: '首字下沉',
+          icon: IconDropCap,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'signature',
+          label: '签名行',
+          title: '签名行',
+          icon: IconSignature,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'datetime',
+          label: '日期和时间',
+          title: '日期和时间',
+          icon: IconDateTime,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'object',
+          label: '对象',
+          title: '对象',
+          icon: IconObject,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '符号',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'equation',
+          label: '公式',
+          title: '公式',
+          icon: IconFormula,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'symbol',
+          label: '符号',
+          title: '符号',
+          icon: IconSymbols,
           large: true
         }
       ]
@@ -6521,7 +6752,155 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           icon: IconOrientation,
           large: true
         },
-        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏', icon: IconColumns, large: true }
+        {
+          kind: 'placeholder',
+          id: 'paper-size',
+          label: '纸张大小',
+          title: '纸张大小',
+          icon: IconPaperSize,
+          large: true
+        },
+        { kind: 'placeholder', id: 'columns', label: '分栏', title: '分栏', icon: IconColumns, large: true },
+        {
+          kind: 'placeholder',
+          id: 'breaks',
+          label: '分隔符',
+          title: '分隔符',
+          icon: IconPageBreak,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'line-numbers',
+          label: '行号',
+          title: '行号',
+          icon: IconLineNumbers,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'hyphenation',
+          label: '断字',
+          title: '断字',
+          icon: IconHyphenation,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '段落',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'indent-decrease',
+          label: '减少缩进',
+          title: '减少缩进量',
+          icon: IconIndentDecrease,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'indent-increase',
+          label: '增加缩进',
+          title: '增加缩进量',
+          icon: IconIndentIncrease,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'space-before',
+          label: '段前间距',
+          title: '段前间距',
+          icon: IconSpaceBefore,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'space-after',
+          label: '段后间距',
+          title: '段后间距',
+          icon: IconSpaceAfter,
+          large: true
+        },
+        {
+          // 与「开始」页那个行距是同一个命令，所以共用 `line-spacing` 这个 id——
+          // 那边的 combo 选了值，这边的按钮读的是同一份状态（按钮本身不读，见 Toolbar）。
+          kind: 'placeholder',
+          id: 'line-spacing',
+          label: '行距',
+          title: '行距',
+          icon: IconLineSpacing,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '排列',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'position',
+          label: '位置',
+          title: '位置',
+          icon: IconPosition,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'wrap-text',
+          label: '环绕文字',
+          title: '环绕文字',
+          icon: IconWrapText,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'bring-forward',
+          label: '上移一层',
+          title: '上移一层',
+          icon: IconBringForward,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'send-backward',
+          label: '下移一层',
+          title: '下移一层',
+          icon: IconSendBackward,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'selection-pane',
+          label: '选择窗格',
+          title: '选择窗格',
+          icon: IconSelectionPane,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'align-objects',
+          label: '对齐',
+          title: '对齐',
+          icon: IconAlignObjects,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'group-objects',
+          label: '组合',
+          title: '组合',
+          icon: IconGroupObjects,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'rotate',
+          label: '旋转',
+          title: '旋转',
+          icon: IconRotate,
+          large: true
+        }
       ]
     }
   ],
@@ -10187,7 +10566,83 @@ import {
   ArrowSwapFilled,
   ArrowSwapRegular,
   CursorFilled,
-  CursorRegular
+  CursorRegular,
+  LinkFilled,
+  LinkRegular,
+  BookmarkFilled,
+  BookmarkRegular,
+  BookmarkMultipleFilled,
+  BookmarkMultipleRegular,
+  EmojiFilled,
+  EmojiRegular,
+  CubeFilled,
+  CubeRegular,
+  ChartMultipleFilled,
+  ChartMultipleRegular,
+  FlowchartFilled,
+  FlowchartRegular,
+  ScreenshotFilled,
+  ScreenshotRegular,
+  PuzzlePieceFilled,
+  PuzzlePieceRegular,
+  VideoFilled,
+  VideoRegular,
+  MusicNote2Filled,
+  MusicNote2Regular,
+  DocumentOnePageFilled,
+  DocumentOnePageRegular,
+  DocumentOnePageAddFilled,
+  DocumentOnePageAddRegular,
+  DocumentHeaderFilled,
+  DocumentHeaderRegular,
+  DocumentFooterFilled,
+  DocumentFooterRegular,
+  DocumentPageNumberFilled,
+  DocumentPageNumberRegular,
+  TextboxFilled,
+  TextboxRegular,
+  DropFilled,
+  DropRegular,
+  SignatureFilled,
+  SignatureRegular,
+  CalendarFilled,
+  CalendarRegular,
+  SelectObjectFilled,
+  SelectObjectRegular,
+  MathFormulaFilled,
+  MathFormulaRegular,
+  SymbolsFilled,
+  SymbolsRegular,
+  ResizeFilled,
+  ResizeRegular,
+  NumberSymbolSquareFilled,
+  NumberSymbolSquareRegular,
+  AlignStraightenFilled,
+  AlignStraightenRegular,
+  GroupFilled,
+  GroupRegular,
+  ArrowRotateClockwiseFilled,
+  ArrowRotateClockwiseRegular,
+  PositionToFrontFilled,
+  PositionToFrontRegular,
+  PositionToBackFilled,
+  PositionToBackRegular,
+  TextPositionSquareFilled,
+  TextPositionSquareRegular,
+  PanelLeftFilled,
+  PanelLeftRegular,
+  PaddingTopFilled,
+  PaddingTopRegular,
+  PaddingDownFilled,
+  PaddingDownRegular,
+  TextWrapFilled,
+  TextWrapRegular,
+  SaveCopyFilled,
+  SaveCopyRegular,
+  SendFilled,
+  SendRegular,
+  TextProofingToolsFilled,
+  TextProofingToolsRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -10278,6 +10733,52 @@ export const IconShading = bundleIcon(PaintBucketFilled, PaintBucketRegular)
 export const IconBorders = bundleIcon(BorderAllFilled, BorderAllRegular)
 export const IconReplace = bundleIcon(ArrowSwapFilled, ArrowSwapRegular)
 export const IconSelect = bundleIcon(CursorFilled, CursorRegular)
+
+/* 「插入」页用到的一组。
+   名字同样逐个枚举核对过。几个换过名的：查不到 `CoverPage`，封面用的是 `DocumentOnePage`；
+   查不到 `BlankPage`，空白页用 `DocumentOnePageAdd`；查不到 `Object`，对象用 `SelectObject`。 */
+export const IconCoverPage = bundleIcon(DocumentOnePageFilled, DocumentOnePageRegular)
+export const IconBlankPage = bundleIcon(DocumentOnePageAddFilled, DocumentOnePageAddRegular)
+export const IconIcons = bundleIcon(EmojiFilled, EmojiRegular)
+export const Icon3DModel = bundleIcon(CubeFilled, CubeRegular)
+export const IconChart = bundleIcon(ChartMultipleFilled, ChartMultipleRegular)
+export const IconSmartArt = bundleIcon(FlowchartFilled, FlowchartRegular)
+export const IconScreenshot = bundleIcon(ScreenshotFilled, ScreenshotRegular)
+export const IconAddin = bundleIcon(PuzzlePieceFilled, PuzzlePieceRegular)
+export const IconVideo = bundleIcon(VideoFilled, VideoRegular)
+export const IconAudio = bundleIcon(MusicNote2Filled, MusicNote2Regular)
+export const IconHyperlink = bundleIcon(LinkFilled, LinkRegular)
+export const IconBookmark = bundleIcon(BookmarkFilled, BookmarkRegular)
+export const IconCrossRef = bundleIcon(BookmarkMultipleFilled, BookmarkMultipleRegular)
+export const IconHeader = bundleIcon(DocumentHeaderFilled, DocumentHeaderRegular)
+export const IconFooter = bundleIcon(DocumentFooterFilled, DocumentFooterRegular)
+export const IconPageNumber = bundleIcon(DocumentPageNumberFilled, DocumentPageNumberRegular)
+export const IconTextbox = bundleIcon(TextboxFilled, TextboxRegular)
+export const IconDropCap = bundleIcon(DropFilled, DropRegular)
+export const IconSignature = bundleIcon(SignatureFilled, SignatureRegular)
+export const IconDateTime = bundleIcon(CalendarFilled, CalendarRegular)
+export const IconObject = bundleIcon(SelectObjectFilled, SelectObjectRegular)
+export const IconFormula = bundleIcon(MathFormulaFilled, MathFormulaRegular)
+export const IconSymbols = bundleIcon(SymbolsFilled, SymbolsRegular)
+
+/* 「布局」页用到的一组。 */
+export const IconPaperSize = bundleIcon(ResizeFilled, ResizeRegular)
+export const IconLineNumbers = bundleIcon(NumberSymbolSquareFilled, NumberSymbolSquareRegular)
+export const IconHyphenation = bundleIcon(TextProofingToolsFilled, TextProofingToolsRegular)
+export const IconSpaceBefore = bundleIcon(PaddingTopFilled, PaddingTopRegular)
+export const IconSpaceAfter = bundleIcon(PaddingDownFilled, PaddingDownRegular)
+export const IconPosition = bundleIcon(TextPositionSquareFilled, TextPositionSquareRegular)
+export const IconWrapText = bundleIcon(TextWrapFilled, TextWrapRegular)
+export const IconBringForward = bundleIcon(PositionToFrontFilled, PositionToFrontRegular)
+export const IconSendBackward = bundleIcon(PositionToBackFilled, PositionToBackRegular)
+export const IconSelectionPane = bundleIcon(PanelLeftFilled, PanelLeftRegular)
+export const IconAlignObjects = bundleIcon(AlignStraightenFilled, AlignStraightenRegular)
+export const IconGroupObjects = bundleIcon(GroupFilled, GroupRegular)
+export const IconRotate = bundleIcon(ArrowRotateClockwiseFilled, ArrowRotateClockwiseRegular)
+
+/* 「文件」页补充的几个。 */
+export const IconSaveAs = bundleIcon(SaveCopyFilled, SaveCopyRegular)
+export const IconShare = bundleIcon(SendFilled, SendRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)
