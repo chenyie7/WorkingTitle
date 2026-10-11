@@ -75,6 +75,13 @@ describe('parseShortcut / normalizeSpec', () => {
     expect(normalizeSpec('Meta+Meta+KeyO')).toBeNull() // 重复修饰键
     expect(normalizeSpec('')).toBeNull()
   })
+
+  it('原型链上的名字不算白名单内——手改过的 settings.json 塞得进它们', () => {
+    for (const code of ['toString', '__proto__', 'constructor', 'valueOf']) {
+      expect(normalizeSpec(`Meta+${code}`), `Meta+${code} 不该被当成合法`).toBeNull()
+      expect(fromChord(chord({ code, meta: true }))).toBeNull()
+    }
+  })
 })
 
 describe('shortcutProblem', () => {
@@ -96,6 +103,19 @@ describe('shortcutProblem', () => {
 
   it('保留键的乱序写法也拦得住——比对的是归一化之后的值', () => {
     expect(shortcutProblem('Shift+Meta+KeyQ', 'darwin')).toBe('reserved')
+  })
+
+  it('保留清单里的每一条都真的被拦——这是一条策略，不是实现细节', () => {
+    // 【为什么值得钉】实测：把其中八条从 RESERVED 里删掉，整个文件仍然 31 passed——
+    // 它挡的是「录了 ⌘C 之后用户再也复制不了」这类事故，不能只靠 ⌘Q 一条当代表。
+    for (const key of [
+      'Meta+KeyQ', 'Meta+Shift+KeyQ', 'Meta+KeyW', 'Meta+KeyM', 'Meta+KeyH',
+      'Meta+KeyC', 'Meta+KeyV', 'Meta+KeyX', 'Meta+KeyA', 'Meta+KeyZ'
+    ]) {
+      expect(shortcutProblem(key, 'darwin'), `${key} 应当是保留键`).toBe('reserved')
+      // 同一条在别的平台不该被拦——否则它就不是「macOS 的」清单了
+      expect(shortcutProblem(key, 'other')).toBeNull()
+    }
   })
 })
 
