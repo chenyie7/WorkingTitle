@@ -148,7 +148,7 @@ describe('sessionStore 会话读写', () => {
     }
   })
 
-  it('session.json 损坏时返回 null 而不抛异常', () => {
+  it('会话文件损坏时返回 null 而不抛异常', () => {
     const store = createSessionStore(dir)
     mkdirSync(join(dir, 'sessions'), { recursive: true })
     writeFileSync(sessionFile(dir, SRC), '{ 这不是 JSON', 'utf8')
