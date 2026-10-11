@@ -4,6 +4,18 @@ import { DEFAULT_RATIO, MAX_RATIO, MIN_RATIO, type InputMode } from '../../../co
 export interface ToolbarValue {
   toggles: Record<string, boolean>
   toggle: (id: string) => void
+  /**
+   * 下拉框与样式库当前选中的值，键是控件的 `id`。
+   *
+   * 【为什么与 toggles 分开、而不是塞进同一个 map】两者是**不同的状态种类**：toggle 是
+   * 布尔（加粗：开/关），choice 是「从一组里选一个」（字体名、字号、样式）。合成一个
+   * `Record<string, boolean | string>` 会让每个读它的地方都要先判类型，而它们读法完全不同。
+   *
+   * 【默认值不进这里】没选过的控件读出来是 `undefined`，由控件自己退回到第一个选项。
+   * 这样切换选项卡再切回来不会丢，也不需要在初始化时把所有控件遍历一遍。
+   */
+  choices: Record<string, string>
+  choose: (id: string, value: string) => void
   notify: (message: string) => void
   toast: string | null
   ratio: number
@@ -41,6 +53,7 @@ export function ToolbarProvider({
   onClearSession
 }: ToolbarProviderProps) {
   const [toggles, setToggles] = useState<Record<string, boolean>>({})
+  const [choices, setChoices] = useState<Record<string, string>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
@@ -50,6 +63,10 @@ export function ToolbarProvider({
 
   const toggle = useCallback((id: string) => {
     setToggles((prev) => ({ ...prev, [id]: !prev[id] }))
+  }, [])
+
+  const choose = useCallback((id: string, value: string) => {
+    setChoices((prev) => ({ ...prev, [id]: value }))
   }, [])
 
   const notify = useCallback((message: string) => {
@@ -80,6 +97,8 @@ export function ToolbarProvider({
     () => ({
       toggles,
       toggle,
+      choices,
+      choose,
       notify,
       toast,
       ratio,
@@ -89,7 +108,20 @@ export function ToolbarProvider({
       onImport: onImport ?? (() => notify('演示占位功能，未实现')),
       onClearSession: onClearSession ?? (() => notify('演示占位功能，未实现'))
     }),
-    [toggles, toggle, notify, toast, ratio, setRatio, mode, setMode, onImport, onClearSession]
+    [
+      toggles,
+      toggle,
+      choices,
+      choose,
+      notify,
+      toast,
+      ratio,
+      setRatio,
+      mode,
+      setMode,
+      onImport,
+      onClearSession
+    ]
   )
 
   return <ToolbarContext.Provider value={value}>{children}</ToolbarContext.Provider>
