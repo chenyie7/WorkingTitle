@@ -100,10 +100,13 @@ describe('fromChord', () => {
 
 describe('parseShortcut / normalizeSpec', () => {
   it('往返一致', () => {
-    for (const spec of ['Meta+KeyO', 'Ctrl+Shift+KeyH', 'Meta+Comma', 'Ctrl+Alt+Delete']) {
+    // 【判据必须是双向的】原来写的是 `if (parsed === null) continue`——那让解析器退回 null
+    // 反而让用例更绿。实测：把 `Comma` 从白名单里删掉，这条用例仍然 exit 0
+    // （1 passed | 30 skipped）。所以这里断言「必须解析得出来」，失败就是失败。
+    for (const spec of ['Meta+KeyO', 'Ctrl+Shift+KeyH', 'Meta+Comma', 'Ctrl+Alt+KeyF']) {
       const parsed = parseShortcut(spec)
-      if (parsed === null) continue
-      expect(fromChord(parsed)).toBe(spec)
+      expect(parsed, `${spec} 应当解析得出来`).not.toBeNull()
+      expect(fromChord(parsed as KeyChord)).toBe(spec)
     }
   })
 
@@ -385,8 +388,12 @@ function hasModifier(chord: KeyChord): boolean {
 }
 
 /**
- * macOS 上不给用的键：本应用菜单里 role 正在用的那些，加上系统的「退出登录」。
- * 抢过来会废掉退出 / 关闭窗口 / 复制粘贴，或顶掉系统自己的键。
+ * macOS 上不给用的键，两类：
+ *
+ *  - **本应用菜单里 role 正在用的**：⌘Q 退出 / ⌘W 关闭 / ⌘H 隐藏 / ⌘X 剪切 / ⌘C 复制 /
+ *    ⌘V 粘贴 / ⌘A 全选 / ⌘Z 撤销。抢过来会把这些功能废掉。
+ *  - **macOS 系统的**：⇧⌘Q 退出登录、⌘M 最小化。它们不在我们的菜单里（`menu.ts` 没有
+ *    `minimize` role），但应用级 accelerator 一样会把系统约定顶掉。
  *
  * 【录制时和读盘时都要过】只在录制端拦等于没拦——手工改过 settings.json 的人同样塞得进来。
  * 这也是 `resolveShortcuts` 要逐条走校验、而不是直接信磁盘上那个串的原因。

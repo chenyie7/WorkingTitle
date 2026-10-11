@@ -55,10 +55,13 @@ describe('fromChord', () => {
 
 describe('parseShortcut / normalizeSpec', () => {
   it('往返一致', () => {
-    for (const spec of ['Meta+KeyO', 'Ctrl+Shift+KeyH', 'Meta+Comma', 'Ctrl+Alt+Delete']) {
+    // 【判据必须是双向的】原来写的是 `if (parsed === null) continue`——那让解析器退回 null
+    // 反而让用例更绿。实测：把 `Comma` 从白名单里删掉，这条用例仍然 exit 0
+    // （1 passed | 30 skipped）。所以这里断言「必须解析得出来」，失败就是失败。
+    for (const spec of ['Meta+KeyO', 'Ctrl+Shift+KeyH', 'Meta+Comma', 'Ctrl+Alt+KeyF']) {
       const parsed = parseShortcut(spec)
-      if (parsed === null) continue
-      expect(fromChord(parsed)).toBe(spec)
+      expect(parsed, `${spec} 应当解析得出来`).not.toBeNull()
+      expect(fromChord(parsed as KeyChord)).toBe(spec)
     }
   })
 
