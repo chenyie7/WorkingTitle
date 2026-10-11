@@ -800,8 +800,42 @@ describe('旧版单槽会话的迁移', () => {
     expect(store.readSession('/tmp/旧书.txt')).toEqual(fresh)
     expect(existsSync(join(dir, 'session.json'))).toBe(false)
   })
+
+  // 【本任务唯一会毁数据的地方，所以单独一条】写不进新版位置时，旧文件是用户进度唯一的
+  // 副本，绝不能删。触发条件很现实：磁盘满（写要空间、rm 不要），或 sessions 被一个同名
+  // 文件占住（mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复，而且下一次启动的 600ms
+  // 自动保存会用 cursor=0 覆盖现场——用户看到的是「升级之后进度莫名其妙归零」。
+  //
+  // 造法：把 `sessions` 做成一个**文件**，于是 writeSessionFile 的 mkdirSync 必然
+  // EEXIST。（不用 mock node:fs，与 guardA 那条注入式守卫分工不同：那条测写入中途被杀，
+  // 这条测「写根本没成功时调用方有没有守住」。）
+  it('迁移时写不进 sessions/ 就不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    writeFileSync(join(dir, 'sessions'), 'x', 'utf8') // 占位：让 sessions 目录建不出来
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：这次写入确实失败了——否则下面那条「旧文件还在」可能只是因为已经迁移成功
+      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(false)
+      expect(String(spy.mock.calls[0][0])).toContain('迁移失败')
+    } finally {
+      spy.mockRestore()
+    }
+    // 进度唯一的副本还在，下次启动会重试
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8')).cursor).toBe(77)
+  })
 })
 ```
+
+> **同时把 `writeSessionFile` 的返回类型从 `void` 改成 `boolean`**（`true` = 确实落地了）：
+> 迁移那条路必须能问出「写成功了没有」，否则只能靠 `existsSync` 猜。改法就是把两处 `return`
+> 分别写成 `return true` / `return false`（catch 里那条 warn 保留）。`writeSession` 那个公开
+> 方法**忽略**返回值、接口仍是 `void`——「这一次有没有存上」不是渲染层能处置的事，它只该
+> 在日志里留痕。Task 5 的用例里那条「写不进 sessions/ 就不删旧文件」就是这条返回值的判据。
 
 - [ ] **Step 2: 跑一遍，确认红**
 
@@ -838,7 +872,16 @@ Expected: FAIL —— `store.migrateLegacySession is not a function`。
 
       const target = sessionFile(legacy.sourcePath)
       // 新版已经有一份就不覆盖：那一份是更新的，旧文件只是上一代格式的残留。
-      if (!existsSync(target)) writeSessionFile(target, legacy)
+      //
+      // 【写失败就绝不删旧文件——这是本任务唯一会毁数据的地方】`writeSessionFile` 是
+      // 「记一条 warn 然后返回」的姿势，而下面那几行删掉的是**用户进度唯一的副本**。
+      // 磁盘满（写要空间、rm 不要）、或者 sessions 被一个同名文件占住（mkdir 抛、rm 照旧
+      // 成功）都会走到这条路上：删完之后进度不可恢复，而且下一次启动的 600ms 自动保存
+      // 会用 cursor=0 覆盖现场。所以要的是「确认落地了才删」。
+      if (!existsSync(target) && !writeSessionFile(target, legacy)) {
+        console.warn('[wt] 旧版会话迁移失败，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
 
       // 旧版没有 settings.json，「上次打开的是哪本」原先只写在会话文件里。
       const settings = readSettingsFile(settingsPath)
