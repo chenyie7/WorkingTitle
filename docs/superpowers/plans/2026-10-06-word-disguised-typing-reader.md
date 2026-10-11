@@ -6330,6 +6330,9 @@ const FONT_GROUP: ToolbarGroup = {
     // 宽度照真 Word 那两栏的观感给：字体名宽、字号窄。
     { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 118 },
     { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 58 },
+    // 【下面的顺序是被排布方式决定的，别按“重要性”重排】组内是两行按列填充，
+    // **相邻两项自然成上下两格**。所以要成对地写：增大/减小、加粗/斜体、下划线/删除线…
+    // 乱序的话会排出「清除格式 压在 加粗 上面」这种没道理的配对。
     { kind: 'placeholder', id: 'font-grow', label: '增大字号', title: '增大字号', icon: IconFontGrow },
     {
       kind: 'placeholder',
@@ -6338,13 +6341,6 @@ const FONT_GROUP: ToolbarGroup = {
       title: '减小字号',
       icon: IconFontShrink
     },
-    {
-      kind: 'placeholder',
-      id: 'clear-format',
-      label: '清除格式',
-      title: '清除所有格式',
-      icon: IconClearFormat
-    },
     { kind: 'toggle', id: 'bold', label: '加粗', title: '加粗', icon: IconBold },
     { kind: 'toggle', id: 'italic', label: '斜体', title: '斜体', icon: IconItalic },
     // 下划线在真 Word 里是「主按钮 + 展开箭头」，箭头里是双下划线、波浪线那些。
@@ -6352,13 +6348,6 @@ const FONT_GROUP: ToolbarGroup = {
     { kind: 'toggle', id: 'strike', label: '删除线', title: '删除线', icon: IconStrike },
     { kind: 'toggle', id: 'subscript', label: '下标', title: '下标', icon: IconSubscript },
     { kind: 'toggle', id: 'superscript', label: '上标', title: '上标', icon: IconSuperscript },
-    {
-      kind: 'toggle',
-      id: 'text-effects',
-      label: '文本效果',
-      title: '文本效果',
-      icon: IconTextEffects
-    },
     { kind: 'toggle', id: 'highlight', label: '突出显示', title: '突出显示', icon: IconHighlight },
     {
       kind: 'placeholder',
@@ -6366,6 +6355,20 @@ const FONT_GROUP: ToolbarGroup = {
       label: '字体颜色',
       title: '字体颜色',
       icon: IconFontColor
+    },
+    {
+      kind: 'placeholder',
+      id: 'clear-format',
+      label: '清除格式',
+      title: '清除所有格式',
+      icon: IconClearFormat
+    },
+    {
+      kind: 'toggle',
+      id: 'text-effects',
+      label: '文本效果',
+      title: '文本效果',
+      icon: IconTextEffects
     }
   ]
 }
@@ -6373,6 +6376,9 @@ const FONT_GROUP: ToolbarGroup = {
 const PARAGRAPH_GROUP: ToolbarGroup = {
   label: '段落',
   items: [
+    // 顺序同样被「相邻两项成上下两格」决定，见 FONT_GROUP 上面那段说明。
+    // 这一组正好 14 个小控件 = 7 列排满，行距（combo，占满整列）落在最右。
+    // 14 这个数是**凑出来的**：底纹/边框本来就该成对，段落间距是补的那一项。
     // 项目符号与编号在真 Word 里同样是分割按钮（箭头里是各种符号 / 编号样式）。
     { kind: 'split', id: 'bullets', label: '项目符号', title: '项目符号', icon: IconBullets },
     { kind: 'split', id: 'numbering', label: '编号', title: '编号', icon: IconNumbering },
@@ -6383,6 +6389,7 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
       title: '多级列表',
       icon: IconMultiLevelList
     },
+    { kind: 'placeholder', id: 'sort', label: '排序', title: '排序', icon: IconSort },
     {
       kind: 'placeholder',
       id: 'indent-decrease',
@@ -6397,7 +6404,6 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
       title: '增加缩进量',
       icon: IconIndentIncrease
     },
-    { kind: 'placeholder', id: 'sort', label: '排序', title: '排序', icon: IconSort },
     {
       kind: 'toggle',
       id: 'show-marks',
@@ -6405,6 +6411,15 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
       title: '显示/隐藏编辑标记',
       icon: IconShowMarks
     },
+    {
+      kind: 'placeholder',
+      id: 'para-spacing',
+      label: '段落间距',
+      title: '段前段后间距',
+      icon: IconLineSpacing
+    },
+    { kind: 'placeholder', id: 'shading', label: '底纹', title: '底纹', icon: IconShading },
+    { kind: 'placeholder', id: 'borders', label: '边框', title: '边框', icon: IconBorders },
     { kind: 'toggle', id: 'align-left', label: '左对齐', title: '左对齐', icon: IconAlignLeft },
     { kind: 'toggle', id: 'align-center', label: '居中', title: '居中', icon: IconAlignCenter },
     { kind: 'toggle', id: 'align-right', label: '右对齐', title: '右对齐', icon: IconAlignRight },
@@ -6415,9 +6430,7 @@ const PARAGRAPH_GROUP: ToolbarGroup = {
       title: '两端对齐',
       icon: IconAlignJustify
     },
-    { kind: 'combo', id: 'line-spacing', title: '行距', options: LINE_SPACINGS, width: 58 },
-    { kind: 'placeholder', id: 'shading', label: '底纹', title: '底纹', icon: IconShading },
-    { kind: 'placeholder', id: 'borders', label: '边框', title: '边框', icon: IconBorders }
+    { kind: 'combo', id: 'line-spacing', title: '行距', options: LINE_SPACINGS, width: 58 }
   ]
 }
 
