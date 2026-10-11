@@ -120,6 +120,13 @@ describe('parseShortcut / normalizeSpec', () => {
     expect(normalizeSpec('Meta+Meta+KeyO')).toBeNull() // 重复修饰键
     expect(normalizeSpec('')).toBeNull()
   })
+
+  it('原型链上的名字不算白名单内——手改过的 settings.json 塞得进它们', () => {
+    for (const code of ['toString', '__proto__', 'constructor', 'valueOf']) {
+      expect(normalizeSpec(`Meta+${code}`), `Meta+${code} 不该被当成合法`).toBeNull()
+      expect(fromChord(chord({ code, meta: true }))).toBeNull()
+    }
+  })
 })
 
 describe('shortcutProblem', () => {
@@ -141,6 +148,19 @@ describe('shortcutProblem', () => {
 
   it('保留键的乱序写法也拦得住——比对的是归一化之后的值', () => {
     expect(shortcutProblem('Shift+Meta+KeyQ', 'darwin')).toBe('reserved')
+  })
+
+  it('保留清单里的每一条都真的被拦——这是一条策略，不是实现细节', () => {
+    // 【为什么值得钉】实测：把其中八条从 RESERVED 里删掉，整个文件仍然 31 passed——
+    // 它挡的是「录了 ⌘C 之后用户再也复制不了」这类事故，不能只靠 ⌘Q 一条当代表。
+    for (const key of [
+      'Meta+KeyQ', 'Meta+Shift+KeyQ', 'Meta+KeyW', 'Meta+KeyM', 'Meta+KeyH',
+      'Meta+KeyC', 'Meta+KeyV', 'Meta+KeyX', 'Meta+KeyA', 'Meta+KeyZ'
+    ]) {
+      expect(shortcutProblem(key, 'darwin'), `${key} 应当是保留键`).toBe('reserved')
+      // 同一条在别的平台不该被拦——否则它就不是「macOS 的」清单了
+      expect(shortcutProblem(key, 'other')).toBeNull()
+    }
   })
 })
 
@@ -332,9 +352,10 @@ const DIGITS = '0123456789'.split('')
 /**
  * 可录制的键位白名单：`e.code` → Electron accelerator 里的键名。
  *
- * 【为什么限死一张表】accelerator 表达不了所有 `e.code`（`IntlBackslash`、`NumpadAdd`
- * 之类没有对应写法）。限死之后 `toAccelerator` **永远不会失败**，于是「哪条快捷键由谁
- * 执行」可以是一张静态表，不需要「这条能不能进菜单」的运行时判断。
+ * 【为什么限死一张表】accelerator 表达不了所有 `e.code`（`IntlBackslash` / `IntlRo` 之类
+ * 根本没有对应写法——实测 `globalShortcut.register('Cmd+IntlRo')` 直接 conversion
+ * failure）。限死之后 `toAccelerator` **永远不会失败**，于是「哪条快捷键由谁执行」可以是
+ * 一张静态表，不需要「这条能不能进菜单」的运行时判断。
  */
 const KEY_CODES: Readonly<Record<string, string>> = {
   ...Object.fromEntries(LETTERS.map((c) => [`Key${c}`, c])),
@@ -365,6 +386,15 @@ const KEY_CODES: Readonly<Record<string, string>> = {
 }
 
 /**
+ * 键位在白名单里吗。**必须用 hasOwn**：`in` 会走原型链，于是 'toString' / '__proto__' 这类
+ * 也会被判成「在白名单里」，手改过的 settings.json 就能把某条快捷键换成一条 Electron 解析
+ * 不了的死键（而菜单对非法 accelerator 是静默接受的）。
+ */
+function isRecordable(code: string): boolean {
+  return Object.hasOwn(KEY_CODES, code)
+}
+
+/**
  * 一个组合键。
  *
  * 【与 KeyboardEvent 是两回事】这里只有本模块用得上的字段——渲染层负责从真实事件里挑出
@@ -390,8 +420,9 @@ function hasModifier(chord: KeyChord): boolean {
 /**
  * macOS 上不给用的键，两类：
  *
- *  - **本应用菜单里 role 正在用的**：⌘Q 退出 / ⌘W 关闭 / ⌘H 隐藏 / ⌘X 剪切 / ⌘C 复制 /
- *    ⌘V 粘贴 / ⌘A 全选 / ⌘Z 撤销。抢过来会把这些功能废掉。
+ *  - **本应用菜单里 role 正在用的、抢过来最难受的那八个**（`menu.ts` 一共有 17 个 role，
+ *    只收这八个的取舍见设计文档 §9）：⌘Q 退出 / ⌘W 关闭 / ⌘H 隐藏 / ⌘X 剪切 / ⌘C 复制 /
+ *    ⌘V 粘贴 / ⌘A 全选 / ⌘Z 撤销。抢过来会把对应的菜单功能废掉。
  *  - **macOS 系统的**：⇧⌘Q 退出登录、⌘M 最小化。它们不在我们的菜单里（`menu.ts` 没有
  *    `minimize` role），但应用级 accelerator 一样会把系统约定顶掉。
  *
@@ -412,14 +443,18 @@ const RESERVED: Readonly<Record<PlatformKind, readonly string[]>> = {
     'Meta+KeyA',
     'Meta+KeyZ'
   ],
-  // Windows / Linux 没有菜单，Ctrl+C/V/X/A/Z 由 Chromium 对可编辑元素自理，
-  // 而本应用的可编辑元素只有设置里的几个输入框。抢过来没有代价。
+  // Windows / Linux 不设保留清单：`menu.ts` 对非 darwin 直接 `setApplicationMenu(null)`，
+  // 那里一条菜单都没有，「抢了菜单 role」这件事不存在；⇧⌘Q / ⌘M 那类系统约定也没有对应物
+  // （关窗走 Alt+F4 与窗口按钮，归系统管）。Ctrl+C/V/X/A/Z 在这里**不是没有代价**——Chromium
+  // 是对可编辑元素自理的，而本应用有活的可编辑元素（`InputCapture` 的 `.wt-input`、设置里
+  // 那几个输入框）——但那是用户自己录进去、再录一次就拿得回来的选择；macOS 那条清单拦的是
+  // 「抢走 ⌘Q 之后应用给不回来」的能力，两者不是一回事。
   other: []
 }
 
 /** 组合键 → 规范串；不合法返回 null。顺序固定，所以它同时是**归一化**。 */
 export function fromChord(chord: KeyChord): string | null {
-  if (!(chord.code in KEY_CODES)) return null
+  if (!isRecordable(chord.code)) return null
   if (!hasModifier(chord)) return null
   const parts: Modifier[] = []
   // 按 MODIFIERS 的固定顺序 push，出来的串就与用户怎么按无关
@@ -435,7 +470,7 @@ export function parseShortcut(spec: string): KeyChord | null {
   const parts = spec.split('+')
   if (parts.length < 2) return null
   const code = parts[parts.length - 1]
-  if (!(code in KEY_CODES)) return null
+  if (!isRecordable(code)) return null
   const mods = parts.slice(0, -1)
   // 重复的修饰键（'Meta+Meta+KeyO'）不是合法写法
   if (new Set(mods).size !== mods.length) return null
@@ -467,9 +502,10 @@ export function normalizeSpec(spec: string): string | null {
 export function shortcutProblem(spec: string, kind: PlatformKind): ChordProblem {
   const normalized = normalizeSpec(spec)
   if (normalized === null) {
-    // 解析不了还要再分一层：键位不支持 vs 没带修饰键。两者的用户提示不一样。
+    // 解析不了还要再分一层：键位不支持 vs 没带修饰键。这个区分只给 settingsProblem 的日志
+    // 用——用户可见的那条提示把两者合成了一句（录制那条路拿到的是 fromChord 的 null）。
     const parts = spec.split('+')
-    return parts[parts.length - 1] in KEY_CODES ? 'no-modifier' : 'unsupported-key'
+    return isRecordable(parts[parts.length - 1]) ? 'no-modifier' : 'unsupported-key'
   }
   return RESERVED[kind].includes(normalized) ? 'reserved' : null
 }
@@ -497,9 +533,14 @@ export function resolveShortcuts(
 ): ResolvedShortcuts {
   const out = {} as ResolvedShortcuts
   for (const def of SHORTCUTS) {
-    const spec = raw[def.id]
-    const problem = typeof spec === 'string' ? shortcutProblem(spec, kind) : 'unsupported-key'
-    out[def.id] = problem === null ? (normalizeSpec(spec as string) as string) : def.defaults[kind]
+    const stored = raw[def.id]
+    // 归一化过的非 null 值不可能再是 unsupported-key / no-modifier（键位与修饰键都查过了），
+    // 所以这里剩下的只可能是 reserved 一种问题——不必再拿字符串当哨兵。
+    const normalized = typeof stored === 'string' ? normalizeSpec(stored) : null
+    out[def.id] =
+      normalized !== null && shortcutProblem(normalized, kind) === null
+        ? normalized
+        : def.defaults[kind]
   }
   return out
 }
