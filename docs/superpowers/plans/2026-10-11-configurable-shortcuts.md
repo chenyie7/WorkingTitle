@@ -636,6 +636,29 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
   })
 
+  it('macOS 的保留键**不**导致整份退回——它归 core 按平台逐条处理', () => {
+    // 【这一条是钉住两层校验的分工，不是补一条覆盖率】`resolveShortcuts` 的逐条校验要是
+    // 永远走不到，它就是纸面路径。保留键是平台相关的，必须**穿过** sessionStore 这一层
+    // （它拿不到平台，判不了），到 core 那里才被退回默认值。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        ...defaultSettings(),
+        docTitle: '还在',
+        shortcuts: { import: 'Meta+KeyQ' }
+      }),
+      'utf8'
+    )
+    const settings = createSessionStore(dir).readSettings()
+    // 文件本身没被当坏文件，其它字段照旧
+    expect(settings.docTitle).toBe('还在')
+    expect(settings.shortcuts).toEqual({ import: 'Meta+KeyQ' })
+    // 到了 core 这一层才按平台分道扬镳
+    expect(resolveShortcuts(settings.shortcuts, 'darwin').import).toBe('Meta+KeyO')
+    expect(resolveShortcuts(settings.shortcuts, 'other').import).toBe('Meta+KeyQ')
+  })
+
   it('shortcuts 里的未知 id 不拦——那是更新版本写的，本版本应当照常读', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
     writeFileSync(
@@ -767,8 +790,14 @@ function withDefaultsFilled(v: unknown): unknown {
     if (typeof spec !== 'string') return `shortcuts.${id} 不是字符串`
     // 未知 id 刻意**不拦**：那是更新版本写的，本版本应当照常读、照常写回去。
     // 已知 id 则必须能解析——解析不了说明这个文件被改坏了。
-    if (isShortcutId(id) && shortcutProblem(spec, 'darwin') === 'unsupported-key') {
-      return `shortcuts.${id} 不是合法的快捷键`
+    // 【只拦结构问题，不拦保留键】解析不了 / 没带修饰键 → 这个文件被改坏了，与其它字段
+    // 一样整份退回；保留键则是**平台相关**的，而这一层拿不到平台（那正是稀疏表要避免的
+    // 事），只能交给 core 的 resolveShortcuts 按平台逐条退回默认值。
+    if (isShortcutId(id)) {
+      const problem = shortcutProblem(spec, 'darwin')
+      if (problem !== null && problem !== 'reserved') {
+        return `shortcuts.${id} 不是合法的快捷键（${problem}）`
+      }
     }
   }
 ```
@@ -784,11 +813,18 @@ function isShortcutId(id: string): id is ShortcutId {
 }
 ```
 
-> **注意 `'darwin'` 这个写死值。** 这里只问「这个串本身能不能解析」，**不问保留清单**——
-> 保留清单是平台相关的，而 `settingsProblem` 拿不到平台（加了它就得让 `createSessionStore`
-> 多一个参数，那正是稀疏表要避免的事）。保留键在读出来之后由 `resolveShortcuts` 按平台
-> 退回默认值，所以这里的宽松不会把 ⌘Q 放进分发器。用 `'darwin'` 而不是 `'other'` 是因为
-> 它是保留清单更严的那一侧，写严的一侧不会漏。
+> **注意 `'darwin'` 这个写死值，以及为什么把 `'reserved'` 排除在外。** 这里要的是「这个串
+> 本身是不是坏的」——解析不了或没带修饰键，都是文件被改坏的证据，与其它字段一样整份退回。
+> 而**保留键不是坏文件**：它是平台相关的，`settingsProblem` 拿不到平台（加了参数就得让
+> `createSessionStore` 多一个入参，那正是稀疏表要避免的事），所以放它过去、由 core 的
+> `resolveShortcuts` 按平台逐条退回默认值。
+>
+> 【这条划分必须守住，否则会有一层校验变成摆设】要是这里把保留键也拦了，`resolveShortcuts`
+> 的逐条校验在真机路径上就永远走不到——`tests/unit/shortcuts.test.ts` 里「macOS 上磁盘里的
+> 保留键也退回默认值」那条描述的路径只在单测里成立。传 `'darwin'` 而不是 `'other'`，是因为
+> 它是保留清单更严的那一侧；写严的一侧不会漏判「结构问题」。
+>
+> 下面那两条用例（坏串整份退回 / 保留键不整份退回）正是钉住这条划分的。
 
 - [ ] **Step 6: 跑测试确认通过**
 
@@ -1821,6 +1857,16 @@ git commit -F /tmp/msg-task7.txt
 
 每个被改动的源文件都要把实现计划里对应的代码围栏同步过去（口径见 CLAUDE.md 第 1 节：
 `md5(围栏原始内容) == md5(文件)`，含末尾换行、不要 rstrip）。判据是**正向**的：遍历全部
-源/测试文件，报告「没有任何围栏与它逐字节相等」的集合——那个集合必须是空的。本次新增的
-两个源文件（`src/core/shortcuts.ts`、`src/renderer/src/state/shortcuts.ts`）需要在
-`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md` 末尾补围栏段。
+源/测试文件，报告「没有任何围栏与它逐字节相等」的集合——那个集合必须是空的。
+
+**围栏归属：一份文件一个家。** 本计划**新增的两个源文件**（`src/core/shortcuts.ts`、
+`src/renderer/src/state/shortcuts.ts`）的围栏就留在这份计划里，**不再往
+`2026-10-06-word-disguised-typing-reader.md` 末尾补一份**。理由：判据只要求「每份文件至少
+有一个围栏与它逐字节相等」，而重复一份等于同一个文件有两处要同步——下次改代码时忘掉其中
+一处的代价，比省下的那点查找成本高。**被本计划修改的既有文件**（`sessionStore.ts` /
+`menu.ts` / `ipc.ts` / `index.ts` / `SettingsDialog.tsx` / `Page.tsx` / `ChapterList.tsx` /
+`Ribbon.tsx` / `Toolbar.tsx` / `App.tsx` / `types.ts`）它们的围栏住在旧计划里，**改了就
+同步改那一份**。
+
+> 注意本计划里为这些既有文件写的代码块大多是**片段**（一个函数、几行 JSX），它们不构成
+> 「逐字节等于某个文件」的围栏——旧计划里那份完整的才是。别把片段当围栏去比对。
