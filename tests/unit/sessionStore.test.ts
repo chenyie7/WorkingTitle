@@ -647,6 +647,9 @@ describe('旧版单槽会话的迁移', () => {
     writeFileSync(join(dir, 'session.json'), JSON.stringify(makeSession({ cursor: 5 })), 'utf8')
     store.migrateLegacySession()
     const after = store.readSession(SRC)
+    // 前提：第一次迁移**确实搬了东西**——少了这行，一个空实现也能让这条用例全绿
+    // （after 为 null 时 toEqual(null) 成立，而 not.toHaveBeenCalled() 对空实现同样成立）
+    expect(after).not.toBeNull()
 
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
@@ -728,6 +731,28 @@ describe('旧版单槽会话的迁移', () => {
     expect(existsSync(join(dir, 'session.json'))).toBe(false)
   })
 
+  // 【「上次打开的是哪本」那一半的短路】settings 里已经记着**另一本**书时，不去覆盖它：
+  // 它已经有值就意味着设置这一半不需要迁移来补（旧版根本没有 settings.json，所以「已记着
+  // 别的书」只可能是新版已经跑过、或用户在新版里开过别的书）。会话那一半照旧搬、旧文件
+  // 照旧删——迁移负责的是「进度别丢」，不是「把 lastSourcePath 改成这本」。
+  it('settings 已经记着另一本书时，不把它顶掉', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 33 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    store.writeSettings({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/另一本.txt'
+    })
+
+    store.migrateLegacySession()
+
+    expect(store.readSettings().lastSourcePath).toBe('/tmp/另一本.txt')
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(legacy)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+  })
+
   // 【本任务唯一会毁数据的地方，所以单独一条】写不进新版位置时，旧文件是用户进度唯一的
   // 副本，绝不能删。触发条件很现实：磁盘满（写要空间、rm 不要），或 sessions 被一个同名
   // 文件占住（mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复，而且下一次启动的 600ms
@@ -745,10 +770,13 @@ describe('旧版单槽会话的迁移', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       store.migrateLegacySession()
-      // 前提：这次写入确实失败了——否则下面那条「旧文件还在」可能只是因为已经迁移成功
-      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(false)
+      // 前提：会话那次写**确实失败了**（而不是「本来就什么都没写」）。
+      // 原先这里断言的是 `existsSync(sessionFile(dir, ...))` 为 false——但 `sessions` 是个
+      // 普通文件，它下面任何路径的 existsSync 恒为 false，那条断言无论实现做什么都成立，
+      // 是空的。改成钉住「失败这条 warn 真的出现过」。
       // 不看 calls[0]：**第一条** warn 是 writeSessionFile 自己那条「保存会话失败」，
       // 迁移那条在它之后。要看的是「迁移有没有报出这件事」，所以整组拼起来查。
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('保存会话失败')
       expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
     } finally {
       spy.mockRestore()
@@ -756,6 +784,9 @@ describe('旧版单槽会话的迁移', () => {
     // 进度唯一的副本还在，下次启动会重试
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
     expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8')).cursor).toBe(77)
+    // 顺序的判据：会话那半没落地时，绝不能让 lastSourcePath 指向一本进度还没搬过去的书
+    // ——否则下次启动自动打开它、600ms 后把 cursor 0 落盘，真进度就没了。
+    expect(store.readSettings().lastSourcePath).toBeNull()
   })
 
   // 第二扇门：**会话那一半写成功了**，「上次打开的是哪本」没落盘时同样不能删。触发条件：
