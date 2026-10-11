@@ -554,6 +554,44 @@ export const MIN_RATIO = 1
 export const MAX_RATIO = 500
 /** 阅读区渲染窗口上限，超出则折叠前文 */
 export const RENDER_WINDOW_LIMIT = 30_000
+
+/** 外观偏好：跟随系统 / 强制浅色 / 强制深色。与主进程的 `nativeTheme.themeSource` 同构。 */
+export type ThemeSource = 'system' | 'light' | 'dark'
+
+/**
+ * 应用级设置：**不属于任何一本书**的那些偏好。
+ *
+ * 【为什么与 PersistedSession 分开】两者的生命周期不同。进度是「读到哪」，每本书一份、
+ * 随阅读不断变化；设置是「怎么读、长什么样」，全局一份、很少变。此前文档名 / 外观 / 纸张
+ * 三个只在渲染进程的内存里，关掉应用就没了；而比例与输入模式挤在会话里，换一本书就被打回默认。
+ */
+export interface AppSettings {
+  /** 蓝条上的文档名。刻意与 novelTitle（真实文件名）无关，见 App.tsx 里那段说明。 */
+  docTitle: string
+  themeSource: ThemeSource
+  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
+  darkPaper: boolean
+  /** 上次打开的书；启动时用它决定恢复哪一本。从未导入过时为 null。 */
+  lastSourcePath: string | null
+}
+
+/** 蓝条上那个文档名的默认值：刻意中性，不泄露在读什么。 */
+export const DEFAULT_DOC_TITLE = '文档1'
+
+/**
+ * 默认设置。
+ *
+ * 【写成函数而不是共享常量】常量会被消费方就地改掉（`s.themeSource = 'dark'`），
+ * 于是「默认值」在下一次读取时已经变了——那类 bug 只在测试之间串味时才显形。
+ */
+export function defaultSettings(): AppSettings {
+  return {
+    docTitle: DEFAULT_DOC_TITLE,
+    themeSource: 'system',
+    darkPaper: false,
+    lastSourcePath: null
+  }
+}
 ```
 
 - [ ] **Step 2: 写失败测试 `tests/unit/decode.test.ts`**
@@ -2398,8 +2436,10 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import {
   mkdtempSync,
+  mkdirSync,
   rmSync,
   existsSync,
   readFileSync,
@@ -2410,7 +2450,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
-import type { Novel, PersistedSession } from '../../src/core/types'
+import { defaultSettings } from '../../src/core/types'
+import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
 beforeEach(() => {
@@ -2435,7 +2476,22 @@ function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSessio
   }
 }
 
-// 这两个辅助函数放在模块级而不是第二个 describe 里：clearAll 那条用例也要用它们
+/** `makeSession()` 默认那本书的路径——多数「那一份会话文件」的用例说的都是它。 */
+const SRC = '/tmp/测试书.txt'
+
+/**
+ * 会话文件在磁盘上的位置。
+ *
+ * 【为什么测试自己算一遍 sha256 而不是从实现里 import】判据要独立：把实现里的算法换掉
+ * （比如换成 base64），这些用例必须跟着红，而不是跟着实现一起漂。仓库里已有的会话路径
+ * 断言（clearReadingHistory 那条）也是这个姿势。
+ */
+function sessionFile(dir: string, sourcePath: string): string {
+  const key = createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)
+  return join(dir, 'sessions', `${key}.json`)
+}
+
+// 这两个辅助函数放在模块级而不是第二个 describe 里：clearReadingHistory 那条用例也要用它
 // （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
 function writeSource(content: string): string {
   const p = join(dir, 'src.txt')
@@ -2455,17 +2511,57 @@ function makeNovel(sourcePath: string): Novel {
 }
 
 describe('sessionStore 会话读写', () => {
+  it('两本书各存一份，互不覆盖', () => {
+    const store = createSessionStore(dir)
+    const a = makeSession({ sourcePath: '/tmp/A.txt', cursor: 100 })
+    const b = makeSession({ sourcePath: '/tmp/B.txt', cursor: 200 })
+    store.writeSession(a)
+    store.writeSession(b)
+    expect(store.readSession('/tmp/A.txt')).toEqual(a)
+    expect(store.readSession('/tmp/B.txt')).toEqual(b)
+  })
+
+  it('读取路径上的书从未存过时返回 null', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    expect(store.readSession('/tmp/B.txt')).toBeNull()
+  })
+
+  // 文件名是 sourcePath 的哈希，所以「文件里的 sourcePath 与请求的不是同一本」只有手工改
+  // 文件名或哈希撞车才造得出来。但一旦发生，后果是把 B 书的进度套到 A 书上——章节目录与
+  // 光标一起错位，而 fromSession 对错位的 chapterPos 不抛错，只会表现成「进度莫名其妙不对」。
+  it('文件内容里的 sourcePath 与请求的书对不上时按无记录处理', () => {
+    const store = createSessionStore(dir)
+    const a = makeSession({ sourcePath: '/tmp/A.txt', cursor: 100 })
+    store.writeSession(a)
+    // 把 A 那份的内容冒充成 B 的：文件名按 B 的哈希、内容仍是 A 的
+    writeFileSync(sessionFile(dir, '/tmp/B.txt'), JSON.stringify(a), 'utf8')
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSession('/tmp/B.txt')).toBeNull()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain('不是同一本')
+    } finally {
+      spy.mockRestore()
+    }
+    // 前提：A 自己那份仍在、且仍读得回来——证明上面那次 null 是被 sourcePath 那道门拦下的，
+    // 而不是这两本书本来就都没有记录（少了这行，一个「readSession 永远返回 null」的实现
+    // 也能让上面两条断言全绿）
+    expect(store.readSession('/tmp/A.txt')).toEqual(a)
+  })
+
   it('未写过时 readSession 返回 null', () => {
     const store = createSessionStore(dir)
-    expect(store.readSession()).toBeNull()
+    expect(store.readSession(SRC)).toBeNull()
   })
 
   it('写入后能读回同样的内容', () => {
     const store = createSessionStore(dir)
     const s = makeSession()
     store.writeSession(s)
-    expect(store.readSession()).toEqual(s)
-    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    expect(store.readSession(SRC)).toEqual(s)
+    expect(existsSync(sessionFile(dir, SRC))).toBe(true)
   })
 
   // 持久化失败的守卫：失败必须留下痕迹，而不是「应用看着健康、其实什么都没存」。
@@ -2480,7 +2576,7 @@ describe('sessionStore 会话读写', () => {
       const store = createSessionStore(notADir)
       store.writeSession(makeSession())
       // 前提：这次写入确实失败了——否则「报了 warn」可能来自别处
-      expect(existsSync(join(notADir, 'session.json'))).toBe(false)
+      expect(existsSync(sessionFile(notADir, SRC))).toBe(false)
 
       expect(spy).toHaveBeenCalledTimes(1)
       expect(spy.mock.calls[0][1]).toBeInstanceOf(Error)
@@ -2489,10 +2585,11 @@ describe('sessionStore 会话读写', () => {
     }
   })
 
-  it('session.json 损坏时返回 null 而不抛异常', () => {
+  it('会话文件损坏时返回 null 而不抛异常', () => {
     const store = createSessionStore(dir)
-    writeFileSync(join(dir, 'session.json'), '{ 这不是 JSON', 'utf8')
-    expect(store.readSession()).toBeNull()
+    mkdirSync(join(dir, 'sessions'), { recursive: true })
+    writeFileSync(sessionFile(dir, SRC), '{ 这不是 JSON', 'utf8')
+    expect(store.readSession(SRC)).toBeNull()
   })
 
   // 与上一条（`{ 这不是 JSON`，连 JSON.parse 都过不去）走的是不同代码路径：这一组是
@@ -2560,15 +2657,16 @@ describe('sessionStore 会话读写', () => {
   it.each(CRIPPLED)('$name → 按无记录处理，且警告点出该字段', ({ build, token }) => {
     const store = createSessionStore(dir)
     const crippled = build(makeSession())
-    writeFileSync(join(dir, 'session.json'), JSON.stringify(crippled), 'utf8')
+    mkdirSync(join(dir, 'sessions'), { recursive: true })
+    writeFileSync(sessionFile(dir, SRC), JSON.stringify(crippled), 'utf8')
     // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏时返回 null」那一条
-    expect(() => JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).not.toThrow()
+    expect(() => JSON.parse(readFileSync(sessionFile(dir, SRC), 'utf8'))).not.toThrow()
     // 前提二：这份记录与一份完好的记录确实不同——否则它什么都没坏，用例是空跑
     expect(JSON.stringify(crippled)).not.toBe(JSON.stringify(makeSession()))
 
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      expect(store.readSession()).toBeNull()
+      expect(store.readSession(SRC)).toBeNull()
       expect(spy).toHaveBeenCalledTimes(1)
       expect(String(spy.mock.calls[0][0])).toContain(token)
     } finally {
@@ -2576,33 +2674,56 @@ describe('sessionStore 会话读写', () => {
     }
   })
 
-  it('clearAll 删除会话与缓存', () => {
+  it('clearReadingHistory 清掉所有书的进度与缓存，留下设置', () => {
     const store = createSessionStore(dir)
-    store.writeSession(makeSession())
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/B.txt' }))
     const src = writeSource('第一章 甲\n正文。\n')
     store.writeNovelCache(makeNovel(src))
-    // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
-    // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
-    // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
-    //
-    // 【这条用例本身说明了这类缺陷怎么活过评审】它的注释一直把 .tmp 的理由解释得很仔细，
-    // 读者于是顺理成章地以为旁边那两条缓存断言同样刻意——**细致的注释替空洞的断言打了掩护**。
-    // 判据只能是「断言的操作数从哪来」，不是「注释写得多诚恳」。
+    store.writeSettings({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/A.txt'
+    })
+    // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
+    // 不存在」——无论 clearReadingHistory 做什么都会通过。
+    expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
-    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+    // 旧版留下的单槽会话文件（没有 Task 5 的迁移时它就在那儿）：「清除阅读记录」应当把它清掉。
+    writeFileSync(join(dir, 'session.json'), '{"novelTitle":"旧版残留', 'utf8')
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    // 模拟崩溃留在磁盘上的临时文件（写了一半就死掉的那份）：「清除阅读记录」应当把它一起清掉。
+    // 少了下面这一行，删除列表里 `${legacySessionPath}.tmp` 那一项就是**没有任何用例观测**的——
+    // 把它删掉不会有断言变红。
     writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
-    store.clearAll()
-    expect(store.readSession()).toBeNull()
+
+    store.clearReadingHistory()
+
+    // **两本书各一份**：清除要一次清干净，不是只清「最近那本」
+    expect(store.readSession('/tmp/A.txt')).toBeNull()
+    expect(store.readSession('/tmp/B.txt')).toBeNull()
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
+    // 设置不在此列：它是用户的偏好，与「读到哪」无关
+    expect(store.readSettings()).toEqual({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/A.txt'
+    })
   })
 
-  it('clearAll 在文件不存在时不抛异常', () => {
+  it('clearReadingHistory 在文件不存在时不抛异常', () => {
     const store = createSessionStore(dir)
-    expect(() => store.clearAll()).not.toThrow()
+    expect(() => store.clearReadingHistory()).not.toThrow()
   })
 })
 
@@ -2843,6 +2964,289 @@ describe('sessionStore 小说缓存', () => {
     expect(store.readNovelCache(src)).toBeNull()
   })
 })
+
+describe('sessionStore 设置读写', () => {
+  it('未写过时 readSettings 返回默认值', () => {
+    const store = createSessionStore(dir)
+    expect(store.readSettings()).toEqual(defaultSettings())
+    expect(existsSync(join(dir, 'settings.json'))).toBe(false)
+  })
+
+  it('写入后能读回同样的内容', () => {
+    const store = createSessionStore(dir)
+    const s: AppSettings = {
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/测试书.txt'
+    }
+    store.writeSettings(s)
+    expect(store.readSettings()).toEqual(s)
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+  })
+
+  // 与 readSession 那两张表同一套姿势：合法 JSON、但形状不对的设置**不能**被当成设置用。
+  // 设置项全是可再生的（坏了就回默认值），所以这里没有「进度不能丢」那种压力；
+  // 但「哪个字段坏了」仍要报出来——静默回默认会让「我改的文档名怎么没了」无从查起。
+  const BAD_SETTINGS: Array<{ name: string; token: string; mangle: (s: AppSettings) => unknown }> = [
+    { name: 'docTitle 不是字符串', token: 'docTitle 不是字符串', mangle: (s) => ({ ...s, docTitle: 7 }) },
+    {
+      name: 'themeSource 不是取值之一',
+      token: 'themeSource 不是 system/light/dark',
+      mangle: (s) => ({ ...s, themeSource: 'sepia' })
+    },
+    { name: 'darkPaper 不是布尔值', token: 'darkPaper 不是布尔值', mangle: (s) => ({ ...s, darkPaper: 'yes' }) },
+    {
+      name: 'lastSourcePath 既不是 null 也不是字符串',
+      token: 'lastSourcePath 既不是 null 也不是字符串',
+      mangle: (s) => ({ ...s, lastSourcePath: 42 })
+    },
+    { name: '记录是 null', token: '不是一个对象', mangle: () => null },
+    { name: '记录是裸数字', token: '不是一个对象', mangle: () => 42 }
+  ]
+
+  it.each(BAD_SETTINGS)('设置里的 $name → 按默认值处理，且警告点出该字段', ({ mangle, token }) => {
+    const store = createSessionStore(dir)
+    const good: AppSettings = {
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: null
+    }
+    const bad = mangle(good)
+    // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
+    // 这一条同时钉住 lastSourcePath 允许 null：默认值与「清除阅读记录」之后写回的都是 null，
+    // 而那两处若被误判成非法，症状是这个字段连着的四项设置一起回默认值。
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify(good), 'utf8')
+    expect(store.readSettings()).toEqual(good)
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify(bad), 'utf8')
+    // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏文件」那一条
+    expect(() => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).not.toThrow()
+    // 前提二：坏的那份与好的确实不同——否则它什么都没坏，用例是空跑
+    expect(JSON.stringify(bad)).not.toBe(JSON.stringify(good))
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSettings()).toEqual(defaultSettings())
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('settings.json 不是合法 JSON 时返回默认值而不抛异常', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'settings.json'), '{ 这不是 JSON', 'utf8')
+    expect(store.readSettings()).toEqual(defaultSettings())
+  })
+
+  // 与 writeSession 那条同形：失败必须留下痕迹，而不是「应用看着健康、其实设置没存」。
+  it('设置写入失败会带着原错误 console.warn 出来', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const notADir = join(dir, '不是一个目录')
+      writeFileSync(notADir, 'x', 'utf8')
+      const store = createSessionStore(notADir)
+      store.writeSettings(defaultSettings())
+      expect(existsSync(join(notADir, 'settings.json'))).toBe(false)
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy.mock.calls[0][1]).toBeInstanceOf(Error)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('旧版单槽会话的迁移', () => {
+  it('合法的旧会话被搬进 sessions/ 并补上 lastSourcePath，旧文件删除', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    // 旧版写会话用的是 temp+rename，进程死在中间会留下这个半截文件。迁移要把它一起清掉，
+    // 否则「清除阅读记录」之外的路径永远碰不到它——而它正是 clearReadingHistory 列表里
+    // 那一项想清的东西（那一项由 Task 4 的另一条用例钉住，这里管的是迁移这一句）。
+    writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
+
+    store.migrateLegacySession()
+
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(legacy)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
+    // 旧版没有 settings.json，「上次打开的是哪本」原先只写在会话里；不补这一步，
+    // 升级后的第一次启动会停在空状态——进度在，但没人去开那本书。
+    expect(store.readSettings().lastSourcePath).toBe('/tmp/旧书.txt')
+  })
+
+  it('重复调用是幂等的（旧文件已删，第二次什么都不做）', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(makeSession({ cursor: 5 })), 'utf8')
+    store.migrateLegacySession()
+    const after = store.readSession(SRC)
+    // 前提：第一次迁移**确实搬了东西**——少了这行，一个空实现也能让这条用例全绿
+    // （after 为 null 时 toEqual(null) 成立，而 not.toHaveBeenCalled() 对空实现同样成立）
+    expect(after).not.toBeNull()
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+    expect(store.readSession(SRC)).toEqual(after)
+  })
+
+  it('没有旧文件时什么都不做', () => {
+    const store = createSessionStore(dir)
+    expect(() => store.migrateLegacySession()).not.toThrow()
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
+  })
+
+  // 这里与「读会话」那条路径的处置**刻意不同**：读会话时坏记录按无记录处理即可（文件还在），
+  // 而迁移要先删掉旧文件——删是不可逆的。所以判不了的东西一律不删，只报出来。
+  it('结构不合法的旧会话不迁移、也不删除，并警告', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'session.json'), JSON.stringify({ novelTitle: '只有书名' }), 'utf8')
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      expect(String(spy.mock.calls[0][0])).toContain('未迁移')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+
+  it('旧会话文件不是合法 JSON 时不迁移、也不删除，并警告', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'session.json'), '{ 这不是 JSON', 'utf8')
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      expect(String(spy.mock.calls[0][0])).toContain('未迁移')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+
+  it('新版已有同一本书的进度时不覆盖它', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 1 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    const fresh = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 999 })
+    store.writeSession(fresh)
+
+    store.migrateLegacySession()
+
+    // 新版那份是更新的——旧文件只是上一代格式的残留，不该倒回去
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(fresh)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+  })
+
+  // 【判据为什么是「读得出来」而不是「有个文件在那儿」】一个存在但**读不出来**的 target
+  // （写了一半就崩掉的那种）如果被当成「已经迁过了」，迁移就会跳过写、然后把旧文件删掉——
+  // 用一个读不出来的残留压掉一份完好的旧记录。这条用例把那个 target 真的造成那样。
+  it('新位置那份读不出来时，迁移仍然把旧记录写进去', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 88 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    mkdirSync(join(dir, 'sessions'), { recursive: true })
+    writeFileSync(sessionFile(dir, '/tmp/旧书.txt'), '{"novelTitle":"半', 'utf8')
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+    } finally {
+      spy.mockRestore()
+    }
+
+    // 旧记录被搬了过去（而不是被那份坏残留挡住）
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(legacy)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+  })
+
+  // 【「上次打开的是哪本」那一半的短路】settings 里已经记着**另一本**书时，不去覆盖它：
+  // 它已经有值就意味着设置这一半不需要迁移来补（旧版根本没有 settings.json，所以「已记着
+  // 别的书」只可能是新版已经跑过、或用户在新版里开过别的书）。会话那一半照旧搬、旧文件
+  // 照旧删——迁移负责的是「进度别丢」，不是「把 lastSourcePath 改成这本」。
+  it('settings 已经记着另一本书时，不把它顶掉', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 33 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    store.writeSettings({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/另一本.txt'
+    })
+
+    store.migrateLegacySession()
+
+    expect(store.readSettings().lastSourcePath).toBe('/tmp/另一本.txt')
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(legacy)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+  })
+
+  // 【本任务唯一会毁数据的地方，所以单独一条】写不进新版位置时，旧文件是用户进度唯一的
+  // 副本，绝不能删。触发条件很现实：磁盘满（写要空间、rm 不要），或 sessions 被一个同名
+  // 文件占住（mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复，而且下一次启动的 600ms
+  // 自动保存会用 cursor=0 覆盖现场——用户看到的是「升级之后进度莫名其妙归零」。
+  //
+  // 造法：把 `sessions` 做成一个**文件**，于是 writeSessionFile 的 mkdirSync 必然
+  // EEXIST。（不用 mock node:fs，与 guardA 那条注入式守卫分工不同：那条测写入中途被杀，
+  // 这条测「写根本没成功时调用方有没有守住」。）
+  it('迁移时写不进 sessions/ 就不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    writeFileSync(join(dir, 'sessions'), 'x', 'utf8') // 占位：让 sessions 目录建不出来
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：会话那次写**确实失败了**（而不是「本来就什么都没写」）。
+      // 原先这里断言的是 `existsSync(sessionFile(dir, ...))` 为 false——但 `sessions` 是个
+      // 普通文件，它下面任何路径的 existsSync 恒为 false，那条断言无论实现做什么都成立，
+      // 是空的。改成钉住「失败这条 warn 真的出现过」。
+      // 不看 calls[0]：**第一条** warn 是 writeSessionFile 自己那条「保存会话失败」，
+      // 迁移那条在它之后。要看的是「迁移有没有报出这件事」，所以整组拼起来查。
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('保存会话失败')
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
+    } finally {
+      spy.mockRestore()
+    }
+    // 进度唯一的副本还在，下次启动会重试
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8')).cursor).toBe(77)
+    // 顺序的判据：会话那半没落地时，绝不能让 lastSourcePath 指向一本进度还没搬过去的书
+    // ——否则下次启动自动打开它、600ms 后把 cursor 0 落盘，真进度就没了。
+    expect(store.readSettings().lastSourcePath).toBeNull()
+  })
+
+  // 第二扇门：**会话那一半写成功了**，「上次打开的是哪本」没落盘时同样不能删。触发条件：
+  // 两次写之间磁盘满了，或 settings.json 被一个同名目录占住（写 .tmp 成功、renameSync 到
+  // 目录失败）。少了这道闸，迁移好的记录没有任何人去读它——用户手动导入那本书就被 cursor 0 覆盖。
+  it('迁移时 lastSourcePath 写不进去也不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 55 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    mkdirSync(join(dir, 'settings.json')) // 占位：让 settings.json 写不进去
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：会话那一半**确实写成功了**——否则下面的断言可能只是因为整条迁移根本没跑起来
+      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(true)
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+})
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -2853,6 +3257,7 @@ Expected: FAIL —— 无法解析 `../../src/main/sessionStore`。
 - [ ] **Step 3: 写 `src/main/sessionStore.ts`**
 
 ```ts
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -2862,13 +3267,17 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { join } from 'node:path'
-import type { Novel, NovelCacheMeta, PersistedSession } from '../core/types'
+import { dirname, join } from 'node:path'
+import { defaultSettings } from '../core/types'
+import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
 
 export interface SessionStore {
-  readSession(): PersistedSession | null
+  readSettings(): AppSettings
+  writeSettings(s: AppSettings): void
+  readSession(sourcePath: string): PersistedSession | null
   writeSession(s: PersistedSession): void
-  clearAll(): void
+  clearReadingHistory(): void
+  migrateLegacySession(): void
   writeNovelCache(novel: Novel): void
   readNovelCache(filePath: string): Novel | null
 }
@@ -2954,7 +3363,7 @@ function chapterProblem(v: unknown, i: number): string | null {
  *
  * 【丢弃这份缓存不会丢任何东西——这是 return null 而不是「尽力而为」的理由】缓存里没有
  * 不可再生的信息：title ← 文件名、encoding/hadBom ← 检测、chapters ← 切分、flatText ← 解码，
- * 而全应用唯一不可再生的状态是阅读进度，它在 session.json 里（另一个文件、另一套校验），
+ * 而全应用唯一不可再生的状态是阅读进度，它在 `sessions/<hash>.json` 里（另一些文件、另一套校验），
  * 本路径不碰。所有 null 都落回 loadNovelFromFile(meta.sourcePath)，源文件是同一个路径；
  * 源文件若也没了，现有代码本来就会返回 null（statSync 抛）。所以这里只是把一种情况挪到
  * 一条【已经由四处未命中走过】的路径上，不引入新的行为类别。
@@ -2988,58 +3397,204 @@ function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
   return cacheMetaProblem(v) === null
 }
 
+/**
+ * 校验读回来的 JSON 是不是一份完整的 AppSettings；返回第一个不合格字段的描述。
+ *
+ * 【与 sessionProblem 是同一套姿势，取舍也相同】设置项全都是可再生的（坏了就回默认值），
+ * 所以这里不像会话那样有「进度不能丢」的压力；但仍然返回**字段名**而不是 true/false——
+ * 静默回默认会让「我改的文档名怎么没了」无从查起。
+ */
+function settingsProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
+  const s = v as Record<string, unknown>
+  if (typeof s.docTitle !== 'string') return 'docTitle 不是字符串'
+  if (s.themeSource !== 'system' && s.themeSource !== 'light' && s.themeSource !== 'dark') {
+    return 'themeSource 不是 system/light/dark'
+  }
+  if (typeof s.darkPaper !== 'boolean') return 'darkPaper 不是布尔值'
+  if (s.lastSourcePath !== null && typeof s.lastSourcePath !== 'string') {
+    return 'lastSourcePath 既不是 null 也不是字符串'
+  }
+  return null
+}
+
+function isAppSettings(v: unknown): v is AppSettings {
+  return settingsProblem(v) === null
+}
+
+function readSettingsFile(path: string): AppSettings {
+  try {
+    if (!existsSync(path)) return defaultSettings()
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (!isAppSettings(parsed)) {
+      console.warn(
+        `[wt] 设置文件结构不合法（${settingsProblem(parsed) ?? '未知'}），按默认值处理：`,
+        path
+      )
+      return defaultSettings()
+    }
+    return parsed
+  } catch (err) {
+    console.warn('[wt] 读取设置失败，按默认值处理：', err)
+    return defaultSettings()
+  }
+}
+
+/**
+ * 返回「这一次是否确实落地了」——迁移里「上次打开的是哪本有没有落盘」那道闸用它。
+ *
+ * 设置项本身全是可再生的（坏了就回默认值），所以别处的调用方都不看返回值；这里返回它，
+ * 只是因为迁移那条路必须先确认它落盘了才能删旧文件。
+ */
+function writeSettingsFile(path: string, s: AppSettings): boolean {
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    // 与 session 同样的 temp+rename。文档名是用户敲进去的、不可再生，
+    // 截断的 settings.json 读回来只会是默认值。
+    writeFileSync(`${path}.tmp`, JSON.stringify(s), 'utf8')
+    renameSync(`${path}.tmp`, path)
+    return true
+  } catch (err) {
+    console.warn('[wt] 保存设置失败，本次改动未落盘：', err)
+    return false
+  }
+}
+
+/**
+ * 一本书的进度文件名：`sourcePath` 的 sha256 前 16 字节（32 个 hex 字符）。
+ *
+ * 【为什么是哈希而不是把路径编码进文件名】路径可能很长、含 `/` 与冒号等各平台保留字符，
+ * 直接拼进去会撞上文件名长度上限（多数文件系统 255 字节）。哈希定长、且只含 hex。
+ * 代价是文件名不再可读——所以文件**内容**里仍带着 sourcePath，读取时比对（见下）。
+ */
+function sessionFileName(sourcePath: string): string {
+  return `${createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)}.json`
+}
+
+/** 按书取会话文件路径。book 的路径 → 定长文件名，见 sessionFileName。 */
+function sessionFilePath(sessionsDir: string, sourcePath: string): string {
+  return join(sessionsDir, sessionFileName(sourcePath))
+}
+
+/**
+ * 【两个参数必须互相一致的不变量】`file` 得是 `sessionFile(sourcePath)` 的结果——下面那道
+ * 「文件里的 sourcePath 与请求的不是同一本」的检查，前提正是「文件名由这个路径算出」。
+ * 目前只靠唯一调用点保证（`readSession` 里就地算出来传进来），签名上没有任何东西拦着
+ * 把一对不相干的参数传进来。
+ */
+function readSessionFile(file: string, sourcePath: string): PersistedSession | null {
+  try {
+    if (!existsSync(file)) return null
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (!isPersistedSession(parsed)) {
+      // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
+      // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
+      console.warn(
+        `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
+        file
+      )
+      return null
+    }
+    // 文件名是路径的哈希，所以「文件里的 sourcePath 与请求的不是同一本」只可能来自手工改名
+    // 或哈希撞车。放行的话会把 B 书的进度套到 A 书上——章节目录与光标全部错位，而
+    // fromSession 对错位的 chapterPos 不抛错，只会表现为「进度莫名其妙不对」。
+    if (parsed.sourcePath !== sourcePath) {
+      // 两个路径都打出来：文件名是 32 位 hex，只给文件名的话，读日志的人既不知道这份记的是
+      // 哪本书、也不知道请求的是哪本——而「哪两本对不上」正是要查的东西。
+      console.warn(
+        '[wt] 会话文件与请求的书不是同一本，按无记录处理：文件里记的是',
+        parsed.sourcePath,
+        '，请求的是',
+        sourcePath,
+        '，文件：',
+        file
+      )
+      return null
+    }
+    return parsed
+  } catch (err) {
+    // 解析失败与「文件读不出来」都按无记录处理，启动不该被一份坏文件卡住；
+    // 但要说出来——不然「目录只读 / 磁盘满」会表现成「应用一切正常，只是记不住进度」。
+    console.warn('[wt] 读取会话失败，按无记录处理：', err)
+    return null
+  }
+}
+
+/**
+ * 返回「这一次是否确实落地了」。
+ *
+ * 【返回值目前**没有**调用方在看】`writeSession` 忽略它，迁移也不看——迁移的判据是
+ * 「新位置那份**读得出来**」（删之前再读一次，见 `migrateLegacySession`），那比「写函数说
+ * 自己成功了」强：将来有人让它在没落盘时返回 true，那道读仍然守得住。所以**别把返回值当成
+ * 「旧文件能不能删」的依据**，要判就读一次。
+ */
+function writeSessionFile(file: string, s: PersistedSession): boolean {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整文件、
+    // 要么看到新的完整文件，不会看到「写了一半的会话文件」。直接写目标路径的话，
+    // 进程在写完之前死掉，留下的是截断甚至空的文件，readSession 只能返回 null——
+    // 游标、chapterPos、activeChapter、ratio、mode、startedAt 全部静默丢失。
+    // 实测这种残留的表现：截断成 20 字节与空文件都读回 null。
+    // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
+    writeFileSync(`${file}.tmp`, JSON.stringify(s), 'utf8')
+    renameSync(`${file}.tmp`, file)
+    return true
+  } catch (err) {
+    console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
+    return false
+  }
+}
+
 export function createSessionStore(baseDir: string): SessionStore {
-  const sessionPath = join(baseDir, 'session.json')
-  const sessionTmpPath = join(baseDir, 'session.json.tmp')
+  const settingsPath = join(baseDir, 'settings.json')
+  const legacySessionPath = join(baseDir, 'session.json')
   const cacheMetaPath = join(baseDir, 'novel-cache.json')
   const cacheTextPath = join(baseDir, 'novel-cache.txt')
+  const sessionsDir = join(baseDir, 'sessions')
+  /** 这本书的进度文件。每本书一份——换书不再覆盖上一本的进度。 */
+  const sessionFile = (sourcePath: string): string => sessionFilePath(sessionsDir, sourcePath)
 
   const ensureDir = (): void => {
     mkdirSync(baseDir, { recursive: true })
   }
 
   return {
-    readSession(): PersistedSession | null {
-      try {
-        if (!existsSync(sessionPath)) return null
-        const parsed: unknown = JSON.parse(readFileSync(sessionPath, 'utf8'))
-        if (!isPersistedSession(parsed)) {
-          // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
-          // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
-          console.warn(
-            `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
-            sessionPath
-          )
-          return null
-        }
-        return parsed
-      } catch (err) {
-        // 解析失败与「文件读不出来」都按无记录处理，启动不该被一份坏文件卡住；
-        // 但要说出来——不然「目录只读 / 磁盘满」会表现成「应用一切正常，只是记不住进度」。
-        console.warn('[wt] 读取会话失败，按无记录处理：', err)
-        return null
-      }
+    readSettings(): AppSettings {
+      return readSettingsFile(settingsPath)
+    },
+
+    writeSettings(s: AppSettings): void {
+      writeSettingsFile(settingsPath, s)
+    },
+
+    readSession(sourcePath: string): PersistedSession | null {
+      // 【为什么要闸】sourcePath 不是字符串时，sessionFileName 会在 createHash 里抛
+      // ERR_INVALID_ARG_TYPE，而那是**在 readSessionFile 的 try 之外**（参数先求值）——
+      // 异常会一路冒到 ipcMain.handle，把渲染层那次 invoke 打成 rejection。
+      // 这条通道收的是渲染层未经校验的载荷，而「读回来的东西一律校验」是本文件的既有姿态——
+      // 这属于同一类，只是站在 IPC 那一侧。问不到就按无记录，与别处一致。
+      //
+      // 【这不是「不可达的防御」】渲染层传 sourcePath 要等 Task 7，在那之前每次启动都会
+      // 走到这里并且**必须**返回 null（而不是抛）——所以它是眼下唯一兜住这条路的东西，
+      // 不是给未来留的保险。
+      if (typeof sourcePath !== 'string') return null
+      return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
 
     writeSession(s: PersistedSession): void {
-      try {
-        ensureDir()
-        // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整
-        // 文件、要么看到新的完整文件，不会看到「写了一半的 session.json」。
-        // 直接写目标路径的话，进程在写完之前死掉，留下的是截断甚至空的文件，readSession
-        // 只能返回 null——游标、chapterPos、activeChapter、ratio、mode、startedAt 全部
-        // 静默丢失。实测这种残留的表现：截断成 20 字节与空文件都读回 null。
-        // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
-        writeFileSync(sessionTmpPath, JSON.stringify(s), 'utf8')
-        renameSync(sessionTmpPath, sessionPath)
-      } catch (err) {
-        console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
+      if (typeof s?.sourcePath !== 'string') {
+        console.warn('[wt] 保存会话失败：sourcePath 不是字符串，本次进度未落盘')
+        return
       }
+      writeSessionFile(sessionFile(s.sourcePath), s)
     },
 
-    clearAll(): void {
-      // 临时文件也要删：崩溃可能正好把 .tmp 留在磁盘上，「清除阅读记录」应当清干净。
-      for (const p of [sessionPath, sessionTmpPath, cacheMetaPath, cacheTextPath]) {
+    clearReadingHistory(): void {
+      // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
+      // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
+      // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
+      for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
         try {
           // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
           // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
@@ -3048,6 +3603,77 @@ export function createSessionStore(baseDir: string): SessionStore {
         } catch (err) {
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
+      }
+      // 整个目录一起删，而不是先 readdir 再逐个删：少一次「列目录时多出来一个新文件」的
+      // 竞态，也不用维护「哪些文件算会话」这份名单。
+      try {
+        rmSync(sessionsDir, { recursive: true, force: true })
+      } catch (err) {
+        console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
+      }
+    },
+
+    migrateLegacySession(): void {
+      // 旧版只有一个 session.json 槽位，新版按书分文件。升级后第一次取 store 时把它搬过去，
+      // 否则用户的进度还躺在磁盘上、却永远不会再被读到了。
+      let legacy: PersistedSession
+      try {
+        if (!existsSync(legacySessionPath)) return
+        const raw: unknown = JSON.parse(readFileSync(legacySessionPath, 'utf8'))
+        if (!isPersistedSession(raw)) {
+          // **刻意不删**：删除是不可逆的，而留着最多每次启动多一条警告。这份文件已经不是
+          // 本应用能读懂的东西了（手改过、或来自更早的版本），交给看日志的人自行处置。
+          console.warn(
+            `[wt] 旧版会话文件结构不合法（${sessionProblem(raw) ?? '未知'}），未迁移：`,
+            legacySessionPath
+          )
+          return
+        }
+        legacy = raw
+      } catch (err) {
+        console.warn('[wt] 读取旧版会话失败，未迁移：', err)
+        return
+      }
+
+      const target = sessionFile(legacy.sourcePath)
+      // 【本任务唯一会毁数据的地方，判据要强，而且顺序不能反】
+      //
+      // 1. 先把会话搬过去，并且**以「读得出来」为准**：`existsSync` 只回答「有个东西在那儿」，
+      //    一个空的或截断的 target 会让迁移跳过写、然后把旧文件删掉——用一个读不出来的残留
+      //    压掉一份完好的旧记录。target 本来就能读时短路掉写（那一份是更新的）。
+      // 2. **删之前再读一次**，而不是信 `writeSessionFile` 的返回值：保证是「这份记录确实在
+      //    新位置读得出来」，而不是「那次调用说自己成功了」。将来有人让它在没落盘时返回 true，
+      //    这道读仍然守得住。
+      if (readSessionFile(target, legacy.sourcePath) === null) writeSessionFile(target, legacy)
+      if (readSessionFile(target, legacy.sourcePath) === null) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
+
+      // 3. 「上次打开的是哪本」排在上面两条**之后**。反过来的话，会话写失败而设置写成功时，
+      //    `lastSourcePath` 会指向一本进度还没搬过去的书——下次启动自动打开它、600ms 后把
+      //    cursor 0 落盘，再下次启动就满足「已经迁过」而把旧文件删掉，真进度没了。
+      //    排在后面，「lastSourcePath 已设置 ⇒ 这本书的记录已经在新位置」才成为不变量。
+      const settings = readSettingsFile(settingsPath)
+      if (
+        settings.lastSourcePath === null &&
+        !writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+      ) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
+
+      // 两个删除各占一个 try：共用一个的话，前一个抛错会让后一个**永远不被尝试**——
+      // 两件互不相干的清理不该互相拖累。
+      try {
+        rmSync(legacySessionPath, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除旧版会话文件失败：', err)
+      }
+      try {
+        rmSync(`${legacySessionPath}.tmp`, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除旧版会话临时文件失败：', err)
       }
     },
 
@@ -3460,7 +4086,7 @@ vi.mock('node:fs', async (importOriginal) => {
     ...actual,
     default: actual,
     writeFileSync: (p: unknown, data: unknown, enc?: unknown) => {
-      if (armed && typeof p === 'string' && p.includes('session.json')) {
+      if (armed && typeof p === 'string' && p.includes('sessions')) {
         mockHits++
         actual.writeFileSync(p, String(data).slice(0, 20), 'utf8')
         throw new Error('模拟进程在写入中途被杀')
@@ -3471,6 +4097,9 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 const { createSessionStore } = await import('../../src/main/sessionStore')
+
+/** `makeSession()` 默认那本书的路径——按书取会话文件之后，读也要带上它。 */
+const SRC = '/tmp/测试书.txt'
 
 function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSession {
   return {
@@ -3503,7 +4132,7 @@ describe('writeSession 的原子替换', () => {
     const store = createSessionStore(dir)
     const good = makeSession({ cursor: 4242 })
     store.writeSession(good)
-    expect(store.readSession()).toEqual(good)
+    expect(store.readSession(SRC)).toEqual(good)
 
     armed = true
     store.writeSession(makeSession({ cursor: 999999 })) // 半途抛错，被 catch 吞掉
@@ -3511,18 +4140,21 @@ describe('writeSession 的原子替换', () => {
 
     // 前提自检：注入确实生效。少了这行，用例在「注入失效」时会静默退化成空跑。
     expect(mockHits).toBe(1)
-    expect(store.readSession()).toEqual(good)
+    expect(store.readSession(SRC)).toEqual(good)
   })
 })
 ```
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import type { PersistedSession } from '../../src/core/types'
+
+/** `makeSession()` 那本书的路径——进度按书存之后，读也要带上它。 */
+const SRC = '/tmp/测试书.txt'
 
 function makeSession(cursor: number): PersistedSession {
   return {
@@ -3539,7 +4171,7 @@ function makeSession(cursor: number): PersistedSession {
 }
 
 // 【这条守卫钉的是机制，guardA.test.ts 钉的是性质——两条都在，理由如下】
-// 它看的是「整份换掉」与「就地截断」留下的差别：renameSync 会给 session.json 换上临时
+// 它看的是「整份换掉」与「就地截断」留下的差别：renameSync 会给会话文件换上临时
 // 文件的 inode，而 writeFileSync 对已存在的路径是原地截断、inode 不变。读文件【内容】
 // 看不出这个差别——这正是原子性没有被任何内容级断言覆盖住的原因。
 //
@@ -3572,7 +4204,7 @@ function makeSession(cursor: number): PersistedSession {
 // 系统对每个文件都报 0，于是【正确的实现】反而会红。Task 14 要做 Windows 验证，一条在正确
 // 构建上失败的用例比没有用例更糟——会让人去找并不存在的缺陷。该平台上的性质由
 // guardA.test.ts 覆盖，它不依赖 inode。
-describe('session.json 是「整份换掉」而不是「就地截断」', () => {
+describe('会话文件是「整份换掉」而不是「就地截断」', () => {
   // 柯里化形式是唯一可用的形状：写成 it.skipIf(cond, name, fn) 时 Vitest 5 不报错，
   // 只是**一个用例都没注册**（整份文件报 "No test found in suite"），于是「加了守卫」
   // 会变成「守卫不在」。实测踩过。
@@ -3582,21 +4214,29 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
       const dir = mkdtempSync(join(tmpdir(), 'wt-ino-'))
       try {
         const store = createSessionStore(dir)
-        const sessionPath = join(dir, 'session.json')
-        const tmpPath = join(dir, 'session.json.tmp')
+        // 从目录里【找】那一份，而不是自己算一遍哈希：这条守卫问的是「写入有没有换掉文件」，
+        // 文件名怎么来与它无关；照着实现算哈希会把守卫绑到实现的算法上。
+        const sessionsDir = join(dir, 'sessions')
+        const sessionPath = (): string => {
+          const entries = readdirSync(sessionsDir)
+          expect(entries.length).toBe(1) // 只有一本书被写过
+          return join(sessionsDir, entries[0])
+        }
+        const tmpLeftover = (): string[] =>
+          readdirSync(sessionsDir).filter((f) => f.endsWith('.tmp'))
 
         store.writeSession(makeSession(1))
         // 一次成功的保存不该留下临时文件：rename 会把 .tmp 消费掉。
         // 这一条就是矩阵 row B 的探测器：copyFileSync 保留了目标的 inode（所以 inode 断言
         // 也看得见它），但它【不消费】临时文件，于是 .tmp 留在磁盘上；「写了临时文件却忘了
         // 改名」同样被它抓住。放在 statSync 与 inode 断言【之前】，是为了让这两种回退红在
-        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让 session.json 根本不存在，
+        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让目标文件根本不存在，
         // 于是 statSync 先抛 ENOENT，红得看不出所以然（实测踩到过）。
-        expect(existsSync(tmpPath)).toBe(false)
-        const first = statSync(sessionPath).ino
+        expect(tmpLeftover()).toEqual([])
+        const first = statSync(sessionPath()).ino
         store.writeSession(makeSession(2))
-        expect(existsSync(tmpPath)).toBe(false)
-        const second = statSync(sessionPath).ino
+        expect(tmpLeftover()).toEqual([])
+        const second = statSync(sessionPath()).ino
 
         // 前提自检：这个文件系统确实给出有意义的 inode。报 0 时跳过而不是断言——
         // 在那种文件系统上这条守卫【按构造】无法工作，让它红等于谎报缺陷，
@@ -3604,7 +4244,7 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
         if (!(first > 0)) ctx.skip()
         expect(second).not.toBe(first)
         // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
-        expect(store.readSession()!.cursor).toBe(2)
+        expect(store.readSession(SRC)!.cursor).toBe(2)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -3662,6 +4302,8 @@ describe('IPC 契约', () => {
       loadSession: 'wt:load-session',
       saveSession: 'wt:save-session',
       clearSession: 'wt:clear-session',
+      loadSettings: 'wt:load-settings',
+      saveSettings: 'wt:save-settings',
       initialNovelPath: 'wt:initial-novel-path',
       menuCommand: 'wt:menu-command',
       getTheme: 'wt:get-theme',
@@ -3771,7 +4413,13 @@ let store: SessionStore | null = null
 
 /** 必须在 app ready 之后、且 setPath('userData') 之后调用。 */
 export function getStore(): SessionStore {
-  if (!store) store = createSessionStore(app.getPath('userData'))
+  if (!store) {
+    store = createSessionStore(app.getPath('userData'))
+    // 迁移放在这里而不是 index.ts 的启动序列里：它是「第一次真正用到 store」的那一刻，
+    // 而渲染层启动时问的第一件事就是设置——所以迁移一定发生在任何一次读取之前。
+    // 写成幂等的（跑完就把旧文件删掉），进程内重复调用与多次启动都安全。
+    store.migrateLegacySession()
+  }
   return store
 }
 
@@ -3936,7 +4584,7 @@ import { getStore } from './session'
 // 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
 import { CH } from './channels'
-import type { Novel, PersistedSession } from '../core/types'
+import type { AppSettings, Novel, PersistedSession } from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 
@@ -3976,14 +4624,22 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
 
-  ipcMain.handle(CH.loadSession, (): PersistedSession | null => getStore().readSession())
+  ipcMain.handle(CH.loadSession, (_e, sourcePath: string): PersistedSession | null =>
+    getStore().readSession(sourcePath)
+  )
 
   ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
     getStore().writeSession(session)
   })
 
   ipcMain.handle(CH.clearSession, (): void => {
-    getStore().clearAll()
+    getStore().clearReadingHistory()
+  })
+
+  ipcMain.handle(CH.loadSettings, (): AppSettings => getStore().readSettings())
+
+  ipcMain.handle(CH.saveSettings, (_e, settings: AppSettings): void => {
+    getStore().writeSettings(settings)
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
@@ -4012,6 +4668,8 @@ export const CH = {
   loadSession: 'wt:load-session',
   saveSession: 'wt:save-session',
   clearSession: 'wt:clear-session',
+  loadSettings: 'wt:load-settings',
+  saveSettings: 'wt:save-settings',
   initialNovelPath: 'wt:initial-novel-path',
   menuCommand: 'wt:menu-command',
   getTheme: 'wt:get-theme',
@@ -4063,9 +4721,11 @@ const api = {
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
-  loadSession: () => ipcRenderer.invoke(CH.loadSession),
+  loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
   saveSession: (session: unknown) => ipcRenderer.invoke(CH.saveSession, session),
   clearSession: () => ipcRenderer.invoke(CH.clearSession),
+  loadSettings: () => ipcRenderer.invoke(CH.loadSettings),
+  saveSettings: (settings: unknown) => ipcRenderer.invoke(CH.saveSettings, settings),
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
     const listener = (_e: unknown, cmd: string): void => cb(cmd)
     ipcRenderer.on(CH.menuCommand, listener)
@@ -8939,6 +9599,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 ```ts
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
+import { defaultSettings } from '../src/core/types'
 import type { WtApi } from '../src/renderer/src/types/global'
 
 /**
@@ -8965,6 +9626,8 @@ const benignApi: WtApi = {
   loadSession: async () => null,
   saveSession: async () => {},
   clearSession: async () => {},
+  loadSettings: async () => defaultSettings(),
+  saveSettings: async () => {},
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,
@@ -9013,10 +9676,10 @@ afterEach(() => {
 - [ ] **Step 1: 写 `src/renderer/src/types/global.d.ts`**
 
 ```ts
-import type { Novel, PersistedSession } from '../../../core/types'
+import type { AppSettings, Novel, PersistedSession, ThemeSource } from '../../../core/types'
 
-/** 外观偏好：跟随系统 / 强制浅色 / 强制深色 */
-export type ThemeSource = 'system' | 'light' | 'dark'
+// 外观偏好的定义只留 core 一处（`ThemeSource`）：渲染层再声明一份的话两处会各自漂移。
+export type { ThemeSource }
 
 export interface WtApi {
   /** 'darwin' | 'win32' | 'linux'。渲染层靠它决定要不要给红绿灯让位 */
@@ -9024,9 +9687,12 @@ export interface WtApi {
   importNovel: () => Promise<Novel | null>
   openNovelPath: (path: string) => Promise<Novel>
   initialNovelPath: () => Promise<string | null>
-  loadSession: () => Promise<PersistedSession | null>
+  /** 取【某一本书】自己的阅读进度。按书存之后，sourcePath 是必填的那把钥匙。 */
+  loadSession: (sourcePath: string) => Promise<PersistedSession | null>
   saveSession: (session: PersistedSession) => Promise<void>
   clearSession: () => Promise<void>
+  loadSettings: () => Promise<AppSettings>
+  saveSettings: (settings: AppSettings) => Promise<void>
   onMenuCommand: (cb: (cmd: string) => void) => () => void
   getTheme: () => Promise<boolean>
   setThemeSource: (source: ThemeSource) => Promise<void>
@@ -9061,7 +9727,8 @@ export function useTypingEngine(engine: TypingEngine | null): EngineState | null
 ```tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
-import type { InputMode, Novel } from '../../core/types'
+import { DEFAULT_DOC_TITLE } from '../../core/types'
+import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
 import { Ribbon } from './components/Ribbon'
@@ -9101,11 +9768,22 @@ export default function App() {
    * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
    * 默认取一个中性的 `文档1`。
    */
-  const [docTitle, setDocTitle] = useState('文档1')
+  const [docTitle, setDocTitle] = useState(DEFAULT_DOC_TITLE)
   /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
   const [darkPaper, setDarkPaper] = useState(false)
   /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
   const [themeSource, setThemeSource] = useState<ThemeSource>('system')
+  /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
+  const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
+  /**
+   * 设置是否已经读回来了。
+   *
+   * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
+   * 防抖 effect），而首帧渲染时这四个状态还都是默认值——读盘是异步的。于是那个 effect
+   * 会先拿着「文档1 / 跟随系统 / 不暗 / null」写一遍，把磁盘上真正的设置冲掉，然后才读到
+   * 已经被自己冲掉的默认值。
+   */
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   useSystemTheme()
   useDarkPaper(darkPaper)
@@ -9113,22 +9791,53 @@ export default function App() {
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
+  const settingsRef = useRef<AppSettings | null>(null)
+  settingsRef.current = settingsLoaded ? { docTitle, themeSource, darkPaper, lastSourcePath } : null
+  /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
+  const openSeqRef = useRef(0)
 
   const state = useTypingEngine(engine)
 
-  const openNovel = useCallback((next: Novel) => {
-    const fresh = new TypingEngine(next)
-    setNovel(next)
-    setEngine(fresh)
-    setExpanded(false)
+  /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
+  const flushSession = useCallback((): void => {
+    const api = getApi()
+    const current = engineRef.current
+    if (api && current) void api.saveSession(current.toSession())
   }, [])
+
+  /**
+   * 打开一本书：**先问磁盘上有没有这本书的进度**，有就接着读，没有才从零开始。
+   *
+   * 【为什么必须在这里问】「导入小说」走的就是这个函数，启动恢复也走它。少了这次读盘，
+   * 导入一本读过的书＝全新引擎＝600ms 后把 cursor 0 落盘覆盖掉那本书的进度——而「每本书
+   * 各留一份进度」存在的全部意义就是这一条。判断只有这一处，调用方不必各自判一遍。
+   */
+  const openNovel = useCallback(
+    async (next: Novel): Promise<void> => {
+      // 换书之前先把上一本存一次：下面那个保存 effect 的 cleanup 会 clearTimeout 掉待发的
+      // 定时器，而换书会让 engine 变——600ms 之内连开两本时，上一本那一次就永远不落盘了。
+      flushSession()
+      // 递增序号，用来丢掉过期的那一次：读盘是异步的，用户连续导入两本时，先发起、后返回的
+      // 那一次会把后打开的书顶掉。
+      const seq = ++openSeqRef.current
+      const api = getApi()
+      const session = api ? await api.loadSession(next.sourcePath) : null
+      if (seq !== openSeqRef.current) return
+
+      setNovel(next)
+      setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
+      setExpanded(false)
+      setLastSourcePath(next.sourcePath)
+    },
+    [flushSession]
+  )
 
   const handleImport = useCallback(async () => {
     const api = getApi()
     if (!api) return
     const next = await api.importNovel()
     if (!next) return
-    openNovel(next)
+    await openNovel(next)
   }, [openNovel])
 
   const handleClearSession = useCallback(async () => {
@@ -9137,12 +9846,15 @@ export default function App() {
     await api.clearSession()
     setNovel(null)
     setEngine(null)
+    // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
+    // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
+    setLastSourcePath(null)
   }, [])
 
-  // 启动：先看命令行有没有指定 txt，再尝试恢复上次会话
+  // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
   useEffect(() => {
     const api = getApi()
-    // 没有 api，就没有「命令行参数」和「上次会话」这两件事可做——直接停在空状态。
+    // 没有 api，就没有「设置」「命令行参数」「上次打开的书」这三件事可做——直接停在空状态。
     // 这【不是】多余的防御：少了它，下面第一个 await 会变成 unhandled rejection，
     // 用例行照旧报 passed、汇总行却是 `Errors 1 error`，vitest 的 exit code 是 1。
     if (!api) return
@@ -9150,41 +9862,28 @@ export default function App() {
     let cancelled = false
 
     const boot = async (): Promise<void> => {
-      const initialPath = await api.initialNovelPath()
-      const session = await api.loadSession()
+      // 设置先读：它同时给出「上次打开的是哪本」。命令行参数优先于它。
+      const settings = await api.loadSettings()
+      if (cancelled) return
+      setDocTitle(settings.docTitle)
+      setDarkPaper(settings.darkPaper)
+      setThemeSource(settings.themeSource)
+      setLastSourcePath(settings.lastSourcePath)
+      setSettingsLoaded(true)
 
-      if (initialPath) {
-        // 命令行给的文件可能打不开（已删除、权限、EISDIR、解不出编码……）。
-        // 没有这个 try 的话错误会以【未处理的 rejection】形式冒到启动期：空状态不显示、
-        // 也没有任何提示。catch 里刻意【不 return】：失败就不阻断启动，继续走下面的
-        // 会话恢复 / 空状态兜底——用户至少还能看到界面并重新导入。
-        // 两条都真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里
-        // 留着上次会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」。
-        // 注意这两条**单测里是零覆盖**——把整个 try/catch 删掉，渲染层用例全绿。
-        try {
-          const loaded = await api.openNovelPath(initialPath)
-          if (cancelled) return
-          if (session && session.sourcePath === loaded.sourcePath) {
-            setNovel(loaded)
-            setEngine(TypingEngine.fromSession(loaded, session))
-          } else {
-            openNovel(loaded)
-          }
-          return
-        } catch {
-          // 与下面会话恢复那条 catch 同形：静默降级，不阻断启动
-        }
-      }
+      const target = (await api.initialNovelPath()) ?? settings.lastSourcePath
+      if (!target || cancelled) return
 
-      if (session) {
-        try {
-          const loaded = await api.openNovelPath(session.sourcePath)
-          if (cancelled) return
-          setNovel(loaded)
-          setEngine(TypingEngine.fromSession(loaded, session))
-        } catch {
-          // 原文件已不可用：停在空状态，等用户重新导入
-        }
+      // 目标文件可能打不开（已删除、权限、EISDIR、解不出编码……）。没有这个 try 的话错误会
+      // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。catch 里刻意
+      // 不做别的：失败就停在空状态，用户至少还能看到界面并重新导入。
+      try {
+        const loaded = await api.openNovelPath(target)
+        if (cancelled) return
+        // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
+        await openNovel(loaded)
+      } catch {
+        // 原文件已不可用：停在空状态，等用户重新导入
       }
     }
 
@@ -9215,17 +9914,30 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [engine, state])
 
+  // 设置持久化（防抖）。与会话同一套节奏：600ms 内的连续改动只落盘一次。
+  useEffect(() => {
+    const api = getApi()
+    // 读回来之前不写，见 settingsLoaded 的说明
+    if (!api || !settingsLoaded) return
+    const timer = window.setTimeout(() => {
+      void api.saveSettings({ docTitle, themeSource, darkPaper, lastSourcePath })
+    }, SAVE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [docTitle, themeSource, darkPaper, lastSourcePath, settingsLoaded])
+
   // 关闭前强制落盘
   useEffect(() => {
     const api = getApi()
     if (!api) return
     const flush = (): void => {
-      const current = engineRef.current
-      if (current) void api.saveSession(current.toSession())
+      flushSession()
+      // 设置也有防抖窗口：改完文档名立刻关窗（或退出）会落在窗口里，关窗前的最后一次补上。
+      const settings = settingsRef.current
+      if (settings) void api.saveSettings(settings)
     }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
-  }, [])
+  }, [flushSession])
 
   const visibleText = engine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
@@ -9354,7 +10066,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
 import { splitChapters } from '../../src/core/chapters'
-import type { Novel, PersistedSession } from '../../src/core/types'
+import { defaultSettings } from '../../src/core/types'
+import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 function makeNovel(): Novel {
   const text = '第一章 甲\nAAAAAAAAAA\n第二章 乙\nBBBBBBBBBB\n'
@@ -9377,18 +10090,36 @@ function revealedChars(): number {
 }
 
 let saved: PersistedSession | null = null
+/** 最近一次 `loadSession` 是【按哪本书的路径】去取的。null = 从没按路径取过。 */
+let sessionAskedFor: string | null = null
 
 function installApi(novel: Novel | null, session: PersistedSession | null = null): void {
   saved = null
+  sessionAskedFor = null
   ;(window as unknown as { api: unknown }).api = {
     importNovel: vi.fn(async () => novel),
     openNovelPath: vi.fn(async () => novel as Novel),
     initialNovelPath: vi.fn(async () => null),
-    loadSession: vi.fn(async () => session),
+    loadSession: vi.fn(async (sourcePath: string) => {
+      sessionAskedFor = sourcePath
+      return session
+    }),
     saveSession: vi.fn(async (s: PersistedSession) => {
       saved = s
     }),
     clearSession: vi.fn(async () => {}),
+    /**
+     * 【最后一项刻意不是 `defaultSettings()` 的那个 null】`lastSourcePath` 现在是启动恢复的唯一
+     * 线索：按书取进度之后，「读完哪本接着读」必须先知道是哪本。桩里让设置指向本用例这本，
+     * 就等于「用户上次打开的就是它」——那是真的 settings.json 在这本书读过之后的样子。
+     * 若留 null，启动就什么都不开（正合 `installApi(null)` 那条用例），而
+     * 「有会话时启动即恢复到上次位置」会红成 0 个字：它现在测的正是「设置指路 → 取那本的进度」。
+     */
+    loadSettings: vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel?.sourcePath ?? null
+    })),
+    saveSettings: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
     setThemeSource: vi.fn(async () => {}),
@@ -9608,6 +10339,107 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('page-empty')).toBeTruthy()
     expect(screen.getByTestId('status-chapter').textContent).toBe('—')
     expect(revealedChars()).toBe(0)
+  })
+})
+
+describe('设置的持久化', () => {
+  it('启动时把磁盘上的设置读进界面', async () => {
+    installApi(null)
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      docTitle: '季度汇报',
+      themeSource: 'dark' as const,
+      darkPaper: true,
+      lastSourcePath: null
+    }))
+    render(<App />)
+    // doc-title 是蓝条上那个文档名（Ribbon.tsx 里 data-testid="doc-title"）
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+  })
+
+  // 【这条是本次改动里最容易写错的一条】设置是「改了就写回」的，而首帧渲染时三个状态
+  // 还都是默认值——读盘是异步的。少了 settingsLoaded 那道闸，启动会先拿着默认值写一遍，
+  // 把磁盘上真正的设置冲掉，然后才读到已经被自己冲掉的默认值。
+  //
+  // 【读盘必须真的挂住】桩若立即 resolve，settingsLoaded 马上就是 true，那个 effect 写盘
+  // 是**正确行为**——这条用例就变成「测不出守卫在不在」的空跑。所以这里用一个手动放行的
+  // Promise，并分两段断言：挂住时一次都不许写，放行之后必须写。第二段是前提自检，
+  // 少了它，一个「防抖根本没接上」的实现也能让第一段绿。
+  it('读回设置之前不写盘（否则会用自己的默认值覆盖磁盘）', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    let release: (s: AppSettings) => void = () => {}
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(
+      () =>
+        new Promise<AppSettings>((resolve) => {
+          release = resolve
+        })
+    )
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSettings).not.toHaveBeenCalled()
+
+    // 【第二段为什么是 waitFor 而不是再推进一次定时器】`advanceTimersByTimeAsync(2000)` 跑在
+    // React 把「settingsLoaded 变 true」那一帧提交【之前】：那个 effect 因此是在这一刻之后才
+    // 排上 600ms 定时器的，推进窗口里根本没有它。`shouldAdvanceTime: true` 下 waitFor 的实时
+    // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
+    // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
+    await act(async () => {
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null })
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+  })
+
+  it('改了文档名之后会把设置写回去', async () => {
+    installApi(makeNovel())
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+    importViaSettings()
+    openSettings()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '季度汇报' } })
+    fireEvent.blur(screen.getByTestId('doc-title-input'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.docTitle).toBe('季度汇报')
+  })
+})
+
+describe('导入一本读过的书', () => {
+  // 【这是本特性存在的理由，也是初稿漏掉的那条】openNovel 原先是 `new TypingEngine(next)`
+  // ——**从不读会话**，而「导入小说」走的正是它。少了读盘这一步，导入一本读过的书＝全新引擎
+  // ＝600ms 后把 cursor 0 落盘覆盖掉那本书的进度。
+  it('导入时接着上次读，而不是从头开始', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 20,
+      revealStart: 0,
+      chapterPos: [20, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+
+    // 接着上次读 ⇒ 阅读区显示 20 个字（而不是 0）
+    await waitFor(() => expect(revealedChars()).toBe(20))
+    // 【这一条才是钉住「按书取进度」的】只断言「显示了 20 个字」是不够的——实现之前它也是绿的：
+    // 旧启动流程里那段「先 loadSession()（无参）再比 sourcePath」照样能恢复到 20 个字，于是这
+    // 条用例在改之前就能通过（实测：只加用例、还没动 App.tsx 的那一轮，它已经在 12 passed 里）。
+    // 有证明力的是「有人按这本书的路径去问过进度」：openNovel 若不读会话，这一项恒为 null。
+    expect(sessionAskedFor).toBe(novel.sourcePath)
   })
 })
 ```

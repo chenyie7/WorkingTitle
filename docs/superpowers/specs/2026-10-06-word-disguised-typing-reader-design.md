@@ -142,9 +142,13 @@ src/
 // preload 暴露为 window.api
 interface Api {
   importNovel(): Promise<Novel | null>       // null = 用户取消
-  loadSession(): Promise<PersistedSession | null>
+  openNovelPath(path: string): Promise<Novel>
+  initialNovelPath(): Promise<string | null>
+  loadSession(sourcePath: string): Promise<PersistedSession | null>  // 按书取：进度每本书一份
   saveSession(s: PersistedSession): Promise<void>
-  clearSession(): Promise<void>
+  clearSession(): Promise<void>              // = 清阅读历史；设置刻意保留，见 §8
+  loadSettings(): Promise<AppSettings>       // 文档名 / 外观 / 纸张 / 上次打开的是哪本
+  saveSettings(s: AppSettings): Promise<void>
   onMenuCommand(cb: (cmd: MenuCommand) => void): () => void
 }
 ```
@@ -292,23 +296,40 @@ A4 纸样式：白底、圆角、投影、衬线字体（`Georgia` / `宋体` �
 
 ## 8. 持久化
 
-保存到 `app.getPath('userData')/`：
+保存到 `app.getPath('userData')/`（可用 `WT_USER_DATA` 重定向，E2E 与便携模式用）：
 
-- `session.json`：`{ novelTitle, sourcePath, ratio, mode, cursor, revealStart, chapterPos, activeChapter, startedAt }`
+- `settings.json`：`{ docTitle, themeSource, darkPaper, lastSourcePath }` —— **应用级设置，全局一份**。
+  文档名、外观（跟随系统 / 浅色 / 深色）、「深色下纸张也变暗」、以及**上次打开的是哪本书**
+  （启动时按它恢复；命令行参数优先于它）。
+  **为什么与阅读进度分开**：两者的生命周期不同——进度是「读到哪」（每本书一份、一直在变），
+  设置是「怎么读、长什么样」（全局一份、很少变）。此前这三项只活在渲染进程的内存里，
+  关掉应用即丢；而比例与输入模式挤在会话里，换一本书就被打回默认。
+- `sessions/<sha256(sourcePath) 前 32 位 hex>.json`：**每本书一份** `PersistedSession`
+  `{ novelTitle, sourcePath, ratio, mode, cursor, revealStart, chapterPos, activeChapter, startedAt }`
   （刻意**不含 `encoding`**：编码名由 `novel-cache.json` 里的 `NovelCacheMeta.encoding` 承载，恢复 `Novel` 时从那里取，session 再存一份是冗余。此前的本文档多写了它，实现与计划一直是按不含它做的。）
+  文件名取**路径的哈希**而不是路径本身：路径可能很长、含 `/` 与冒号等保留字符，直接拼进去会撞上文件名长度上限。
+  代价是文件名不再可读——所以文件**内容**里仍带着 `sourcePath`，读取时比对；对不上按「无记录」处理
+  （只可能来自手工改名或哈希撞车，而放行会把 B 书的进度套到 A 书上）。
+  读取入口带 `sourcePath`（`loadSession(sourcePath)`）：「读哪一本的进度」必须问得明确。
+- **旧版单槽 `session.json`**：升级前的格式。首次取 store 时**迁移**进 `sessions/`，
+  并按需把 `lastSourcePath` 补进 `settings.json`；**迁移落地之前绝不删旧文件**（磁盘满、
+  `sessions` 被同名文件占住都会让写入失败，而那是用户进度唯一的副本）。结构判不了的一律不删，只报出路径。
 - `novel-cache.json`：`{ sourcePath, mtimeMs, size, encoding, hadBom, title, chapters, textBytes }` —— 章节目录与元数据，体积小
   （`title` 用于重建 `Novel.title`；`textBytes` 是缓存两个文件之间的**提交点**，用于防止「旧 meta + 新 text」这类错配——见 Task 5 与 §6。）
 - `novel-cache.txt`：解码并归一化后的全文，纯 UTF-8
 
 拆成两个文件是刻意的：20MB 小说的全文若塞进 JSON，`JSON.parse` / `stringify` 会白白付出转义与解析开销。纯文本缓存可以直接 `fs.readFileSync(path, 'utf8')` 读回。重启时命中缓存则无需再读原文件、不再重复检测编码。
 
-**保存时机**：游标变化防抖 1s、比例/模式变化立即、窗口关闭前强制 flush。
+**保存时机**：游标变化防抖 **600ms**（`App.tsx` 的 `SAVE_DEBOUNCE_MS`）、窗口关闭前强制 flush；设置走同一个 600ms 防抖，另有一条「读回磁盘上的设置之前一律不写」的闸——少了它，首帧的默认值会把用户存的设置冲掉。
 
-**恢复流程**：启动 → 读 `session.json` → 若存在且 `novel-cache.json` 的 `sourcePath` 匹配 → 直接恢复 `Novel` 与全部游标状态，**用户无需重新输入**，打开就在上次读到的位置。
+**恢复流程**：启动 → 读 `settings.json` → 取 `命令行参数 ?? lastSourcePath` 作为目标 → 打开那本书 → **按它的 `sourcePath`** 读 `sessions/` 下那一份进度 → 有就接着读、没有就从零开始。缓存命中（`novel-cache.json` 匹配）则无需再读原文件。
 
-**失效处理**：缓存缺失或 `sourcePath` 对不上 → 显示空状态，提示重新导入。导入同一路径的文件时优先复用缓存。
+**「导入一本读过的书」也走同一条判断**：`App.tsx` 的 `openNovel` 是导入与启动恢复共用的入口，它自己会先读这本书的进度再决定。少了这一步，导入一本读过的书＝全新引擎＝600ms 后把 `cursor 0` 落盘覆盖掉那本书的进度。
 
-**清理入口**：`文件 → 清除阅读记录`，删除 `session.json` 与缓存。
+**失效处理**：进度文件缺失或 `sourcePath` 对不上 → 那一本按「无记录」处理（其余书的进度不受影响）；缓存缺失或校验不过 → 退化成重读源文件。源文件本身不可用 → 显示空状态，提示重新导入。
+
+**清理入口**：`文件 → 设置 → 清除阅读记录`，删除**所有书**的进度（整个 `sessions/` 目录）、两个缓存文件、以及旧版残留的 `session.json`。
+**`settings.json` 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，与「读到哪」无关；把它们一起清掉等于「改一次设置、按一次清除就白改」。
 
 ## 9. 打包
 
@@ -453,3 +474,6 @@ WorkingTitle/
 | 零字节的 txt 被当作一份**有效但无内容**的小说接受 | 单章、`flatText` 为空、不报错。这是刻意接受的行为而非缺陷——文件本身就说它是空的，报错反而与用户看到的文件不符。诚实描述其后果：**对这样一份小说打字不会显示任何文字**（`flatText` 为空，`slice` 永远得到空串）。若将来要改为拒绝空文件，那是一个产品决定，不是修复 |
 | `writeSession` 没有 `fsync`，因此只保证**进程崩溃**下的原子性，不保证断电 | 这正是声称的范围，也是 temp+rename 能给的：写临时文件、改名，读方永远看到某一份完整文件。**掉电**会让内容停留页缓存里，可能得到零字节文件——而零字节读回来是 `null`（实测空文件与截断到 20 字节的文件都读回 `null`），于是「进度丢失但不崩、不显示坏数据」。加 `fsync` 会把每次保存变成一次磁盘同步（1s 防抖下每秒一次），代价与收益不成比例，故不加 |
 | `session.json.tmp` 是**固定名**，不是进程唯一 | 两个实例共用同一个 `userData` 时会互相覆盖同一个临时文件，结果是**后写者赢**，不会产生交错或损坏：`writeFileSync` 是同步整段写，`renameSync` 是原子的，两者的组合只可能让某一次保存被另一次覆盖掉，而每次覆盖的都是一份完整 JSON。真要并发正确需要进程唯一的临时名 + 锁；本应用是单实例桌面程序，不值得为它引入 |
+| 设置校验失败是**整份回退**，不是逐字段恢复 | `settingsProblem` 返回第一个不合格字段后，`readSettingsFile` 整体退回 `defaultSettings()`——一份手改过的 `"themeSource": "sepia"` 会连 `docTitle` / `darkPaper` / `lastSourcePath` 一起丢掉。这是刻意与 `sessionProblem` / `cacheMetaProblem` 两个家族保持同一姿势（三份校验器一个形状），不是「只有坏的那个键受影响」；丢掉 `lastSourcePath` 有行为后果：应用不再自动打开上次那本书。要逐字段恢复的话，得把「校验」与「取值」拆开，那会让设置成为三份里唯一的例外 |
+| 每本书的进度文件名取的是**原始 `sourcePath` 字符串**的哈希，没有做路径归一化 | 同一个文件经**相对路径**（命令行参数）与**绝对路径**（原生对话框）打开会得到两个不同的键、两份进度，用户会以为「进度丢了」。当前不修的理由：① 命令行那条路只在开发/脚本里用，正常用法都是从对话框导入（`dialog.showOpenDialog` 恒给绝对路径）；② 归一化要决定「相对谁解析」，而 `sourcePath` 同时是缓存有效性判据的一部分（`readNovelCache` 直接比字符串），只归一化会话会两者不一致。真要修：在 `openNovel` 一处统一 `path.resolve` 后再入库，缓存那条腿跟着一起走 |
+| 迁移时 `settings.json` 已记着**另一本书**时，本次这本书不会被写进 `lastSourcePath` | 第二条闸写的是「settings 里没有 `lastSourcePath` 才补」，所以用户当前那本书（B）不会被迁移中的旧书（A）顶掉——这是对的。代价是 A 的记录虽然已经落到 `sessions/`，却没有人去自动打开它；由于 `openNovel` 现在会先读会话，用户手动导入 A 仍然能接着读（见 §8），所以后果有界：只是「不会自动打开」 |
