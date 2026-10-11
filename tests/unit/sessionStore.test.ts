@@ -90,6 +90,30 @@ describe('sessionStore 会话读写', () => {
     expect(store.readSession('/tmp/B.txt')).toBeNull()
   })
 
+  // 文件名是 sourcePath 的哈希，所以「文件里的 sourcePath 与请求的不是同一本」只有手工改
+  // 文件名或哈希撞车才造得出来。但一旦发生，后果是把 B 书的进度套到 A 书上——章节目录与
+  // 光标一起错位，而 fromSession 对错位的 chapterPos 不抛错，只会表现成「进度莫名其妙不对」。
+  it('文件内容里的 sourcePath 与请求的书对不上时按无记录处理', () => {
+    const store = createSessionStore(dir)
+    const a = makeSession({ sourcePath: '/tmp/A.txt', cursor: 100 })
+    store.writeSession(a)
+    // 把 A 那份的内容冒充成 B 的：文件名按 B 的哈希、内容仍是 A 的
+    writeFileSync(sessionFile(dir, '/tmp/B.txt'), JSON.stringify(a), 'utf8')
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSession('/tmp/B.txt')).toBeNull()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain('不是同一本')
+    } finally {
+      spy.mockRestore()
+    }
+    // 前提：A 自己那份仍在、且仍读得回来——证明上面那次 null 是被 sourcePath 那道门拦下的，
+    // 而不是这两本书本来就都没有记录（少了这行，一个「readSession 永远返回 null」的实现
+    // 也能让上面两条断言全绿）
+    expect(store.readSession('/tmp/A.txt')).toEqual(a)
+  })
+
   it('未写过时 readSession 返回 null', () => {
     const store = createSessionStore(dir)
     expect(store.readSession(SRC)).toBeNull()
