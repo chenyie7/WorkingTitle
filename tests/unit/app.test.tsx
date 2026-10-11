@@ -556,12 +556,23 @@ describe('快捷键接线', () => {
     // 那时按下 Ctrl+O 会真的触发导入，用例会红在一个与本条主题无关的地方。
     await act(async () => {})
 
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
     fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
-    // 旧键不该再触发
+    // 【负向断言必须数**调用次数**，不能看界面上有没有正文（这一条原先就是那么写的，
+    // 而它是空转的）】导入要跨几个微任务才提交，而这里是一路同步走下来的——`page-text`
+    // 在那一瞬间必然还没出现，于是「旧键根本没触发」与「触发了但还没渲染完」在这条断言上
+    // 完全同形。实测：把表写成 `resolveShortcuts({}, kind)`（忽略用户表，**正是本条要防的
+    // 那件事**），只断言 `page-text` 为 null 时这一条照样绿——它下面那句
+    // `waitFor(page-text)` 是被刚才这次 Ctrl+O 的导入满足的。
+    // 数调用次数可靠：`handleImport` 在第一个 await 之前就调了 `api.importNovel()`。
+    expect(importNovel.mock.calls.length).toBe(before)
     expect(screen.queryByTestId('page-text')).toBeNull()
 
     fireEvent.keyDown(window, { code: 'KeyI', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+    // 正向那半也钉在计数上：新键触发的那一次必须是**唯一**的一次
+    expect(importNovel.mock.calls.length).toBe(before + 1)
   })
 
   /**
@@ -585,6 +596,35 @@ describe('快捷键接线', () => {
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  /**
+   * 【这条补的是**另一半**：鼠标那条路】
+   *
+   * 侧栏有两个入口——快捷键与那两个按钮。上面那条走的是快捷键（分发器 → action），
+   * 而按钮走的是受控回调（`ChapterList` 内部 `setCollapsed` → `onCollapsedChange`）。
+   * 少了这一条，「`App` 忘了传 `onCollapsedChange`」是**全绿**的（实测：删掉那一行，
+   * 全套用例一条都不红），而真机上表现为那两个按钮**点不动**——键盘还能用，
+   * 于是用户只会觉得「按钮坏了」。
+   *
+   * 这个形态正是 `ChapterList.tsx` 里那段注释点名的：**只给 `collapsed` 不给回调时，
+   * 受控是坏的**（`controlled` 为真、切换却落到一个 `undefined` 上）。
+   */
+  it('点章节栏那个按钮也真的收起、又展开', async () => {
+    installApi(null)
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    // 收起后那个按钮换成细缝里那一个——同样得能点回来（两条路都走 `onCollapsedChange`）
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
   })

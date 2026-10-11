@@ -138,8 +138,15 @@ export default function App() {
    * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
    *
    * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
-   * 「在设置里录一条新快捷键并保存」管后者。**后者的载荷断言必须排在按新键导入之前**——
-   * 那一步会动 `lastSourcePath`，把 memo 顺带重算一遍，漏依赖那件事就再也显不出来了。
+   * 「在设置里录一条新快捷键并保存」管后者。
+   *
+   * 【后者的载荷断言为什么必须排在按新键导入之前】那一步会动 `lastSourcePath`（memo 的另一个
+   * 依赖），memo 被带着重算——而**重算本身不给漏依赖这件事解围**：此刻落盘的仍是重算前那一次
+   * 排的防抖写。真正让它隐形的是**紧接着又落一次盘**：重算改了 `settings` 的身份，防抖再排一发，
+   * 600ms 后写下的那一份就是带上了新表的。所以断言一旦排到那两次写之后、读的又是最后一次调用，
+   * 它就永远看到正确的那一份。实测（变异＝值留住、只把 `shortcuts` 从依赖数组里删掉）：
+   * 断言排在导入之后且**不补推进**时这条仍红；**再补一次 `advanceTimersByTimeAsync(2000)`**
+   * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
    */
   const settings: AppSettings = useMemo(
     () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
@@ -314,6 +321,17 @@ export default function App() {
    * 【`actions` 每次渲染都是新对象，这是有意的】分发器把它挂在 ref 上（见那个模块里的
    * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
    * 跟着稳，反而更容易漏。
+   *
+   * 【`platform` 这个实参传错，**单测查不出来，只有真机能判**】把它写死成某个值，整套 jsdom
+   * 用例照样全绿：测试里 `window.api.platform` 那个桩与这里传下去的值同源，表按哪个值补齐、
+   * 按键就按哪个值构造，两边一起错是自洽的。真机上的代价分两层：
+   *
+   * 1. `resolveShortcuts` 按错的那一套补齐默认值（macOS 上会把 ⌘ 显示成 Ctrl），而
+   *    `RESERVED` 的 darwin 清单也跟着失效；
+   * 2. 「一条快捷键只在一个地方执行」那条硬规则失效：分发器里「darwin 上 import 让给原生菜单」
+   *    的跳过是按这个值判的，一旦它不是 darwin 就不再跳过。此时只要表里 `import` 那一条是个
+   *    ⌘ 组合（用户在设置里录过一条就是），按下去菜单的 accelerator 与分发器会**各触发一次**。
+   *    计划末尾真机验收清单里那条「macOS 上 ⌘O 只导入一次（不是两次）」就是它的判据。
    */
   useShortcutDispatcher({
     platform,
