@@ -119,8 +119,12 @@ function hasModifier(chord: KeyChord): boolean {
 }
 
 /**
- * macOS 上不给用的键：本应用菜单里 role 正在用的那些，加上系统的「退出登录」。
- * 抢过来会废掉退出 / 关闭窗口 / 复制粘贴，或顶掉系统自己的键。
+ * macOS 上不给用的键，两类：
+ *
+ *  - **本应用菜单里 role 正在用的**：⌘Q 退出 / ⌘W 关闭 / ⌘H 隐藏 / ⌘X 剪切 / ⌘C 复制 /
+ *    ⌘V 粘贴 / ⌘A 全选 / ⌘Z 撤销。抢过来会把这些功能废掉。
+ *  - **macOS 系统的**：⇧⌘Q 退出登录、⌘M 最小化。它们不在我们的菜单里（`menu.ts` 没有
+ *    `minimize` role），但应用级 accelerator 一样会把系统约定顶掉。
  *
  * 【录制时和读盘时都要过】只在录制端拦等于没拦——手工改过 settings.json 的人同样塞得进来。
  * 这也是 `resolveShortcuts` 要逐条走校验、而不是直接信磁盘上那个串的原因。
