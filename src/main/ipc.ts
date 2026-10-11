@@ -59,7 +59,7 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle(CH.clearSession, (): void => {
-    getStore().clearAll()
+    getStore().clearReadingHistory()
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。

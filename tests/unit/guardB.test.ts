@@ -23,7 +23,7 @@ function makeSession(cursor: number): PersistedSession {
 }
 
 // 【这条守卫钉的是机制，guardA.test.ts 钉的是性质——两条都在，理由如下】
-// 它看的是「整份换掉」与「就地截断」留下的差别：renameSync 会给 session.json 换上临时
+// 它看的是「整份换掉」与「就地截断」留下的差别：renameSync 会给会话文件换上临时
 // 文件的 inode，而 writeFileSync 对已存在的路径是原地截断、inode 不变。读文件【内容】
 // 看不出这个差别——这正是原子性没有被任何内容级断言覆盖住的原因。
 //

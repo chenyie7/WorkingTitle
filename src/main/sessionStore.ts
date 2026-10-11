@@ -17,7 +17,7 @@ export interface SessionStore {
   writeSettings(s: AppSettings): void
   readSession(sourcePath: string): PersistedSession | null
   writeSession(s: PersistedSession): void
-  clearAll(): void
+  clearReadingHistory(): void
   writeNovelCache(novel: Novel): void
   readNovelCache(filePath: string): Novel | null
 }
@@ -103,7 +103,7 @@ function chapterProblem(v: unknown, i: number): string | null {
  *
  * 【丢弃这份缓存不会丢任何东西——这是 return null 而不是「尽力而为」的理由】缓存里没有
  * 不可再生的信息：title ← 文件名、encoding/hadBom ← 检测、chapters ← 切分、flatText ← 解码，
- * 而全应用唯一不可再生的状态是阅读进度，它在 session.json 里（另一个文件、另一套校验），
+ * 而全应用唯一不可再生的状态是阅读进度，它在 `sessions/<hash>.json` 里（另一些文件、另一套校验），
  * 本路径不碰。所有 null 都落回 loadNovelFromFile(meta.sourcePath)，源文件是同一个路径；
  * 源文件若也没了，现有代码本来就会返回 null（statSync 抛）。所以这里只是把一种情况挪到
  * 一条【已经由四处未命中走过】的路径上，不引入新的行为类别。
@@ -255,8 +255,7 @@ function writeSessionFile(file: string, s: PersistedSession): void {
 
 export function createSessionStore(baseDir: string): SessionStore {
   const settingsPath = join(baseDir, 'settings.json')
-  const sessionPath = join(baseDir, 'session.json')
-  const sessionTmpPath = join(baseDir, 'session.json.tmp')
+  const legacySessionPath = join(baseDir, 'session.json')
   const cacheMetaPath = join(baseDir, 'novel-cache.json')
   const cacheTextPath = join(baseDir, 'novel-cache.txt')
   const sessionsDir = join(baseDir, 'sessions')
@@ -284,9 +283,11 @@ export function createSessionStore(baseDir: string): SessionStore {
       writeSessionFile(sessionFile(s.sourcePath), s)
     },
 
-    clearAll(): void {
-      // 临时文件也要删：崩溃可能正好把 .tmp 留在磁盘上，「清除阅读记录」应当清干净。
-      for (const p of [sessionPath, sessionTmpPath, cacheMetaPath, cacheTextPath]) {
+    clearReadingHistory(): void {
+      // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
+      // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
+      // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
+      for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
         try {
           // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
           // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
@@ -295,6 +296,13 @@ export function createSessionStore(baseDir: string): SessionStore {
         } catch (err) {
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
+      }
+      // 整个目录一起删，而不是先 readdir 再逐个删：少一次「列目录时多出来一个新文件」的
+      // 竞态，也不用维护「哪些文件算会话」这份名单。
+      try {
+        rmSync(sessionsDir, { recursive: true, force: true })
+      } catch (err) {
+        console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
       }
     },
 
