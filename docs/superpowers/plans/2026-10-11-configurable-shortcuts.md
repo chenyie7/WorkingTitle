@@ -1060,6 +1060,15 @@ export function buildAppMenu(
 > 一路到 core，由 `resolveShortcuts` 按平台逐条退回默认值。菜单侧若自作主张再校验一次，
 > core 那条逐条校验就退回纸面路径了。规格评审的真机探针已经证明现在这条路径是通的（往
 > `settings.json` 写一条 `Meta+KeyQ`，应用照常起、0 条 warn、文档名保留）。
+>
+> **【一处真实的退步方向，将来往迁移里加 IO 时要记得】** 规格评审独立核过：`getStore()` 提前到
+> `whenReady` 里（`buildAppMenu` → `createWindow` 之前）之后，`migrateLegacySession()` 若抛错，
+> 异常会从 `whenReady().then()` 里冒出去，而紧随其后的 `win = createWindow()` **永远不会执行**
+> ——症状从改动前的「渲染层那次 invoke reject、停在空状态」**升级成「一个窗口都没有」**。
+>
+> 按现有代码它**不抛**（迁移的每一段 IO 都在 try/catch 里，这一条评审逐段走过），所以这是
+> **理论化的残留风险、不是缺陷**。但要记一笔：**将来若往迁移里加一步会抛的 IO**（比如再无保护地
+> `readdirSync`），症状就是这么变过去的。
 
 - [ ] **Step 2: 改 `ipc.ts` 的 `saveSettings`**
 
