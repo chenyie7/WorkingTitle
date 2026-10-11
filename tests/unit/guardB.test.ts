@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import type { PersistedSession } from '../../src/core/types'
+
+/** `makeSession()` 那本书的路径——进度按书存之后，读也要带上它。 */
+const SRC = '/tmp/测试书.txt'
 
 function makeSession(cursor: number): PersistedSession {
   return {
@@ -63,21 +66,29 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
       const dir = mkdtempSync(join(tmpdir(), 'wt-ino-'))
       try {
         const store = createSessionStore(dir)
-        const sessionPath = join(dir, 'session.json')
-        const tmpPath = join(dir, 'session.json.tmp')
+        // 从目录里【找】那一份，而不是自己算一遍哈希：这条守卫问的是「写入有没有换掉文件」，
+        // 文件名怎么来与它无关；照着实现算哈希会把守卫绑到实现的算法上。
+        const sessionsDir = join(dir, 'sessions')
+        const sessionPath = (): string => {
+          const entries = readdirSync(sessionsDir)
+          expect(entries.length).toBe(1) // 只有一本书被写过
+          return join(sessionsDir, entries[0])
+        }
+        const tmpLeftover = (): string[] =>
+          readdirSync(sessionsDir).filter((f) => f.endsWith('.tmp'))
 
         store.writeSession(makeSession(1))
         // 一次成功的保存不该留下临时文件：rename 会把 .tmp 消费掉。
         // 这一条就是矩阵 row B 的探测器：copyFileSync 保留了目标的 inode（所以 inode 断言
         // 也看得见它），但它【不消费】临时文件，于是 .tmp 留在磁盘上；「写了临时文件却忘了
         // 改名」同样被它抓住。放在 statSync 与 inode 断言【之前】，是为了让这两种回退红在
-        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让 session.json 根本不存在，
+        // 这一条说得清原因的断言上——放到后面的话，「忘了改名」会让目标文件根本不存在，
         // 于是 statSync 先抛 ENOENT，红得看不出所以然（实测踩到过）。
-        expect(existsSync(tmpPath)).toBe(false)
-        const first = statSync(sessionPath).ino
+        expect(tmpLeftover()).toEqual([])
+        const first = statSync(sessionPath()).ino
         store.writeSession(makeSession(2))
-        expect(existsSync(tmpPath)).toBe(false)
-        const second = statSync(sessionPath).ino
+        expect(tmpLeftover()).toEqual([])
+        const second = statSync(sessionPath()).ino
 
         // 前提自检：这个文件系统确实给出有意义的 inode。报 0 时跳过而不是断言——
         // 在那种文件系统上这条守卫【按构造】无法工作，让它红等于谎报缺陷，
@@ -85,7 +96,7 @@ describe('session.json 是「整份换掉」而不是「就地截断」', () => 
         if (!(first > 0)) ctx.skip()
         expect(second).not.toBe(first)
         // 前提：第二次写真的发生了（否则 inode 变了也说明不了是这次写入造成的）
-        expect(store.readSession()!.cursor).toBe(2)
+        expect(store.readSession(SRC)!.cursor).toBe(2)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }

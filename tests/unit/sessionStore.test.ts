@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import {
   mkdtempSync,
+  mkdirSync,
   rmSync,
   existsSync,
   readFileSync,
@@ -37,6 +39,21 @@ function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSessio
   }
 }
 
+/** `makeSession()` 默认那本书的路径——多数「那一份会话文件」的用例说的都是它。 */
+const SRC = '/tmp/测试书.txt'
+
+/**
+ * 会话文件在磁盘上的位置。
+ *
+ * 【为什么测试自己算一遍 sha256 而不是从实现里 import】判据要独立：把实现里的算法换掉
+ * （比如换成 base64），这些用例必须跟着红，而不是跟着实现一起漂。仓库里已有的会话路径
+ * 断言（clearAll 那条）也是这个姿势。
+ */
+function sessionFile(dir: string, sourcePath: string): string {
+  const key = createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)
+  return join(dir, 'sessions', `${key}.json`)
+}
+
 // 这两个辅助函数放在模块级而不是第二个 describe 里：clearAll 那条用例也要用它们
 // （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
 function writeSource(content: string): string {
@@ -57,17 +74,33 @@ function makeNovel(sourcePath: string): Novel {
 }
 
 describe('sessionStore 会话读写', () => {
+  it('两本书各存一份，互不覆盖', () => {
+    const store = createSessionStore(dir)
+    const a = makeSession({ sourcePath: '/tmp/A.txt', cursor: 100 })
+    const b = makeSession({ sourcePath: '/tmp/B.txt', cursor: 200 })
+    store.writeSession(a)
+    store.writeSession(b)
+    expect(store.readSession('/tmp/A.txt')).toEqual(a)
+    expect(store.readSession('/tmp/B.txt')).toEqual(b)
+  })
+
+  it('读取路径上的书从未存过时返回 null', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    expect(store.readSession('/tmp/B.txt')).toBeNull()
+  })
+
   it('未写过时 readSession 返回 null', () => {
     const store = createSessionStore(dir)
-    expect(store.readSession()).toBeNull()
+    expect(store.readSession(SRC)).toBeNull()
   })
 
   it('写入后能读回同样的内容', () => {
     const store = createSessionStore(dir)
     const s = makeSession()
     store.writeSession(s)
-    expect(store.readSession()).toEqual(s)
-    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    expect(store.readSession(SRC)).toEqual(s)
+    expect(existsSync(sessionFile(dir, SRC))).toBe(true)
   })
 
   // 持久化失败的守卫：失败必须留下痕迹，而不是「应用看着健康、其实什么都没存」。
@@ -82,7 +115,7 @@ describe('sessionStore 会话读写', () => {
       const store = createSessionStore(notADir)
       store.writeSession(makeSession())
       // 前提：这次写入确实失败了——否则「报了 warn」可能来自别处
-      expect(existsSync(join(notADir, 'session.json'))).toBe(false)
+      expect(existsSync(sessionFile(notADir, SRC))).toBe(false)
 
       expect(spy).toHaveBeenCalledTimes(1)
       expect(spy.mock.calls[0][1]).toBeInstanceOf(Error)
@@ -93,8 +126,9 @@ describe('sessionStore 会话读写', () => {
 
   it('session.json 损坏时返回 null 而不抛异常', () => {
     const store = createSessionStore(dir)
-    writeFileSync(join(dir, 'session.json'), '{ 这不是 JSON', 'utf8')
-    expect(store.readSession()).toBeNull()
+    mkdirSync(join(dir, 'sessions'), { recursive: true })
+    writeFileSync(sessionFile(dir, SRC), '{ 这不是 JSON', 'utf8')
+    expect(store.readSession(SRC)).toBeNull()
   })
 
   // 与上一条（`{ 这不是 JSON`，连 JSON.parse 都过不去）走的是不同代码路径：这一组是
@@ -162,15 +196,16 @@ describe('sessionStore 会话读写', () => {
   it.each(CRIPPLED)('$name → 按无记录处理，且警告点出该字段', ({ build, token }) => {
     const store = createSessionStore(dir)
     const crippled = build(makeSession())
-    writeFileSync(join(dir, 'session.json'), JSON.stringify(crippled), 'utf8')
+    mkdirSync(join(dir, 'sessions'), { recursive: true })
+    writeFileSync(sessionFile(dir, SRC), JSON.stringify(crippled), 'utf8')
     // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏时返回 null」那一条
-    expect(() => JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).not.toThrow()
+    expect(() => JSON.parse(readFileSync(sessionFile(dir, SRC), 'utf8'))).not.toThrow()
     // 前提二：这份记录与一份完好的记录确实不同——否则它什么都没坏，用例是空跑
     expect(JSON.stringify(crippled)).not.toBe(JSON.stringify(makeSession()))
 
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      expect(store.readSession()).toBeNull()
+      expect(store.readSession(SRC)).toBeNull()
       expect(spy).toHaveBeenCalledTimes(1)
       expect(String(spy.mock.calls[0][0])).toContain(token)
     } finally {
@@ -192,11 +227,20 @@ describe('sessionStore 会话读写', () => {
     // 判据只能是「断言的操作数从哪来」，不是「注释写得多诚恳」。
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
-    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
+    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉。
+    // 路径仍是旧的单槽 session.json.tmp——现实现的 clearAll 删的正是它（Task 4 的用例里
+    // 这个路径也还在，只是角色换成「旧版残留」）。
     writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
     store.clearAll()
-    expect(store.readSession()).toBeNull()
+    // 【为什么这里没有会话那半边的断言——这是刻意的缺口，别当漏写】
+    // 本任务只把进度挪到 sessions/<hash>.json，clearAll 本身【没动】（那是 Task 4 的事）：
+    // 它删的仍是旧的单槽 session.json / session.json.tmp 与两个缓存文件，sessions/ 目录
+    // 一个都不碰。所以此刻断言 `readSession(SRC)` 为 null 是一条【恒红】的用例（那份记录
+    // 还在 sessions/ 下好好躺着）；反过来断言 `.not.toBeNull()`（「确认它没被删」）则是把
+    // 这个缺陷固化成断言，比空缺更糟。缺口留到 Task 4——那时的 clearAll 才真的会碰
+    // sessions/，用例也才谈得上「清完之后读不到 A 书、也读不到 B 书」。
+    // 上面那句 store.writeSession(makeSession()) 留着，正是给它备好的现场。
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)

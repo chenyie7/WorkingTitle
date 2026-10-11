@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -14,7 +15,7 @@ import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../co
 export interface SessionStore {
   readSettings(): AppSettings
   writeSettings(s: AppSettings): void
-  readSession(): PersistedSession | null
+  readSession(sourcePath: string): PersistedSession | null
   writeSession(s: PersistedSession): void
   clearAll(): void
   writeNovelCache(novel: Novel): void
@@ -191,12 +192,76 @@ function writeSettingsFile(path: string, s: AppSettings): void {
   }
 }
 
+/**
+ * 一本书的进度文件名：`sourcePath` 的 sha256 前 16 字节（32 个 hex 字符）。
+ *
+ * 【为什么是哈希而不是把路径编码进文件名】路径可能很长、含 `/` 与冒号等各平台保留字符，
+ * 直接拼进去会撞上文件名长度上限（多数文件系统 255 字节）。哈希定长、且只含 hex。
+ * 代价是文件名不再可读——所以文件**内容**里仍带着 sourcePath，读取时比对（见下）。
+ */
+function sessionFileName(sourcePath: string): string {
+  return `${createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)}.json`
+}
+
+/** 按书取会话文件路径。book 的路径 → 定长文件名，见 sessionFileName。 */
+function sessionFilePath(sessionsDir: string, sourcePath: string): string {
+  return join(sessionsDir, sessionFileName(sourcePath))
+}
+
+function readSessionFile(file: string, sourcePath: string): PersistedSession | null {
+  try {
+    if (!existsSync(file)) return null
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (!isPersistedSession(parsed)) {
+      // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
+      // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
+      console.warn(
+        `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
+        file
+      )
+      return null
+    }
+    // 文件名是路径的哈希，所以「文件里的 sourcePath 与请求的不是同一本」只可能来自手工改名
+    // 或哈希撞车。放行的话会把 B 书的进度套到 A 书上——章节目录与光标全部错位，而
+    // fromSession 对错位的 chapterPos 不抛错，只会表现为「进度莫名其妙不对」。
+    if (parsed.sourcePath !== sourcePath) {
+      console.warn('[wt] 会话文件与请求的书不是同一本，按无记录处理：', file)
+      return null
+    }
+    return parsed
+  } catch (err) {
+    // 解析失败与「文件读不出来」都按无记录处理，启动不该被一份坏文件卡住；
+    // 但要说出来——不然「目录只读 / 磁盘满」会表现成「应用一切正常，只是记不住进度」。
+    console.warn('[wt] 读取会话失败，按无记录处理：', err)
+    return null
+  }
+}
+
+function writeSessionFile(file: string, s: PersistedSession): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整文件、
+    // 要么看到新的完整文件，不会看到「写了一半的 session.json」。直接写目标路径的话，
+    // 进程在写完之前死掉，留下的是截断甚至空的文件，readSession 只能返回 null——
+    // 游标、chapterPos、activeChapter、ratio、mode、startedAt 全部静默丢失。
+    // 实测这种残留的表现：截断成 20 字节与空文件都读回 null。
+    // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
+    writeFileSync(`${file}.tmp`, JSON.stringify(s), 'utf8')
+    renameSync(`${file}.tmp`, file)
+  } catch (err) {
+    console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
+  }
+}
+
 export function createSessionStore(baseDir: string): SessionStore {
   const settingsPath = join(baseDir, 'settings.json')
   const sessionPath = join(baseDir, 'session.json')
   const sessionTmpPath = join(baseDir, 'session.json.tmp')
   const cacheMetaPath = join(baseDir, 'novel-cache.json')
   const cacheTextPath = join(baseDir, 'novel-cache.txt')
+  const sessionsDir = join(baseDir, 'sessions')
+  /** 这本书的进度文件。每本书一份——换书不再覆盖上一本的进度。 */
+  const sessionFile = (sourcePath: string): string => sessionFilePath(sessionsDir, sourcePath)
 
   const ensureDir = (): void => {
     mkdirSync(baseDir, { recursive: true })
@@ -211,42 +276,12 @@ export function createSessionStore(baseDir: string): SessionStore {
       writeSettingsFile(settingsPath, s)
     },
 
-    readSession(): PersistedSession | null {
-      try {
-        if (!existsSync(sessionPath)) return null
-        const parsed: unknown = JSON.parse(readFileSync(sessionPath, 'utf8'))
-        if (!isPersistedSession(parsed)) {
-          // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
-          // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
-          console.warn(
-            `[wt] 会话文件结构不合法（${sessionProblem(parsed) ?? '未知'}），按无记录处理：`,
-            sessionPath
-          )
-          return null
-        }
-        return parsed
-      } catch (err) {
-        // 解析失败与「文件读不出来」都按无记录处理，启动不该被一份坏文件卡住；
-        // 但要说出来——不然「目录只读 / 磁盘满」会表现成「应用一切正常，只是记不住进度」。
-        console.warn('[wt] 读取会话失败，按无记录处理：', err)
-        return null
-      }
+    readSession(sourcePath: string): PersistedSession | null {
+      return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
 
     writeSession(s: PersistedSession): void {
-      try {
-        ensureDir()
-        // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整
-        // 文件、要么看到新的完整文件，不会看到「写了一半的 session.json」。
-        // 直接写目标路径的话，进程在写完之前死掉，留下的是截断甚至空的文件，readSession
-        // 只能返回 null——游标、chapterPos、activeChapter、ratio、mode、startedAt 全部
-        // 静默丢失。实测这种残留的表现：截断成 20 字节与空文件都读回 null。
-        // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
-        writeFileSync(sessionTmpPath, JSON.stringify(s), 'utf8')
-        renameSync(sessionTmpPath, sessionPath)
-      } catch (err) {
-        console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
-      }
+      writeSessionFile(sessionFile(s.sourcePath), s)
     },
 
     clearAll(): void {

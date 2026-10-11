@@ -16,7 +16,7 @@ vi.mock('node:fs', async (importOriginal) => {
     ...actual,
     default: actual,
     writeFileSync: (p: unknown, data: unknown, enc?: unknown) => {
-      if (armed && typeof p === 'string' && p.includes('session.json')) {
+      if (armed && typeof p === 'string' && p.includes('sessions')) {
         mockHits++
         actual.writeFileSync(p, String(data).slice(0, 20), 'utf8')
         throw new Error('模拟进程在写入中途被杀')
@@ -27,6 +27,9 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 const { createSessionStore } = await import('../../src/main/sessionStore')
+
+/** `makeSession()` 默认那本书的路径——按书取会话文件之后，读也要带上它。 */
+const SRC = '/tmp/测试书.txt'
 
 function makeSession(overrides: Partial<PersistedSession> = {}): PersistedSession {
   return {
@@ -59,7 +62,7 @@ describe('writeSession 的原子替换', () => {
     const store = createSessionStore(dir)
     const good = makeSession({ cursor: 4242 })
     store.writeSession(good)
-    expect(store.readSession()).toEqual(good)
+    expect(store.readSession(SRC)).toEqual(good)
 
     armed = true
     store.writeSession(makeSession({ cursor: 999999 })) // 半途抛错，被 catch 吞掉
@@ -67,6 +70,6 @@ describe('writeSession 的原子替换', () => {
 
     // 前提自检：注入确实生效。少了这行，用例在「注入失效」时会静默退化成空跑。
     expect(mockHits).toBe(1)
-    expect(store.readSession()).toEqual(good)
+    expect(store.readSession(SRC)).toEqual(good)
   })
 })
