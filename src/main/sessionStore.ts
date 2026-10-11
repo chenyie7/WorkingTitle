@@ -9,8 +9,14 @@ import {
   writeFileSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { SHORTCUTS, shortcutProblem, type ShortcutId } from '../core/shortcuts'
 import { defaultSettings } from '../core/types'
 import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
+
+/** 磁盘上那个 id 是不是本版本认识的。不认识的照常放行（见 settingsProblem 里的说明）。 */
+function isShortcutId(id: string): id is ShortcutId {
+  return SHORTCUTS.some((def) => def.id === id)
+}
 
 export interface SessionStore {
   readSettings(): AppSettings
@@ -158,24 +164,52 @@ function settingsProblem(v: unknown): string | null {
   }
   const n = s.ratio
   if (typeof n !== 'number' || !Number.isFinite(n)) return 'ratio 不是有限数字'
+  const sc = s.shortcuts
+  if (typeof sc !== 'object' || sc === null || Array.isArray(sc)) return 'shortcuts 不是对象'
+  for (const [id, spec] of Object.entries(sc as Record<string, unknown>)) {
+    if (typeof spec !== 'string') return `shortcuts.${id} 不是字符串`
+    // 未知 id 刻意**不拦**：那是更新版本写的，本版本应当照常读、照常写回去。
+    // 已知 id 则必须能解析——解析不了说明这个文件被改坏了。
+    // 【只拦结构问题，不拦保留键】解析不了 / 没带修饰键 → 这个文件被改坏了，与其它字段
+    // 一样整份退回；保留键则是**平台相关**的，而这一层拿不到平台（那正是稀疏表要避免的
+    // 事），只能交给 core 的 resolveShortcuts 按平台逐条退回默认值。
+    if (isShortcutId(id)) {
+      const problem = shortcutProblem(spec, 'darwin')
+      if (problem !== null && problem !== 'reserved') {
+        return `shortcuts.${id} 不是合法的快捷键（${problem}）`
+      }
+    }
+  }
   return null
 }
 
 /**
  * 给**旧版**写下的设置补上后来才加的字段。
  *
- * 【为什么不能直接让它按必填校验失败】`ratio` 是后加的。旧版写下的 settings.json 里没有它，
- * 而校验是「一个字段不合格就整份退回默认值」——那等于：升级一次，用户改过的文档名 / 外观 /
- * 纸张**一起没了**，只在日志里留一条 warn。所以这里把「缺这个字段」单独识别出来补默认值，
- * 其余字段仍然必填（写错了就是坏文件，照样整份退回）。
+ * 【为什么不能直接让它按必填校验失败】`ratio` 与 `shortcuts` 都是后加的。旧版写下的
+ * settings.json 里没有它们，而校验是「一个字段不合格就整份退回默认值」——那等于：升级
+ * 一次，用户改过的文档名 / 外观 / 纸张**一起没了**，只在日志里留一条 warn。
  *
- * 判据是「键不存在」而不是「值是 undefined」：后者在 JSON 里从来写不出来，
- * 而前者正是旧版本留下的形状。
+ * 【判据是「键不存在」而不是「值是 undefined」】后者在 JSON 里从来写不出来，而前者正是
+ * 旧版本留下的形状。值不合法仍然整份退回——那是坏文件，不是旧文件。
+ *
+ * 【为什么是「缺哪个键补哪个」而不是给每个字段配一个专用函数】`ratio` 那次就是专用函数。
+ * 再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个；写成一张表就没有
+ * 这个「记得」了。
  */
-function withRatioFilled(v: unknown): unknown {
+const FILLED_DEFAULTS: Readonly<Record<string, unknown>> = {
+  ratio: () => defaultSettings().ratio,
+  shortcuts: () => ({})
+}
+
+function withDefaultsFilled(v: unknown): unknown {
   if (typeof v !== 'object' || v === null) return v
-  if ('ratio' in v) return v
-  return { ...(v as Record<string, unknown>), ratio: defaultSettings().ratio }
+  const record = v as Record<string, unknown>
+  const filled: Record<string, unknown> = { ...record }
+  for (const [key, make] of Object.entries(FILLED_DEFAULTS)) {
+    if (!(key in record)) filled[key] = typeof make === 'function' ? make() : make
+  }
+  return filled
 }
 
 function isAppSettings(v: unknown): v is AppSettings {
@@ -186,8 +220,8 @@ function readSettingsFile(path: string): AppSettings {
   try {
     if (!existsSync(path)) return defaultSettings()
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-    // 先给旧版记录补上后来才加的字段，再按必填校验（见 withRatioFilled 的说明）
-    const filled = withRatioFilled(parsed)
+    // 先给旧版记录补上后来才加的字段，再按必填校验（见 withDefaultsFilled 的说明）
+    const filled = withDefaultsFilled(parsed)
     if (!isAppSettings(filled)) {
       console.warn(
         `[wt] 设置文件结构不合法（${settingsProblem(filled) ?? '未知'}），按默认值处理：`,
