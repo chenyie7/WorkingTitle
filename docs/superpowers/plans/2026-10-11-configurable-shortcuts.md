@@ -385,15 +385,17 @@ function hasModifier(chord: KeyChord): boolean {
 }
 
 /**
- * macOS 上不给用的键：这些是 `menu.ts` 里 role 正在用的，抢过来会废掉退出 / 关闭窗口 /
- * 复制粘贴。
+ * macOS 上不给用的键：本应用菜单里 role 正在用的那些，加上系统的「退出登录」。
+ * 抢过来会废掉退出 / 关闭窗口 / 复制粘贴，或顶掉系统自己的键。
  *
  * 【录制时和读盘时都要过】只在录制端拦等于没拦——手工改过 settings.json 的人同样塞得进来。
  * 这也是 `resolveShortcuts` 要逐条走校验、而不是直接信磁盘上那个串的原因。
  */
 const RESERVED: Readonly<Record<PlatformKind, readonly string[]>> = {
   darwin: [
+    // ⇧⌘Q 是系统的「退出登录」：它和 ⌘Q 是同一类，抢过来会在本应用获得焦点时把它顶掉
     'Meta+KeyQ',
+    'Meta+Shift+KeyQ',
     'Meta+KeyW',
     'Meta+KeyM',
     'Meta+KeyH',
