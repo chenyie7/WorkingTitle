@@ -56,7 +56,7 @@ function makeSession(cursor: number): PersistedSession {
 // 系统对每个文件都报 0，于是【正确的实现】反而会红。Task 14 要做 Windows 验证，一条在正确
 // 构建上失败的用例比没有用例更糟——会让人去找并不存在的缺陷。该平台上的性质由
 // guardA.test.ts 覆盖，它不依赖 inode。
-describe('session.json 是「整份换掉」而不是「就地截断」', () => {
+describe('会话文件是「整份换掉」而不是「就地截断」', () => {
   // 柯里化形式是唯一可用的形状：写成 it.skipIf(cond, name, fn) 时 Vitest 5 不报错，
   // 只是**一个用例都没注册**（整份文件报 "No test found in suite"），于是「加了守卫」
   // 会变成「守卫不在」。实测踩过。
