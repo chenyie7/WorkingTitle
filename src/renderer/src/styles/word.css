@@ -20,6 +20,15 @@
   --wt-accent: #185abd;
   --wt-titlebar: #185abd;
 
+  /* 实心主按钮（对话框里的「保存」）的底与悬停。
+     **刻意不复用 `--wt-blue`**：深色下那个被【提亮】成 #6cb0ff，那是给深底上的文字/图标用的
+     强调色，拿它当实心按钮的底就是白字压浅蓝（对比度约 2:1，基本读不出来），而且它的
+     「hover」在深色下更浅（`--wt-blue-dark` = #a5cfff），越划过越糊。
+     与 `--wt-titlebar` / `--wt-statusbar` 是同一个理由：**一个值要在两种主题下扮演两种角色，
+     就必须拆成两个变量**。 */
+  --wt-primary: #185abd;
+  --wt-primary-hover: #0f4a9e;
+
   /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
   --wt-chrome: #f7f7f8;
   --wt-chrome-border: #e3e3e5;
@@ -233,6 +242,11 @@ body {
   --wt-blue-dark: #a5cfff;
   --wt-blue-light: #2b2b34;
   --wt-accent: #6cb0ff;
+
+  /* 主按钮**不跟着提亮**：它是「深底 + 白字」的实心块，要压得住面板（#26262c）而不是浮在上面。
+     取比浅色主题那一版稍亮一点的蓝，白字对比度约 5:1；悬停再亮一档（深色下悬停变亮才像话）。 */
+  --wt-primary: #2b6fc4;
+  --wt-primary-hover: #3a80d8;
 
   /* 标题条与状态条在真 Word 的深色模式里是深灰，不是品牌蓝——两者在浅色下同值，
      所以上面 :root 里拆成了两个变量。 */
