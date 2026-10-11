@@ -566,6 +566,27 @@ function writeSessionFile(file: string, s: PersistedSession): void {
 Run: `pnpm vitest run tests/unit/sessionStore.test.ts tests/unit/guardA.test.ts tests/unit/guardB.test.ts`
 Expected: 全 PASS，exit 0。
 
+> **本步骤还要额外改 `src/main/ipc.ts` 一行，否则 `pnpm typecheck` 到这里就是红的。**（这一条是计划初稿的疏漏，实施时实测踩到。）
+>
+> `readSession` 的唯一生产调用点是 `ipc.ts` 里那条 `wt:load-session` handler，而计划把它的修改排在了 Task 6。签名一改，`tsc` 当场报：
+> `src/main/ipc.ts(48,76): error TS2554: Expected 1 arguments, but got 0`。
+>
+> 而且**不只是编译问题**：`vite build` 不做类型检查，产物照样打得出来，而运行期 handler 收不到参数会让 `sessionFileName(undefined)` 抛在 `readSessionFile` 的 try **之外**，于是渲染层这次 `invoke` 直接 reject——「会话恢复」这条链在 Task 3~6 之间是断的，而**任何门禁都抓不到它**（单测不碰 handler，e2e 要 Task 8 才跑）。
+>
+> 所以在 `ipc.ts` 里放一条过渡实现（Task 6 会把 `sourcePath` 改成必填、并删掉这个分支）：
+>
+> ```ts
+>   ipcMain.handle(CH.loadSession, (_e, sourcePath: unknown): PersistedSession | null => {
+>     // Task 6 之前渲染层还不传 sourcePath。按书取进度需要它，缺了就当「无记录」——
+>     // 比让 sessionFileName(undefined) 抛出去、把整条恢复链路打断要好。Task 6 会把
+>     // 这条契约连同 preload 一起改成必填。
+>     return typeof sourcePath === 'string' ? getStore().readSession(sourcePath) : null
+>   })
+> ```
+>
+> 代价（有意接受）：Task 3~6 之间重启会静默落到空状态；磁盘上的进度不受影响，Task 6/7 之后恢复。
+> 提交时把 `src/main/ipc.ts` 一并 `git add`。
+
 - [ ] **Step 7: 提交**
 
 ```bash
@@ -909,6 +930,10 @@ Expected: FAIL —— 实际对象里多了两个键。
   ipcMain.handle(CH.loadSession, (_e, sourcePath: string): PersistedSession | null =>
     getStore().readSession(sourcePath)
   )
+```
+
+（这一条**替换掉 Task 3 Step 6 里放的那条过渡实现**——那条对缺参返回 null 的分支到此结束，
+`sourcePath` 从本任务起是必填契约。别把两者留成两份。）
 
   ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
     getStore().writeSession(session)
