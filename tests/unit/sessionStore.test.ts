@@ -904,6 +904,27 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
   })
 
+  it('shortcuts 是 null 时整份退回默认值，且警告点出是哪个字段', () => {
+    // 【为什么要单列一条】`sc === null` 是**独立于** `typeof sc !== 'object'` 的一道守卫——
+    // `typeof null` 恰好是 'object'。少了它，null 会走进 `Object.entries(null)` 抛错，
+    // 被 readSettingsFile 的 catch 接住，返回值与干净拒绝**一模一样**（两边都是
+    // defaultSettings()），差别只在那行警告：干净拒绝报 `shortcuts 不是对象`，
+    // 抛异常报 `读取设置失败`。所以断言里必须带上 warn，否则这条用例没有区分能力。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: null }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('shortcuts 不是对象')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('shortcuts 里某一条的值不是字符串时整份退回默认值，且警告点出是哪一条', () => {
     // 【断言里为什么必须带上那行 warn】只看返回值的话这条用例没有区分能力：把
     // `typeof spec !== 'string'` 这道守卫删掉，非字符串会一路走进 `shortcutProblem`、
@@ -921,6 +942,28 @@ describe('shortcuts 字段的向后兼容', () => {
       expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
       expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
         'shortcuts.import 不是字符串'
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('白名单外的键位整份退回默认值，且警告点出原因', () => {
+    // 【为什么这条钉的是枚举里 `unsupported-key` 那半边】`problem === 'no-modifier'` 由
+    // 「没带修饰键」那条用例覆盖，而 `'unsupported-key'` 此前零覆盖：把它从枚举里删掉，
+    // 白名单外的键位会被放行，`resolveShortcuts` 到 core 那层照样退回默认值，于是最终
+    // 结果表**还是对的**——只有这行 warn 能证明它在 sessionStore 这一层就被拦下了。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { import: 'Meta+IntlRo' } }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'shortcuts.import 不是合法的快捷键（unsupported-key）'
       )
     } finally {
       spy.mockRestore()

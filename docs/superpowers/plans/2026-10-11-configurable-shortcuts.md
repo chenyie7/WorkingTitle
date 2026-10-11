@@ -688,6 +688,27 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
   })
 
+  it('shortcuts 是 null 时整份退回默认值，且警告点出是哪个字段', () => {
+    // 【为什么要单列一条】`sc === null` 是**独立于** `typeof sc !== 'object'` 的一道守卫——
+    // `typeof null` 恰好是 'object'。少了它，null 会走进 `Object.entries(null)` 抛错，
+    // 被 readSettingsFile 的 catch 接住，返回值与干净拒绝**一模一样**（两边都是
+    // defaultSettings()），差别只在那行警告：干净拒绝报 `shortcuts 不是对象`，
+    // 抛异常报 `读取设置失败`。所以断言里必须带上 warn，否则这条用例没有区分能力。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: null }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('shortcuts 不是对象')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('shortcuts 里某一条的值不是字符串时整份退回默认值，且警告点出是哪一条', () => {
     // 【断言里为什么必须带上那行 warn】只看返回值的话这条用例没有区分能力：把
     // `typeof spec !== 'string'` 这道守卫删掉，非字符串会一路走进 `shortcutProblem`、
@@ -705,6 +726,28 @@ describe('shortcuts 字段的向后兼容', () => {
       expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
       expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
         'shortcuts.import 不是字符串'
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('白名单外的键位整份退回默认值，且警告点出原因', () => {
+    // 【为什么这条钉的是枚举里 `unsupported-key` 那半边】`problem === 'no-modifier'` 由
+    // 「没带修饰键」那条用例覆盖，而 `'unsupported-key'` 此前零覆盖：把它从枚举里删掉，
+    // 白名单外的键位会被放行，`resolveShortcuts` 到 core 那层照样退回默认值，于是最终
+    // 结果表**还是对的**——只有这行 warn 能证明它在 sessionStore 这一层就被拦下了。
+    const dir = mkdtempSync(join(tmpdir(), 'wt-shortcuts-'))
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ ...defaultSettings(), shortcuts: { import: 'Meta+IntlRo' } }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(createSessionStore(dir).readSettings()).toEqual(defaultSettings())
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'shortcuts.import 不是合法的快捷键（unsupported-key）'
       )
     } finally {
       spy.mockRestore()
@@ -804,13 +847,23 @@ import type { ShortcutId } from './shortcuts'
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
    * `defaultSettings()` 与 `createSessionStore()` 都得加一个平台参数——而它们在测试里
-   * 有六十多处调用点（写这句时实测 63 = `tests/` 下这两个名字的出现次数；这个数随测试
-   * 增长只多不少，别当成会停住的量）。稀疏之后这两个函数的签名一个都不用动，`core` 也不必
-   * 去读 `process`（那是 node 的东西，而 core 要能被渲染进程共用）。
+   * 有六十多处调用点（这个数随测试增长只多不少，别当成会停住的量）。稀疏之后这两个函数的
+   * 签名一个都不用动，`core` 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染
+   * 进程共用）。
    *
-   * 【为什么值是规范串而不是 accelerator】`CmdOrCtrl+O` 把两个平台合并成一个记号，恰好
-   * 表达不了「各平台不一样」。规范串（`Meta+KeyO` / `Ctrl+KeyO`）把 Meta 与 Ctrl 分开存，
-   * 只在喂菜单那一刻才转成 accelerator。
+   * 【为什么值是规范串而不是 accelerator】得把话说准：**单看现在这三条默认值，
+   * `CmdOrCtrl` 是够用的**——三条都只是 Meta↔Ctrl 互换（核 `SHORTCUTS` 即知），所以
+   * 「合并成一个记号恰好表达不了各平台不一样」这句在该表上并不成立。扣住这个选择的是
+   * 另外两件事：
+   *
+   * 1. core 这一整套（`KeyChord` / `fromChord` / `parseShortcut` / `RESERVED` /
+   *    `formatShortcut`）吃的全是规范串，而 `KEY_CODES` 是**单向**的
+   *    `e.code → accelerator` 词表（全文件只有 `toAccelerator` 用它）——改存 accelerator
+   *    就得再造一张反向词表，否则校验与显示都得重写；
+   * 2. `ShortcutDef.defaults` 的形状是 `{ darwin, other }`，它容得下「两个平台根本不是
+   *    同一个键」这种默认值，而 `CmdOrCtrl` 只表达得了「同一个键换修饰键」。
+   *
+   * 于是「只在喂菜单那一刻才转成 accelerator」是这条链上唯一的单向转换点。
    */
   shortcuts: Partial<Record<ShortcutId, string>>
 ```
@@ -853,10 +906,10 @@ import type { ShortcutId } from './shortcuts'
  * 再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个；写成一张表就没有
  * 这个「记得」了。
  */
-const FILLED_DEFAULTS: Readonly<Record<string, () => unknown>> = {
+const FILLED_DEFAULTS = {
   ratio: () => defaultSettings().ratio,
-  shortcuts: () => ({})
-}
+  shortcuts: () => defaultSettings().shortcuts
+} satisfies Readonly<Partial<Record<keyof AppSettings, () => unknown>>>
 
 function withDefaultsFilled(v: unknown): unknown {
   if (typeof v !== 'object' || v === null) return v
@@ -891,7 +944,7 @@ function withDefaultsFilled(v: unknown): unknown {
     // 一样整份退回；保留键是**平台相关**的，而这一层拿不到平台，只能交给 core 的
     // `resolveShortcuts` 按平台逐条退回默认值。
     //
-    // 【那个 'darwin' 是惰性的，别试图"修正"它】`shortcutProblem` 的 `no-modifier` /
+    // 【那个 'darwin' 是惰性的，别试图「修正」它】`shortcutProblem` 的 `no-modifier` /
     // `unsupported-key` 两个出口在**查保留清单之前**就返回了，与 kind 无关；所以这里传
     // 什么都一样，真正吃重的是下面这个枚举。写成枚举而不是 `!== 'reserved'`，就是为了
     // 让这件事在调用点上自明。
@@ -937,7 +990,7 @@ function isShortcutId(id: string): id is ShortcutId {
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `pnpm vitest run tests/unit/sessionStore.test.ts`
-Expected: PASS，含新加的 7 条
+Expected: PASS，含本节新加的全部用例（**别在这里写条数**——那个 describe 会随评审继续加）
 
 - [ ] **Step 7: 跑全量门禁**
 
