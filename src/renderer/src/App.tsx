@@ -94,8 +94,10 @@ export default function App() {
    * 依赖数组、以及 ref 的字面量。加第五个设置项时漏改依赖数组＝「只在关窗时落盘」，
    * 漏改 ref 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
    */
+  // 【为什么这里先给空表】`shortcuts` 是必填字段，而稀疏表的 `{}` 就是「全默认」——
+  // 行为与本次改动之前完全一致。真正的用户改动会在后续任务里接进来（届时这里换成状态）。
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio }),
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts: {} }),
     [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio]
   )
   settingsRef.current = settingsLoaded ? settings : null
