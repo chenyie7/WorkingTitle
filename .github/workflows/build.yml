@@ -26,9 +26,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # 【这里**不能**再写 `with: version:`】package.json 里有 `packageManager: pnpm@11.21.0`，
+      # action 会自己读它。两边都指定的话 pnpm/action-setup@v4 直接报错拒绝运行：
+      #   Error: Multiple versions of pnpm specified:
+      #     - version 11 in the GitHub Action config with the key "version"
+      #     - version pnpm@11.21.0 in the package.json with the key "packageManager"
+      # 这个错发生在**第一步**，后面全部跳过，两个平台的作业都在 26 秒内失败。
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
