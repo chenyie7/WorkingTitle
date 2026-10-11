@@ -1,9 +1,10 @@
 import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
+import { platformKind, resolveShortcuts } from '../core/shortcuts'
 import { registerIpc } from './ipc'
 import { buildAppMenu } from './menu'
-import { resetStore } from './session'
+import { getStore, resetStore } from './session'
 import { applyUserDataOverride, resolveInitialNovelPath } from './startup'
 import { CH } from './channels'
 
@@ -147,11 +148,22 @@ function isRegularFile(p: string): boolean {
 app.whenReady().then(() => {
   initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
 
+  /**
+   * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
+   * 「用户按下去真正生效的键」不会分岔的唯一保证。
+   *
+   * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
+   * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
+   */
+  const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
+    resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+
   registerIpc({
     getWindow: () => win,
-    getInitialNovelPath: () => initialNovelPath
+    getInitialNovelPath: () => initialNovelPath,
+    rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
   })
-  buildAppMenu(() => win)
+  buildAppMenu(() => win, getShortcuts)
   win = createWindow()
 
   // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。

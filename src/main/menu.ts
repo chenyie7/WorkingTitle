@@ -1,10 +1,19 @@
 import { app, Menu, shell, type BrowserWindow } from 'electron'
 import { CH, type MenuCommand } from './ipc'
+import type { ResolvedShortcuts } from '../core/shortcuts'
+import { toAccelerator } from '../core/shortcuts'
 
 /**
  * 建原生应用菜单。**只有 macOS 会真的建出菜单**，见下面的注释。
+ *
+ * 【为什么快捷键表是**取**而不是**传**】菜单要在设置改动之后重建，而设置是渲染层改的。
+ * 传一个取值函数而不是一张表，调用方（`index.ts` 与 `ipc.ts`）就不必各自维护「当前是哪
+ * 一份」——它们只管在需要的时候重建一次。
  */
-export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
+export function buildAppMenu(
+  getWindow: () => BrowserWindow | null,
+  getShortcuts: () => ResolvedShortcuts
+): void {
   const send = (cmd: MenuCommand): void => {
     getWindow()?.webContents.send(CH.menuCommand, cmd)
   }
@@ -47,7 +56,12 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
       submenu: [
         {
           label: '导入小说…',
-          accelerator: 'CmdOrCtrl+O',
+          // 【为什么这里可能为空】非 darwin 根本走不到这一段（下面直接 return 了），而
+          // darwin 上 `shortcutProblem` 与白名单保证了 accelerator 一定转得出来。取空是
+          // 防御性的：真为空时菜单项只是不显示快捷键，功能照旧。
+          ...(toAccelerator(getShortcuts().import) === null
+            ? {}
+            : { accelerator: toAccelerator(getShortcuts().import) as string }),
           click: () => send('import-novel')
         },
         {
