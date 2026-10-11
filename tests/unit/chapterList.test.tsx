@@ -73,26 +73,30 @@ describe('ChapterList', () => {
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
   })
 
-  it('⌘/Ctrl + Shift + H 与按钮等效', () => {
+  // 【原来的「⌘/Ctrl + Shift + H 与按钮等效」与「少了 Shift 或修饰键时不触发」两条删掉了】
+  // 它们断言的是本组件自己那个 window keydown 监听，而那条监听已经归全局分发器
+  // （见 ChapterList.tsx 里那段注释）。留在原处会全红；而按组件改写成「空转的绿」更糟——
+  // 树里没有分发器，无论那条监听在不在，`collapsed` 都不会翻。分发器那一侧的等价用例在
+  // `tests/unit/shortcutDispatch.test.ts`，App 那一侧的接线在 Task 7。
+
+  it('title 里显示的是传进来的快捷键，不是写死的 ⌘/Ctrl + Shift + H', () => {
+    // 传一个**两条默认值都推不出来**的串：jsdom 里 `window.api.platform` 是 darwin，
+    // 若拿 '⌘⇧H'（该平台的默认值）当期望值，一个忽略 prop、自己推默认值的实现同样能过。
     const novel = makeNovel(5)
-    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    render(
+      <ChapterList
+        novel={novel}
+        activeChapter={0}
+        chapterPos={[]}
+        onJump={() => {}}
+        sidebarShortcut="⌃⌥J"
+      />
+    )
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('title')).toContain('⌃⌥J')
 
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
-    expect(screen.queryByTestId('chapter-list')).toBeNull()
-
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
-    expect(screen.getByTestId('chapter-list')).toBeTruthy()
-  })
-
-  it('少了 Shift 或修饰键时不触发（别把正常打字吃掉）', () => {
-    const novel = makeNovel(5)
-    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
-
-    fireEvent.keyDown(window, { key: 'h', code: 'KeyH' })
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', shiftKey: true })
-    fireEvent.keyDown(window, { key: 'h', code: 'KeyH', metaKey: true })
-    fireEvent.keyDown(window, { key: 'K', code: 'KeyK', metaKey: true, shiftKey: true })
-    expect(screen.getByText('大书')).toBeTruthy()
+    // 收起之后换成细缝那个按钮——它的 title 同样得跟着 prop 走（两处原本各写死了一份）
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('title')).toContain('⌃⌥J')
   })
 
   it('章节很多时只渲染可视区附近的行（虚拟滚动）', () => {

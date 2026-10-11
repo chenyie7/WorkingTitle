@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Novel } from '../../../core/types'
+import { defaultShortcutText } from '../state/shortcuts'
 import { IconCollapse, IconExpand } from './icons'
 
 export const ROW_HEIGHT = 32
@@ -12,18 +13,32 @@ export interface ChapterListProps {
   // 别在组件里写回它（写了在严格模式下抛 TypeError，非严格模式下被静默丢弃）。
   chapterPos: readonly number[]
   onJump: (index: number) => void
+  /**
+   * 章节栏快捷键的**显示文本**（已按平台格式化）。两个按钮的 title 用它。
+   *
+   * 【为什么是可选带默认值】真值住在 `App` 里（只有它手里有按平台补齐过的快捷键表），
+   * 不传也得显示成**该平台的默认值**，而不是写死一句「⌘/Ctrl + Shift + H」。
+   */
+  sidebarShortcut?: string
 }
 
 export function ChapterList({
   novel,
   activeChapter,
   chapterPos,
-  onJump
+  onJump,
+  sidebarShortcut = defaultShortcutText('toggle-sidebar')
 }: ChapterListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /** 整条左栏（书名信息 + 章节列表）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
+  /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么状态只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的字段——
+   * 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
+   * 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
+   */
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
@@ -52,26 +67,14 @@ export function ChapterList({
 
   // 左侧栏的显示/隐藏快捷键：⌘/Ctrl + Shift + H
   //
-  // 【为什么挂在 window 上还能收到】InputCapture 在「纯按键」模式下对**带修饰键的组合键**
-  // 是直接放行的（它的 handleKeyDown 里 `if (e.ctrlKey || e.metaKey || e.altKey) return`），
-  // 输入法模式下更是完全不拦截 keydown——所以这个组合不会被抽字逻辑吃掉。
+  // 【本组件为什么不再自己监听】那条 keydown 收进了**全局分发器**
+  // （`renderer/src/state/shortcuts.ts` 的 `useShortcutDispatcher`）：它按注册表 + 当前设置
+  // 建出「规范串 → 动作」表，命中就把动作派给调用方。
   //
-  // 【为什么用 e.code 而不是 e.key】按住 Shift 时 `e.key` 是大写 'H'，而输入法或非 QWERTY
-  // 布局还可能给出别的字符；`e.code === 'KeyH'` 是按物理按键位置判定的，不受这两件事影响。
-  //
-  // 【为什么状态只在内存里】用户没要求持久化，而且它现在不属于 PersistedSession 的字段——
-  // 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
-  // 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return
-      if (e.code !== 'KeyH') return
-      e.preventDefault()
-      setCollapsed((v) => !v)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // 组件自己监听有一条硬伤：**键位现在是可配置的**，改了键之后组件手里那套常量就过期了
+  // （而且两边都监听会各执行一次——`preventDefault` 拦不住同一事件上的其它监听器）。
+  // 分发器那侧的细节（为什么挂在 window 上还收得到、为什么读 e.code 而不是 e.key）都写在
+  // 那个模块里，不在这里重一份。
 
   const chapters = novel?.chapters ?? []
   const total = chapters.length
@@ -92,7 +95,7 @@ export function ChapterList({
         data-testid="sidebar-toggle"
         aria-expanded={false}
         aria-label="显示章节栏"
-        title="显示章节栏（⌘/Ctrl + Shift + H）"
+        title={`显示章节栏（${sidebarShortcut}）`}
         onClick={() => setCollapsed(false)}
       >
         <IconExpand className="wt-sidebar__rail-icon" />
@@ -109,7 +112,7 @@ export function ChapterList({
           data-testid="sidebar-toggle"
           aria-expanded
           aria-label="隐藏章节栏"
-          title="隐藏章节栏（⌘/Ctrl + Shift + H）"
+          title={`隐藏章节栏（${sidebarShortcut}）`}
           onClick={() => setCollapsed(true)}
         >
           <IconCollapse className="wt-sidebar__toggle-icon" />

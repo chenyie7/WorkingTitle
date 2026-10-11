@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
 import { SettingsDialog } from './SettingsDialog'
 import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
@@ -1229,10 +1230,13 @@ export function Ribbon({
   themeSource,
   onThemeSourceChange,
   novelOpen,
+  settingsOpen,
+  onSettingsOpenChange,
   shortcuts = DEFAULT_SHORTCUTS,
   platform = hostPlatform(),
   onShortcutsChange = ignoreShortcutsChange,
-  onRecordingChange = ignoreRecordingChange
+  onRecordingChange = ignoreRecordingChange,
+  settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -1243,6 +1247,13 @@ export function Ribbon({
   /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
   novelOpen: boolean
   /**
+   * 设置对话框开不开。**从 Task 6 起由调用方持有**：原先这个状态住在本组件内部，而
+   * 「按 ⌘/Ctrl + , 打开设置」那条监听已经删掉了（它归全局分发器），分发器长在调用方
+   * 那一层、碰不到组件内部的状态——所以这个状态必须提上去。
+   */
+  settingsOpen: boolean
+  onSettingsOpenChange: (open: boolean) => void
+  /**
    * 下面这四个**暂时是可选**的：真值住在 `App` 里（稀疏表、平台原值、录制态），而 App 的
    * 接线还没做。给默认值是为了让还没接上这一层的调用方（`App` 与既有测试）不必为此改动，
    * 同时设置里的快捷键那一组仍然显示成该平台的默认值而不是一片空白。
@@ -1251,25 +1262,18 @@ export function Ribbon({
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   onRecordingChange?: (recording: boolean) => void
+  /**
+   * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
+   * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
+   * 调用方把那一份喂进来。默认值里引用的 `platform` 是本参数表**前面**那个形参，顺序别调。
+   */
+  settingsShortcut?: string
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // 设置对话框的快捷键：⌘/Ctrl + ,（macOS 上「设置」的惯例键）
-  //
-  // 【为什么用 e.code 而不是 e.key】与左侧栏的 ⌘/Ctrl+Shift+H 同理：`e.key` 会随修饰键
-  // 与键盘布局变（按住 Shift 时 ',', 在非 QWERTY 布局下还可能是别的字符），而
-  // `e.code === 'Comma'` 按物理按键位置判定，不受这两件事影响。
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      if (e.code !== 'Comma') return
-      e.preventDefault()
-      setSettingsOpen(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // 设置对话框的快捷键（⌘/Ctrl + ,）**不在这里监听**：它收进了全局分发器，见
+  // `renderer/src/state/shortcuts.ts`。分发器命中之后把「打开设置」这个动作派给调用方，
+  // 再由调用方翻 `settingsOpen`——所以这个状态已经不在本组件里了。
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
@@ -1300,10 +1304,14 @@ export function Ribbon({
           </button>
         ))}
       </div>
-      <Toolbar groups={TABS[tab]} onOpenSettings={() => setSettingsOpen(true)} />
+      <Toolbar
+        groups={TABS[tab]}
+        onOpenSettings={() => onSettingsOpenChange(true)}
+        settingsShortcut={settingsShortcut}
+      />
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => onSettingsOpenChange(false)}
         docTitle={docTitle}
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}

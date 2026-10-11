@@ -245,10 +245,16 @@ function SplitButton({
 
 export function Toolbar({
   groups,
-  onOpenSettings
+  onOpenSettings,
+  settingsShortcut
 }: {
   groups: ToolbarGroup[]
   onOpenSettings: () => void
+  /**
+   * 「设置」按钮的 title 里显示的快捷键。**已按平台格式化**（`formatShortcut` 的成品），
+   * 因为「打开设置」那条快捷键可配置，写死一句「⌘/Ctrl + ,」在用户改过键之后就是错的。
+   */
+  settingsShortcut: string
 }) {
   const { toggles, toggle, notify } = useToolbar()
 
@@ -264,7 +270,7 @@ export function Toolbar({
           type="button"
           className={`wt-btn${item.large ? ' wt-btn--large' : ''}`}
           data-testid="btn-settings"
-          title="设置 (⌘/Ctrl + ,)"
+          title={`设置 (${settingsShortcut})`}
           onClick={onOpenSettings}
         >
           <IconSettings className="wt-btn__icon" />

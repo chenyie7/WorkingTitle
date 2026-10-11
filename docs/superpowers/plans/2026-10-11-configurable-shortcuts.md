@@ -1289,6 +1289,8 @@ Expected: FAIL —— `Failed to resolve import "../../src/renderer/src/state/sh
 import { useEffect, useRef } from 'react'
 import {
   SHORTCUTS,
+  defaultShortcut,
+  formatShortcut,
   fromChord,
   normalizeSpec,
   platformKind,
@@ -1323,6 +1325,36 @@ export type ShortcutActions = Record<ShortcutId, () => void>
 export function toChord(e: KeyboardEvent): KeyChord | null {
   if (e.isComposing) return null
   return { code: e.code, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey }
+}
+
+/**
+ * 宿主平台。**现取而不是在模块顶层缓存**：与 `Ribbon.tsx` 的 `hostPlatform` 同一个理由
+ * ——缓存等于把「preload 一定在模块加载前注入」写死进加载顺序，一旦不成立就是永久错的。
+ * 缺桥时按 `'other'` 走：宁可显示成 Windows 那一套，也不要因为一个读不到的值把界面炸掉。
+ *
+ * 【为什么这里也有一份】本模块（渲染层的快捷键模块）与 `Ribbon` 都要读它，而两者谁都不是
+ * 对方的祖先。写得只有两行，比为此把它们拧成依赖关系划算。
+ */
+function hostPlatform(): string {
+  const host = (window as unknown as { api?: { platform?: string } }).api
+  return host?.platform ?? 'other'
+}
+
+/**
+ * 某条快捷键**在宿主平台上的默认值**，已经格式化成可以直接显示的文本。
+ *
+ * 【为什么需要它】`Page` / `ChapterList` 这类组件收到的是**成品文本**（真值住在 `App` 里，
+ * 而 App 的接线要晚一步），在那之前它们得显示成该平台的默认值——而组件自己判一遍平台就等于
+ * 把这个判断复制成若干份，还容易与 `formatShortcut` 的口径走岔（同一份规范串在两个平台上
+ * 的含义不同：`Meta+KeyO` 在 macOS 是 ⌘O、在 Windows 是 Win+O）。
+ *
+ * 【为什么不能写死一个「Ctrl+O」兜底】那正是本功能要消灭的东西：做这个功能之前，非 darwin
+ * 上 `menu.ts` 直接 `setApplicationMenu(null)`、渲染层也没有任何 O 的监听，「或按 Ctrl+O」
+ * 在那里是一句**做不到的指引**；macOS 上键也写错了（应是 ⌘O）。
+ */
+export function defaultShortcutText(id: ShortcutId): string {
+  const kind = platformKind(hostPlatform())
+  return formatShortcut(defaultShortcut(id, kind), kind)
 }
 
 export interface UseShortcutDispatcherOptions {

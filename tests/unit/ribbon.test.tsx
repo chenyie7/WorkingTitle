@@ -1,12 +1,22 @@
 import { describe, it, expect } from 'vitest'
+import { useState } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Ribbon, RIBBON_TABS } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 
 function setup(): void {
-  render(
-    <ToolbarProvider>
+  /**
+   * 壳自己持 `settingsOpen`：`Ribbon` 从 Task 6 起是**受控**的（原先这个状态住在它里面，
+   * 而「按 ⌘/Ctrl + , 打开设置」那条监听已经删掉、归全局分发器了），而下面那条
+   * 「点设置按钮对话框才出现」的用例断言的正是受控行为——状态得有人拿着。
+   *
+   * 四个快捷键 prop 这里**不用传**（它们是可选带默认值的）；`settingsShortcut` 也不用
+   * （它的默认值从注册表推）。
+   */
+  function Harness() {
+    const [settingsOpen, setSettingsOpen] = useState(false)
+    return (
       <Ribbon
         docTitle="文档1"
         onDocTitleChange={() => {}}
@@ -15,7 +25,14 @@ function setup(): void {
         themeSource="system"
         onThemeSourceChange={() => {}}
         novelOpen={false}
+        settingsOpen={settingsOpen}
+        onSettingsOpenChange={setSettingsOpen}
       />
+    )
+  }
+  render(
+    <ToolbarProvider>
+      <Harness />
       <Toast />
     </ToolbarProvider>
   )

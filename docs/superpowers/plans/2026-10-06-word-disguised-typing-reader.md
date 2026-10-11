@@ -7288,10 +7288,16 @@ function SplitButton({
 
 export function Toolbar({
   groups,
-  onOpenSettings
+  onOpenSettings,
+  settingsShortcut
 }: {
   groups: ToolbarGroup[]
   onOpenSettings: () => void
+  /**
+   * 「设置」按钮的 title 里显示的快捷键。**已按平台格式化**（`formatShortcut` 的成品），
+   * 因为「打开设置」那条快捷键可配置，写死一句「⌘/Ctrl + ,」在用户改过键之后就是错的。
+   */
+  settingsShortcut: string
 }) {
   const { toggles, toggle, notify } = useToolbar()
 
@@ -7307,7 +7313,7 @@ export function Toolbar({
           type="button"
           className={`wt-btn${item.large ? ' wt-btn--large' : ''}`}
           data-testid="btn-settings"
-          title="设置 (⌘/Ctrl + ,)"
+          title={`设置 (${settingsShortcut})`}
           onClick={onOpenSettings}
         >
           <IconSettings className="wt-btn__icon" />
@@ -7388,7 +7394,8 @@ export function Toolbar({
 - [ ] **Step 4: 写 `src/renderer/src/components/Ribbon.tsx`**
 
 ```tsx
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
 import { SettingsDialog } from './SettingsDialog'
 import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
@@ -8619,10 +8626,13 @@ export function Ribbon({
   themeSource,
   onThemeSourceChange,
   novelOpen,
+  settingsOpen,
+  onSettingsOpenChange,
   shortcuts = DEFAULT_SHORTCUTS,
   platform = hostPlatform(),
   onShortcutsChange = ignoreShortcutsChange,
-  onRecordingChange = ignoreRecordingChange
+  onRecordingChange = ignoreRecordingChange,
+  settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -8633,6 +8643,13 @@ export function Ribbon({
   /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
   novelOpen: boolean
   /**
+   * 设置对话框开不开。**从 Task 6 起由调用方持有**：原先这个状态住在本组件内部，而
+   * 「按 ⌘/Ctrl + , 打开设置」那条监听已经删掉了（它归全局分发器），分发器长在调用方
+   * 那一层、碰不到组件内部的状态——所以这个状态必须提上去。
+   */
+  settingsOpen: boolean
+  onSettingsOpenChange: (open: boolean) => void
+  /**
    * 下面这四个**暂时是可选**的：真值住在 `App` 里（稀疏表、平台原值、录制态），而 App 的
    * 接线还没做。给默认值是为了让还没接上这一层的调用方（`App` 与既有测试）不必为此改动，
    * 同时设置里的快捷键那一组仍然显示成该平台的默认值而不是一片空白。
@@ -8641,25 +8658,18 @@ export function Ribbon({
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   onRecordingChange?: (recording: boolean) => void
+  /**
+   * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
+   * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
+   * 调用方把那一份喂进来。默认值里引用的 `platform` 是本参数表**前面**那个形参，顺序别调。
+   */
+  settingsShortcut?: string
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // 设置对话框的快捷键：⌘/Ctrl + ,（macOS 上「设置」的惯例键）
-  //
-  // 【为什么用 e.code 而不是 e.key】与左侧栏的 ⌘/Ctrl+Shift+H 同理：`e.key` 会随修饰键
-  // 与键盘布局变（按住 Shift 时 ',', 在非 QWERTY 布局下还可能是别的字符），而
-  // `e.code === 'Comma'` 按物理按键位置判定，不受这两件事影响。
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      if (e.code !== 'Comma') return
-      e.preventDefault()
-      setSettingsOpen(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // 设置对话框的快捷键（⌘/Ctrl + ,）**不在这里监听**：它收进了全局分发器，见
+  // `renderer/src/state/shortcuts.ts`。分发器命中之后把「打开设置」这个动作派给调用方，
+  // 再由调用方翻 `settingsOpen`——所以这个状态已经不在本组件里了。
 
   return (
     <div className="wt-ribbon" data-testid="ribbon">
@@ -8690,10 +8700,14 @@ export function Ribbon({
           </button>
         ))}
       </div>
-      <Toolbar groups={TABS[tab]} onOpenSettings={() => setSettingsOpen(true)} />
+      <Toolbar
+        groups={TABS[tab]}
+        onOpenSettings={() => onSettingsOpenChange(true)}
+        settingsShortcut={settingsShortcut}
+      />
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => onSettingsOpenChange(false)}
         docTitle={docTitle}
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
@@ -8715,14 +8729,24 @@ export function Ribbon({
 
 ```tsx
 import { describe, it, expect } from 'vitest'
+import { useState } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Ribbon, RIBBON_TABS } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
 
 function setup(): void {
-  render(
-    <ToolbarProvider>
+  /**
+   * 壳自己持 `settingsOpen`：`Ribbon` 从 Task 6 起是**受控**的（原先这个状态住在它里面，
+   * 而「按 ⌘/Ctrl + , 打开设置」那条监听已经删掉、归全局分发器了），而下面那条
+   * 「点设置按钮对话框才出现」的用例断言的正是受控行为——状态得有人拿着。
+   *
+   * 四个快捷键 prop 这里**不用传**（它们是可选带默认值的）；`settingsShortcut` 也不用
+   * （它的默认值从注册表推）。
+   */
+  function Harness() {
+    const [settingsOpen, setSettingsOpen] = useState(false)
+    return (
       <Ribbon
         docTitle="文档1"
         onDocTitleChange={() => {}}
@@ -8731,7 +8755,14 @@ function setup(): void {
         themeSource="system"
         onThemeSourceChange={() => {}}
         novelOpen={false}
+        settingsOpen={settingsOpen}
+        onSettingsOpenChange={setSettingsOpen}
       />
+    )
+  }
+  render(
+    <ToolbarProvider>
+      <Harness />
       <Toast />
     </ToolbarProvider>
   )
@@ -8909,6 +8940,7 @@ git commit -F /tmp/task8-msg.txt   # 切勿用内联 -m：ASCII 引号会静默�
 ```tsx
 import { useEffect, useRef, useState } from 'react'
 import type { Novel } from '../../../core/types'
+import { defaultShortcutText } from '../state/shortcuts'
 import { IconCollapse, IconExpand } from './icons'
 
 export const ROW_HEIGHT = 32
@@ -8921,18 +8953,32 @@ export interface ChapterListProps {
   // 别在组件里写回它（写了在严格模式下抛 TypeError，非严格模式下被静默丢弃）。
   chapterPos: readonly number[]
   onJump: (index: number) => void
+  /**
+   * 章节栏快捷键的**显示文本**（已按平台格式化）。两个按钮的 title 用它。
+   *
+   * 【为什么是可选带默认值】真值住在 `App` 里（只有它手里有按平台补齐过的快捷键表），
+   * 不传也得显示成**该平台的默认值**，而不是写死一句「⌘/Ctrl + Shift + H」。
+   */
+  sidebarShortcut?: string
 }
 
 export function ChapterList({
   novel,
   activeChapter,
   chapterPos,
-  onJump
+  onJump,
+  sidebarShortcut = defaultShortcutText('toggle-sidebar')
 }: ChapterListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /** 整条左栏（书名信息 + 章节列表）是否收起。刻意只放在内存里，见下面 effect 的注释。 */
+  /**
+   * 整条左栏（书名信息 + 章节列表）是否收起。
+   *
+   * 【为什么状态只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的字段——
+   * 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
+   * 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
+   */
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
@@ -8961,26 +9007,14 @@ export function ChapterList({
 
   // 左侧栏的显示/隐藏快捷键：⌘/Ctrl + Shift + H
   //
-  // 【为什么挂在 window 上还能收到】InputCapture 在「纯按键」模式下对**带修饰键的组合键**
-  // 是直接放行的（它的 handleKeyDown 里 `if (e.ctrlKey || e.metaKey || e.altKey) return`），
-  // 输入法模式下更是完全不拦截 keydown——所以这个组合不会被抽字逻辑吃掉。
+  // 【本组件为什么不再自己监听】那条 keydown 收进了**全局分发器**
+  // （`renderer/src/state/shortcuts.ts` 的 `useShortcutDispatcher`）：它按注册表 + 当前设置
+  // 建出「规范串 → 动作」表，命中就把动作派给调用方。
   //
-  // 【为什么用 e.code 而不是 e.key】按住 Shift 时 `e.key` 是大写 'H'，而输入法或非 QWERTY
-  // 布局还可能给出别的字符；`e.code === 'KeyH'` 是按物理按键位置判定的，不受这两件事影响。
-  //
-  // 【为什么状态只在内存里】用户没要求持久化，而且它现在不属于 PersistedSession 的字段——
-  // 那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与校验。
-  // 要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return
-      if (e.code !== 'KeyH') return
-      e.preventDefault()
-      setCollapsed((v) => !v)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // 组件自己监听有一条硬伤：**键位现在是可配置的**，改了键之后组件手里那套常量就过期了
+  // （而且两边都监听会各执行一次——`preventDefault` 拦不住同一事件上的其它监听器）。
+  // 分发器那侧的细节（为什么挂在 window 上还收得到、为什么读 e.code 而不是 e.key）都写在
+  // 那个模块里，不在这里重一份。
 
   const chapters = novel?.chapters ?? []
   const total = chapters.length
@@ -9001,7 +9035,7 @@ export function ChapterList({
         data-testid="sidebar-toggle"
         aria-expanded={false}
         aria-label="显示章节栏"
-        title="显示章节栏（⌘/Ctrl + Shift + H）"
+        title={`显示章节栏（${sidebarShortcut}）`}
         onClick={() => setCollapsed(false)}
       >
         <IconExpand className="wt-sidebar__rail-icon" />
@@ -9018,7 +9052,7 @@ export function ChapterList({
           data-testid="sidebar-toggle"
           aria-expanded
           aria-label="隐藏章节栏"
-          title="隐藏章节栏（⌘/Ctrl + Shift + H）"
+          title={`隐藏章节栏（${sidebarShortcut}）`}
           onClick={() => setCollapsed(true)}
         >
           <IconCollapse className="wt-sidebar__toggle-icon" />
@@ -9146,26 +9180,30 @@ describe('ChapterList', () => {
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
   })
 
-  it('⌘/Ctrl + Shift + H 与按钮等效', () => {
+  // 【原来的「⌘/Ctrl + Shift + H 与按钮等效」与「少了 Shift 或修饰键时不触发」两条删掉了】
+  // 它们断言的是本组件自己那个 window keydown 监听，而那条监听已经归全局分发器
+  // （见 ChapterList.tsx 里那段注释）。留在原处会全红；而按组件改写成「空转的绿」更糟——
+  // 树里没有分发器，无论那条监听在不在，`collapsed` 都不会翻。分发器那一侧的等价用例在
+  // `tests/unit/shortcutDispatch.test.ts`，App 那一侧的接线在 Task 7。
+
+  it('title 里显示的是传进来的快捷键，不是写死的 ⌘/Ctrl + Shift + H', () => {
+    // 传一个**两条默认值都推不出来**的串：jsdom 里 `window.api.platform` 是 darwin，
+    // 若拿 '⌘⇧H'（该平台的默认值）当期望值，一个忽略 prop、自己推默认值的实现同样能过。
     const novel = makeNovel(5)
-    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    render(
+      <ChapterList
+        novel={novel}
+        activeChapter={0}
+        chapterPos={[]}
+        onJump={() => {}}
+        sidebarShortcut="⌃⌥J"
+      />
+    )
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('title')).toContain('⌃⌥J')
 
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true })
-    expect(screen.queryByTestId('chapter-list')).toBeNull()
-
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true })
-    expect(screen.getByTestId('chapter-list')).toBeTruthy()
-  })
-
-  it('少了 Shift 或修饰键时不触发（别把正常打字吃掉）', () => {
-    const novel = makeNovel(5)
-    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
-
-    fireEvent.keyDown(window, { key: 'h', code: 'KeyH' })
-    fireEvent.keyDown(window, { key: 'H', code: 'KeyH', shiftKey: true })
-    fireEvent.keyDown(window, { key: 'h', code: 'KeyH', metaKey: true })
-    fireEvent.keyDown(window, { key: 'K', code: 'KeyK', metaKey: true, shiftKey: true })
-    expect(screen.getByText('大书')).toBeTruthy()
+    // 收起之后换成细缝那个按钮——它的 title 同样得跟着 prop 走（两处原本各写死了一份）
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('title')).toContain('⌃⌥J')
   })
 
   it('章节很多时只渲染可视区附近的行（虚拟滚动）', () => {
@@ -9350,12 +9388,21 @@ git commit -F /tmp/task9-msg.txt   # 切勿用内联 -m：ASCII 引号会静默�
 ```tsx
 import type { ReactNode } from 'react'
 import { RENDER_WINDOW_LIMIT } from '../../../core/types'
+import { defaultShortcutText } from '../state/shortcuts'
 
 export interface PageProps {
   visibleText: string
   expanded: boolean
   onToggleExpand: () => void
   empty: boolean
+  /**
+   * 导入快捷键的**显示文本**（已按平台格式化）。空状态那句提示用它。
+   *
+   * 【为什么是可选带默认值】真值住在 `App` 里（只有它手里有按平台补齐过的快捷键表），
+   * 把真值喂下来是它的事；在那之前不传也得显示成**该平台的默认值**——写死一句
+   * 「Ctrl+O」正是这次要消灭的东西（见 `defaultShortcutText` 的说明）。
+   */
+  importShortcut?: string
   children?: ReactNode
 }
 
@@ -9364,6 +9411,7 @@ export function Page({
   expanded,
   onToggleExpand,
   empty,
+  importShortcut = defaultShortcutText('import'),
   children
 }: PageProps) {
   const folded = !expanded && visibleText.length > RENDER_WINDOW_LIMIT
@@ -9373,7 +9421,7 @@ export function Page({
     <div className="wt-page" data-testid="page">
       {empty ? (
         <div className="wt-page__empty" data-testid="page-empty">
-          文件 → 设置 → 导入小说，或按 Ctrl+O
+          {`文件 → 设置 → 导入小说，或按 ${importShortcut}`}
           <br />
           导入后在文档区打字，字会按比例从小说里取出来。
         </div>
@@ -9474,6 +9522,16 @@ describe('Page', () => {
     render(<Page visibleText="" expanded={false} onToggleExpand={() => {}} empty />)
     expect(screen.getByTestId('page-empty')).toBeTruthy()
     expect(screen.queryByTestId('caret')).toBeNull()
+  })
+
+  it('空状态显示的是传进来的那条快捷键，不是写死的 Ctrl+O', () => {
+    // 传一个**两条默认值都推不出来**的串：jsdom 里 `window.api.platform` 是 darwin，
+    // 若拿 '⌘O'（该平台的默认值）当期望值，一个忽略 prop、自己推默认值的实现同样能过。
+    render(
+      <Page visibleText="" expanded={false} onToggleExpand={() => {}} empty importShortcut="⌃⇧K" />
+    )
+    expect(screen.getByTestId('page-empty').textContent).toContain('⌃⇧K')
+    expect(screen.getByTestId('page-empty').textContent).not.toContain('Ctrl+O')
   })
 
   it('把 visibleText 原样渲染进文档区', () => {
@@ -10349,6 +10407,11 @@ export default function App() {
   /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
   const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
   /**
+   * 设置对话框开不开。**从 Ribbon 里提上来的**：Ribbon 不再自己监听 ⌘/Ctrl + ,（那条归
+   * 全局分发器，而分发器长在这一层），所以这个状态得由本组件持有再传下去。
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  /**
    * **全局**阅读替换比例：新导入的书拿它当起点。
    *
    * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
@@ -10673,6 +10736,8 @@ export default function App() {
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
           novelOpen={novel !== null}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
         />
 
         <div className="wt-body">
@@ -12396,6 +12461,11 @@ function setup(opts: SetupOptions = {}): {
    */
   function Harness() {
     const [recording, setRecording] = useState(false)
+    /**
+     * 对话框开不开。`Ribbon` 从 Task 6 起是**受控**的（原先这个状态住在它里面），
+     * 所以壳得拿着它——「按 ⌘/Ctrl + , 打开设置」那几条用例现在只能走分发器那条路。
+     */
+    const [settingsOpen, setSettingsOpen] = useState(false)
     const reportRef = useRef(opts.onRecordingChange)
     reportRef.current = opts.onRecordingChange
     /**
@@ -12416,10 +12486,11 @@ function setup(opts: SetupOptions = {}): {
       actions: {
         // 与 `ToolbarProvider` 收到的是**同一个** spy：App 里两边也都指向同一个 handleImport
         import: dispatchImport,
-        // 这两条动作在 App 里是「提升上去的状态」，单测里没有那一层，占位即可
-        // （Ribbon 现在还自己监听 ⌘, 打开设置，所以打开设置的用例不经过分发器）
+        // 章节栏那条在 App 里是「提升上去的状态」（Task 7 才提），单测里没有那一层，占位即可
         'toggle-sidebar': () => {},
-        'open-settings': () => {}
+        // 【这一条必须真的打开对话框】Ribbon 不再自己监听 ⌘,，「按 ⌘/Ctrl + , 对话框出现」
+        // 那几条既有用例现在只剩分发器这一条路——占位空函数会让它们全红。
+        'open-settings': () => setSettingsOpen(true)
       }
     })
     return (
@@ -12432,6 +12503,8 @@ function setup(opts: SetupOptions = {}): {
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
           novelOpen={novelOpen}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
           onShortcutsChange={onShortcutsChange}
@@ -12469,6 +12542,9 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
   function Harness() {
     const [title, setTitle] = useState(init.docTitle ?? '文档1')
     const [ratio, setRatio] = useState(init.ratio ?? 10)
+    // 受控的 `settingsOpen`：这个壳只关心「保存之后文档名/比例真的回写」，开合本身用不上，
+    // 但它是 Ribbon 的必填 prop，得给一个。
+    const [settingsOpen, setSettingsOpen] = useState(false)
     return (
       <ToolbarProvider
         ratio={ratio}
@@ -12488,6 +12564,8 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           themeSource="system"
           onThemeSourceChange={vi.fn()}
           novelOpen
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
         />
         <Toast />
       </ToolbarProvider>
@@ -12514,8 +12592,15 @@ describe('设置对话框的打开方式', () => {
     expect(settings().getAttribute('aria-modal')).toBe('true')
   })
 
-  it('⌘/Ctrl + , 都能打开（按物理键位 Comma 判定）', () => {
-    setup()
+  // 【这一条原先叫「⌘/Ctrl + , 都能打开」】改动前 Ribbon 自己那个监听是 `e.metaKey || e.ctrlKey`，
+  // 与平台无关，所以两套修饰键都开。现在键位来自注册表、按平台各有一套：macOS 那条是 ⌘,，
+  // Windows 那条是 Ctrl+,——拿 win32 的壳去按 ⌘, 本来就不该开。断言跟着平台分开写，
+  // 覆盖的是同一件事（各自平台上的那一个组合真的打得开），不是把断言删掉。
+  it('macOS 上 ⌘ + , 打开（按物理键位 Comma 判定）', () => {
+    // `shortcuts` 得一起换成 darwin 的那一份：这个壳收的是「**当前生效**的快捷键」
+    // （真机上就是 `resolveShortcuts(稀疏表, 平台)` 的结果），默认值是按 other 补齐的。
+    // 只换 platform、不换 shortcuts，壳里就是一张自相矛盾的表（平台是 mac、键位是 Win 的）。
+    setup({ platform: 'darwin', shortcuts: resolveShortcuts({}, 'darwin') })
     fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true })
     expect(screen.getByTestId('settings')).toBeTruthy()
   })
@@ -12524,6 +12609,15 @@ describe('设置对话框的打开方式', () => {
     setup()
     fireEvent.keyDown(window, { key: ',', code: 'Comma', ctrlKey: true })
     expect(screen.getByTestId('settings')).toBeTruthy()
+  })
+
+  it('另一个平台的修饰键不打开（键位是按平台配的，不是「随便哪个修饰键都行」）', () => {
+    // 这是本任务删掉 Ribbon 那个平台无关监听之后**新出现**的语义：win32 的壳里按 ⌘,
+    // 既不是配上的那条、也不在任何一张表里，不该开。少了这一条，上面两条换成
+    // 「metaKey || ctrlKey 一律放行」的实现照样绿。
+    setup()
+    fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true })
+    expect(screen.queryByTestId('settings')).toBeNull()
   })
 
   it('不带修饰键的逗号不打开（那是正文里的标点，不该被吃掉）', () => {

@@ -20,6 +20,16 @@ describe('Page', () => {
     expect(screen.queryByTestId('caret')).toBeNull()
   })
 
+  it('空状态显示的是传进来的那条快捷键，不是写死的 Ctrl+O', () => {
+    // 传一个**两条默认值都推不出来**的串：jsdom 里 `window.api.platform` 是 darwin，
+    // 若拿 '⌘O'（该平台的默认值）当期望值，一个忽略 prop、自己推默认值的实现同样能过。
+    render(
+      <Page visibleText="" expanded={false} onToggleExpand={() => {}} empty importShortcut="⌃⇧K" />
+    )
+    expect(screen.getByTestId('page-empty').textContent).toContain('⌃⇧K')
+    expect(screen.getByTestId('page-empty').textContent).not.toContain('Ctrl+O')
+  })
+
   it('把 visibleText 原样渲染进文档区', () => {
     render(<Page visibleText="第一章 风起\n正文。" expanded={false} onToggleExpand={() => {}} empty={false} />)
     expect(screen.getByTestId('page-text').textContent).toContain('第一章 风起')
