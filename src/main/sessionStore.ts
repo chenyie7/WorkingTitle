@@ -181,7 +181,12 @@ function readSettingsFile(path: string): AppSettings {
   }
 }
 
-/** 返回「这一次是否确实落地了」——迁移那条路要拿它当「能不能删旧文件」的判据。 */
+/**
+ * 返回「这一次是否确实落地了」——迁移里「上次打开的是哪本有没有落盘」那道闸用它。
+ *
+ * 设置项本身全是可再生的（坏了就回默认值），所以别处的调用方都不看返回值；这里返回它，
+ * 只是因为迁移那条路必须先确认它落盘了才能删旧文件。
+ */
 function writeSettingsFile(path: string, s: AppSettings): boolean {
   try {
     mkdirSync(dirname(path), { recursive: true })
@@ -256,7 +261,14 @@ function readSessionFile(file: string, sourcePath: string): PersistedSession | n
   }
 }
 
-/** 返回「这一次是否确实落地了」——迁移那条路要拿它当「能不能删旧文件」的判据。 */
+/**
+ * 返回「这一次是否确实落地了」。
+ *
+ * 【返回值目前**没有**调用方在看】`writeSession` 忽略它，迁移也不看——迁移的判据是
+ * 「新位置那份**读得出来**」（删之前再读一次，见 `migrateLegacySession`），那比「写函数说
+ * 自己成功了」强：将来有人让它在没落盘时返回 true，那道读仍然守得住。所以**别把返回值当成
+ * 「旧文件能不能删」的依据**，要判就读一次。
+ */
 function writeSessionFile(file: string, s: PersistedSession): boolean {
   try {
     mkdirSync(dirname(file), { recursive: true })
@@ -365,38 +377,44 @@ export function createSessionStore(baseDir: string): SessionStore {
       }
 
       const target = sessionFile(legacy.sourcePath)
-      // 【本任务唯一会毁数据的地方，判据要强】下面删掉的是用户进度唯一的副本，所以
-      // 「能不能删」必须两条同时成立，任何一条不成立就原样留着、下次启动重试：
+      // 【本任务唯一会毁数据的地方，判据要强，而且顺序不能反】
       //
-      // 1. 新位置确实有一份**读得出来**的记录。判据用 `readSessionFile(...) !== null` 而不是
-      //    `existsSync`：后者只回答「有个东西在那儿」，一个空的或截断的 target 会让这次迁移
-      //    跳过写、然后把旧文件删掉——用一个读不出来的残留压掉一份完好的旧记录。
-      //    （target 本来就有一份**能读**的记录时短路掉写：那一份是更新的，旧文件只是上一代
-      //    格式的残留，不该倒回去。）
-      // 2. 「上次打开的是哪本」也落盘了。它在旧版只写在会话文件里；这一条写不进去，迁移好的
-      //    记录就没有任何人去读它——用户手动导入那本书时会被 cursor 0 覆盖掉。
-      //    （Task 7 把导入路径改成「先读会话」之后，这一条的后果降级成「不会自动打开」，
-      //    但闸留着仍然对：能确认的事就确认。）
-      //
-      // 触发条件都很现实：磁盘满（写要空间、rm 不要）、sessions 被一个同名文件占住
-      // （mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复。
-      const alreadyMigrated = readSessionFile(target, legacy.sourcePath) !== null
-      const migrated = alreadyMigrated || writeSessionFile(target, legacy)
-      const settings = readSettingsFile(settingsPath)
-      const lastSourcePathWritten =
-        settings.lastSourcePath !== null ||
-        writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
-
-      if (!migrated || !lastSourcePathWritten) {
+      // 1. 先把会话搬过去，并且**以「读得出来」为准**：`existsSync` 只回答「有个东西在那儿」，
+      //    一个空的或截断的 target 会让迁移跳过写、然后把旧文件删掉——用一个读不出来的残留
+      //    压掉一份完好的旧记录。target 本来就能读时短路掉写（那一份是更新的）。
+      // 2. **删之前再读一次**，而不是信 `writeSessionFile` 的返回值：保证是「这份记录确实在
+      //    新位置读得出来」，而不是「那次调用说自己成功了」。将来有人让它在没落盘时返回 true，
+      //    这道读仍然守得住。
+      if (readSessionFile(target, legacy.sourcePath) === null) writeSessionFile(target, legacy)
+      if (readSessionFile(target, legacy.sourcePath) === null) {
         console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
         return
       }
 
+      // 3. 「上次打开的是哪本」排在上面两条**之后**。反过来的话，会话写失败而设置写成功时，
+      //    `lastSourcePath` 会指向一本进度还没搬过去的书——下次启动自动打开它、600ms 后把
+      //    cursor 0 落盘，再下次启动就满足「已经迁过」而把旧文件删掉，真进度没了。
+      //    排在后面，「lastSourcePath 已设置 ⇒ 这本书的记录已经在新位置」才成为不变量。
+      const settings = readSettingsFile(settingsPath)
+      if (
+        settings.lastSourcePath === null &&
+        !writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+      ) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
+
+      // 两个删除各占一个 try：共用一个的话，前一个抛错会让后一个**永远不被尝试**——
+      // 两件互不相干的清理不该互相拖累。
       try {
         rmSync(legacySessionPath, { force: true })
-        rmSync(`${legacySessionPath}.tmp`, { force: true })
       } catch (err) {
         console.warn('[wt] 删除旧版会话文件失败：', err)
+      }
+      try {
+        rmSync(`${legacySessionPath}.tmp`, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除旧版会话临时文件失败：', err)
       }
     },
 
