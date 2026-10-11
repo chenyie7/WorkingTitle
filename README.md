@@ -94,4 +94,4 @@ Playwright 1.63 · electron-builder 26 · jschardet 4 · iconv-lite 0.7 · @flue
 
 ## 许可
 
-MIT
+[MIT](LICENSE)
