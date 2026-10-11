@@ -614,3 +614,121 @@ describe('sessionStore 设置读写', () => {
     }
   })
 })
+
+describe('旧版单槽会话的迁移', () => {
+  it('合法的旧会话被搬进 sessions/ 并补上 lastSourcePath，旧文件删除', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+
+    store.migrateLegacySession()
+
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(legacy)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+    // 旧版没有 settings.json，「上次打开的是哪本」原先只写在会话里；不补这一步，
+    // 升级后的第一次启动会停在空状态——进度在，但没人去开那本书。
+    expect(store.readSettings().lastSourcePath).toBe('/tmp/旧书.txt')
+  })
+
+  it('重复调用是幂等的（旧文件已删，第二次什么都不做）', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(makeSession({ cursor: 5 })), 'utf8')
+    store.migrateLegacySession()
+    const after = store.readSession(SRC)
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+    expect(store.readSession(SRC)).toEqual(after)
+  })
+
+  it('没有旧文件时什么都不做', () => {
+    const store = createSessionStore(dir)
+    expect(() => store.migrateLegacySession()).not.toThrow()
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
+  })
+
+  // 这里与「读会话」那条路径的处置**刻意不同**：读会话时坏记录按无记录处理即可（文件还在），
+  // 而迁移要先删掉旧文件——删是不可逆的。所以判不了的东西一律不删，只报出来。
+  it('结构不合法的旧会话不迁移、也不删除，并警告', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'session.json'), JSON.stringify({ novelTitle: '只有书名' }), 'utf8')
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      expect(String(spy.mock.calls[0][0])).toContain('未迁移')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+
+  it('新版已有同一本书的进度时不覆盖它', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 1 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    const fresh = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 999 })
+    store.writeSession(fresh)
+
+    store.migrateLegacySession()
+
+    // 新版那份是更新的——旧文件只是上一代格式的残留，不该倒回去
+    expect(store.readSession('/tmp/旧书.txt')).toEqual(fresh)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+  })
+
+  // 【本任务唯一会毁数据的地方，所以单独一条】写不进新版位置时，旧文件是用户进度唯一的
+  // 副本，绝不能删。触发条件很现实：磁盘满（写要空间、rm 不要），或 sessions 被一个同名
+  // 文件占住（mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复，而且下一次启动的 600ms
+  // 自动保存会用 cursor=0 覆盖现场——用户看到的是「升级之后进度莫名其妙归零」。
+  //
+  // 造法：把 `sessions` 做成一个**文件**，于是 writeSessionFile 的 mkdirSync 必然
+  // EEXIST。（不用 mock node:fs，与 guardA 那条注入式守卫分工不同：那条测写入中途被杀，
+  // 这条测「写根本没成功时调用方有没有守住」。）
+  it('迁移时写不进 sessions/ 就不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    writeFileSync(join(dir, 'sessions'), 'x', 'utf8') // 占位：让 sessions 目录建不出来
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：这次写入确实失败了——否则下面那条「旧文件还在」可能只是因为已经迁移成功
+      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(false)
+      // 不看 calls[0]：**第一条** warn 是 writeSessionFile 自己那条「保存会话失败」，
+      // 迁移那条在它之后。要看的是「迁移有没有报出这件事」，所以整组拼起来查。
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
+    } finally {
+      spy.mockRestore()
+    }
+    // 进度唯一的副本还在，下次启动会重试
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8')).cursor).toBe(77)
+  })
+
+  // 第二扇门：**会话那一半写成功了**，「上次打开的是哪本」没落盘时同样不能删。触发条件：
+  // 两次写之间磁盘满了，或 settings.json 被一个同名目录占住（写 .tmp 成功、renameSync 到
+  // 目录失败）。少了这道闸，迁移好的记录没有任何人去读它——用户手动导入那本书就被 cursor 0 覆盖。
+  it('迁移时 lastSourcePath 写不进去也不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 55 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    mkdirSync(join(dir, 'settings.json')) // 占位：让 settings.json 写不进去
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：会话那一半**确实写成功了**——否则下面的断言可能只是因为整条迁移根本没跑起来
+      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(true)
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
+})
