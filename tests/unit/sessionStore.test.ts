@@ -11,7 +11,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
-import type { Novel, PersistedSession } from '../../src/core/types'
+import { defaultSettings } from '../../src/core/types'
+import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
 beforeEach(() => {
@@ -442,5 +443,92 @@ describe('sessionStore 小说缓存', () => {
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
 
     expect(store.readNovelCache(src)).toBeNull()
+  })
+})
+
+describe('sessionStore 设置读写', () => {
+  it('未写过时 readSettings 返回默认值', () => {
+    const store = createSessionStore(dir)
+    expect(store.readSettings()).toEqual(defaultSettings())
+    expect(existsSync(join(dir, 'settings.json'))).toBe(false)
+  })
+
+  it('写入后能读回同样的内容', () => {
+    const store = createSessionStore(dir)
+    const s: AppSettings = {
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/测试书.txt'
+    }
+    store.writeSettings(s)
+    expect(store.readSettings()).toEqual(s)
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+  })
+
+  // 与 readSession 那两张表同一套姿势：合法 JSON、但形状不对的设置**不能**被当成设置用。
+  // 设置项全是可再生的（坏了就回默认值），所以这里没有「进度不能丢」那种压力；
+  // 但「哪个字段坏了」仍要报出来——静默回默认会让「我改的文档名怎么没了」无从查起。
+  const BAD_SETTINGS: Array<{ name: string; token: string; mangle: (s: AppSettings) => unknown }> = [
+    { name: 'docTitle 不是字符串', token: 'docTitle 不是字符串', mangle: (s) => ({ ...s, docTitle: 7 }) },
+    {
+      name: 'themeSource 不是取值之一',
+      token: 'themeSource 不是 system/light/dark',
+      mangle: (s) => ({ ...s, themeSource: 'sepia' })
+    },
+    { name: 'darkPaper 不是布尔值', token: 'darkPaper 不是布尔值', mangle: (s) => ({ ...s, darkPaper: 'yes' }) },
+    {
+      name: 'lastSourcePath 既不是 null 也不是字符串',
+      token: 'lastSourcePath 既不是 null 也不是字符串',
+      mangle: (s) => ({ ...s, lastSourcePath: 42 })
+    },
+    { name: '记录是 null', token: '不是一个对象', mangle: () => null }
+  ]
+
+  it.each(BAD_SETTINGS)('设置里的 $name → 按默认值处理，且警告点出该字段', ({ mangle, token }) => {
+    const store = createSessionStore(dir)
+    const good: AppSettings = {
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: null
+    }
+    const bad = mangle(good)
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify(bad), 'utf8')
+    // 前提一：写下去的确实是合法 JSON——否则本用例只是在重复「损坏文件」那一条
+    expect(() => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).not.toThrow()
+    // 前提二：坏的那份与好的确实不同——否则它什么都没坏，用例是空跑
+    expect(JSON.stringify(bad)).not.toBe(JSON.stringify(good))
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.readSettings()).toEqual(defaultSettings())
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('settings.json 不是合法 JSON 时返回默认值而不抛异常', () => {
+    const store = createSessionStore(dir)
+    writeFileSync(join(dir, 'settings.json'), '{ 这不是 JSON', 'utf8')
+    expect(store.readSettings()).toEqual(defaultSettings())
+  })
+
+  // 与 writeSession 那条同形：失败必须留下痕迹，而不是「应用看着健康、其实设置没存」。
+  it('设置写入失败会带着原错误 console.warn 出来', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const notADir = join(dir, '不是一个目录')
+      writeFileSync(notADir, 'x', 'utf8')
+      const store = createSessionStore(notADir)
+      store.writeSettings(defaultSettings())
+      expect(existsSync(join(notADir, 'settings.json'))).toBe(false)
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy.mock.calls[0][1]).toBeInstanceOf(Error)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

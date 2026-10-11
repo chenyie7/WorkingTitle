@@ -7,10 +7,13 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { join } from 'node:path'
-import type { Novel, NovelCacheMeta, PersistedSession } from '../core/types'
+import { dirname, join } from 'node:path'
+import { defaultSettings } from '../core/types'
+import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
 
 export interface SessionStore {
+  readSettings(): AppSettings
+  writeSettings(s: AppSettings): void
   readSession(): PersistedSession | null
   writeSession(s: PersistedSession): void
   clearAll(): void
@@ -133,7 +136,63 @@ function isNovelCacheMeta(v: unknown): v is NovelCacheMeta {
   return cacheMetaProblem(v) === null
 }
 
+/**
+ * 校验读回来的 JSON 是不是一份完整的 AppSettings；返回第一个不合格字段的描述。
+ *
+ * 【与 sessionProblem 是同一套姿势，取舍也相同】设置项全都是可再生的（坏了就回默认值），
+ * 所以这里不像会话那样有「进度不能丢」的压力；但仍然返回**字段名**而不是 true/false——
+ * 静默回默认会让「我改的文档名怎么没了」无从查起。
+ */
+function settingsProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return '不是一个对象'
+  const s = v as Record<string, unknown>
+  if (typeof s.docTitle !== 'string') return 'docTitle 不是字符串'
+  if (s.themeSource !== 'system' && s.themeSource !== 'light' && s.themeSource !== 'dark') {
+    return 'themeSource 不是 system/light/dark'
+  }
+  if (typeof s.darkPaper !== 'boolean') return 'darkPaper 不是布尔值'
+  if (s.lastSourcePath !== null && typeof s.lastSourcePath !== 'string') {
+    return 'lastSourcePath 既不是 null 也不是字符串'
+  }
+  return null
+}
+
+function isAppSettings(v: unknown): v is AppSettings {
+  return settingsProblem(v) === null
+}
+
+function readSettingsFile(path: string): AppSettings {
+  try {
+    if (!existsSync(path)) return defaultSettings()
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (!isAppSettings(parsed)) {
+      console.warn(
+        `[wt] 设置文件结构不合法（${settingsProblem(parsed) ?? '未知'}），按默认值处理：`,
+        path
+      )
+      return defaultSettings()
+    }
+    return parsed
+  } catch (err) {
+    console.warn('[wt] 读取设置失败，按默认值处理：', err)
+    return defaultSettings()
+  }
+}
+
+function writeSettingsFile(path: string, s: AppSettings): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    // 与 session 同样的 temp+rename。文档名是用户敲进去的、不可再生，
+    // 截断的 settings.json 读回来只会是默认值。
+    writeFileSync(`${path}.tmp`, JSON.stringify(s), 'utf8')
+    renameSync(`${path}.tmp`, path)
+  } catch (err) {
+    console.warn('[wt] 保存设置失败，本次改动未落盘：', err)
+  }
+}
+
 export function createSessionStore(baseDir: string): SessionStore {
+  const settingsPath = join(baseDir, 'settings.json')
   const sessionPath = join(baseDir, 'session.json')
   const sessionTmpPath = join(baseDir, 'session.json.tmp')
   const cacheMetaPath = join(baseDir, 'novel-cache.json')
@@ -144,6 +203,14 @@ export function createSessionStore(baseDir: string): SessionStore {
   }
 
   return {
+    readSettings(): AppSettings {
+      return readSettingsFile(settingsPath)
+    },
+
+    writeSettings(s: AppSettings): void {
+      writeSettingsFile(settingsPath, s)
+    },
+
     readSession(): PersistedSession | null {
       try {
         if (!existsSync(sessionPath)) return null
