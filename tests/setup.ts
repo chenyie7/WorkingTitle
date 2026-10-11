@@ -15,7 +15,9 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * `openNovelPath` 刻意抛异常而不是编一本小说出来：真的被调用到（有启动参数或有会话）
  * 说明用例自己该提供 api（见 `tests/unit/app.test.tsx` 的 `installApi`），此时一个
  * 假小说比一声响更危险——它会让用例在「用的是别人的数据」这种前提下静默通过。
- * 两个调用点都在 try/catch 里，异常不会冒出去。
+ * 它唯一的调用点在 `App.tsx` 启动流程的 try/catch 里（那个 try 现在只护 `openNovelPath`
+ * 与 `openNovel`，`loadSettings` / `initialNovelPath` 在它之外）——而这个良性桩的
+ * `initialNovelPath` 恒返回 null，所以 `target` 为空、那个 try 根本进不去，异常不会冒出去。
  */
 const benignApi: WtApi = {
   platform: 'darwin',

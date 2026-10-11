@@ -9614,7 +9614,9 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * `openNovelPath` 刻意抛异常而不是编一本小说出来：真的被调用到（有启动参数或有会话）
  * 说明用例自己该提供 api（见 `tests/unit/app.test.tsx` 的 `installApi`），此时一个
  * 假小说比一声响更危险——它会让用例在「用的是别人的数据」这种前提下静默通过。
- * 两个调用点都在 try/catch 里，异常不会冒出去。
+ * 它唯一的调用点在 `App.tsx` 启动流程的 try/catch 里（那个 try 现在只护 `openNovelPath`
+ * 与 `openNovel`，`loadSettings` / `initialNovelPath` 在它之外）——而这个良性桩的
+ * `initialNovelPath` 恒返回 null，所以 `target` 为空、那个 try 根本进不去，异常不会冒出去。
  */
 const benignApi: WtApi = {
   platform: 'darwin',
@@ -9792,7 +9794,18 @@ export default function App() {
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
   const settingsRef = useRef<AppSettings | null>(null)
-  settingsRef.current = settingsLoaded ? { docTitle, themeSource, darkPaper, lastSourcePath } : null
+  /**
+   * 设置的当前值：**一处构造，两处消费**（防抖写盘的载荷、关窗前的快照）。
+   *
+   * 【为什么要合并】这四个字段此前在三个地方各写了一遍：防抖 effect 的载荷、那个 effect 的
+   * 依赖数组、以及 ref 的字面量。加第五个设置项时漏改依赖数组＝「只在关窗时落盘」，
+   * 漏改 ref 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
+   */
+  const settings: AppSettings = useMemo(
+    () => ({ docTitle, themeSource, darkPaper, lastSourcePath }),
+    [docTitle, themeSource, darkPaper, lastSourcePath]
+  )
+  settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
 
@@ -9814,15 +9827,20 @@ export default function App() {
    */
   const openNovel = useCallback(
     async (next: Novel): Promise<void> => {
-      // 换书之前先把上一本存一次：下面那个保存 effect 的 cleanup 会 clearTimeout 掉待发的
-      // 定时器，而换书会让 engine 变——600ms 之内连开两本时，上一本那一次就永远不落盘了。
-      flushSession()
       // 递增序号，用来丢掉过期的那一次：读盘是异步的，用户连续导入两本时，先发起、后返回的
       // 那一次会把后打开的书顶掉。
       const seq = ++openSeqRef.current
       const api = getApi()
       const session = api ? await api.loadSession(next.sourcePath) : null
       if (seq !== openSeqRef.current) return
+
+      // 换书之前先把上一本存一次：下面那个保存 effect 的 cleanup 会 clearTimeout 掉待发的
+      // 定时器，而换书会让 engine 变——600ms 之内连开两本时，上一本那一次就永远不落盘了。
+      //
+      // 【放在提交点之前、而不是函数开头】开头到这里隔着一个 await：那期间落在旧引擎上的击键
+      // 会重排防抖定时器、随后被 cleanup 清掉，开头那次 flush 并没有覆盖到它。放在这里，
+      // `engineRef.current` 仍是上一本（还没人 setEngine），上面这句话才是字面为真的。
+      flushSession()
 
       setNovel(next)
       setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
@@ -9843,12 +9861,18 @@ export default function App() {
   const handleClearSession = useCallback(async () => {
     const api = getApi()
     if (!api) return
-    await api.clearSession()
+    // 【作废在飞的 open】导入已发起、`loadSession` 还没回来时按下清除，那次 open 回来后照样
+    // 能通过 `openNovel` 里的 seq 检查，把书放回界面、600ms 后还重写进度与 lastSourcePath
+    // ——清除等于没清。递增一次就等于把它标记成过期的。
+    openSeqRef.current++
+    // 【状态清空排在 await 之前】待发的会话写是靠 `setEngine(null)` 那次提交的 effect cleanup
+    // 取消的；排在 await 之后的话，一个已排上队的防抖写可能落在 IPC 删除之后，把记录又写回来。
     setNovel(null)
     setEngine(null)
     // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
     // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
     setLastSourcePath(null)
+    await api.clearSession()
   }, [])
 
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
@@ -9885,7 +9909,12 @@ export default function App() {
         // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。
         // 真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里留着上次
         // 会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」——那正是上面
-        // 这条回退在起作用。注意这一整段**单测里是零覆盖**：把 try/catch 删掉，渲染层用例全绿。
+        // 这条回退在起作用。
+        //
+        // 【覆盖情况，别再写「零覆盖」了】`命令行给的路径打不开时，回退到上次打开的那本书`
+        // 那条用例会走进这个 catch，但只走了「第一个目标失败、第二个成功」这一半；
+        // **两个目标都失败、最终停在空状态**那条路仍然没有用例。后半句的前提是真实的：
+        // 把整个 try/catch 删掉，渲染层用例仍是全绿。
         try {
           const loaded = await api.openNovelPath(target)
           if (cancelled) return
@@ -9931,10 +9960,10 @@ export default function App() {
     // 读回来之前不写，见 settingsLoaded 的说明
     if (!api || !settingsLoaded) return
     const timer = window.setTimeout(() => {
-      void api.saveSettings({ docTitle, themeSource, darkPaper, lastSourcePath })
+      void api.saveSettings(settings)
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [docTitle, themeSource, darkPaper, lastSourcePath, settingsLoaded])
+  }, [settings, settingsLoaded])
 
   // 关闭前强制落盘
   useEffect(() => {
@@ -10332,10 +10361,33 @@ describe('App 端到端（单测层）', () => {
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    // 先把导入那次设置写盘的防抖推过去：不推的话，`lastSourcePath` 从来没有真正落过盘，
+    // 下面「清成 null」那条断言就与「压根没写过」区分不开。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
     expect(window.api.clearSession).toHaveBeenCalled()
+
+    // 【清除要连「上次打开的是哪本」一起清掉】不清的话，用户按下清除再重启，那本书又自己
+    // 开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。清除之后设置那一侧也会防抖写一次，
+    // 推过去再断言（不推的话最后一条载荷还是导入时那条）。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: AppSettings[][] }
+    }
+    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
+    const payload = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(payload.lastSourcePath).toBeNull()
+    // 前提：这本书此前确实被记成了「上次打开的那本」——否则上面那条断言可能只是因为
+    // lastSourcePath 从来就没被写过，「清成 null」与「压根没写过」区分不开。
+    const seen = saveSettings.mock.calls.map((c) => c[0].lastSourcePath)
+    expect(seen).toContain(novel.sourcePath)
   })
 
   it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {
@@ -10453,6 +10505,13 @@ describe('设置的持久化', () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    // 【断言载荷，而不是只断言「被调用过」】只问「调用过没有」的话，一个写完空壳的实现
+    // 也能过。这里要求落盘的正是刚从磁盘读回来的那份——release 进去的那三个非默认值
+    // （文档名 / 外观 / 纸张）都必须原样带出来。
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.docTitle).toBe('季度汇报')
+    expect(payload.themeSource).toBe('dark')
+    expect(payload.darkPaper).toBe(true)
   })
 
   it('改了文档名之后会把设置写回去', async () => {

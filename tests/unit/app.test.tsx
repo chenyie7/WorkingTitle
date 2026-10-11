@@ -257,10 +257,33 @@ describe('App 端到端（单测层）', () => {
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    // 先把导入那次设置写盘的防抖推过去：不推的话，`lastSourcePath` 从来没有真正落过盘，
+    // 下面「清成 null」那条断言就与「压根没写过」区分不开。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
     await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
     expect(window.api.clearSession).toHaveBeenCalled()
+
+    // 【清除要连「上次打开的是哪本」一起清掉】不清的话，用户按下清除再重启，那本书又自己
+    // 开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。清除之后设置那一侧也会防抖写一次，
+    // 推过去再断言（不推的话最后一条载荷还是导入时那条）。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: AppSettings[][] }
+    }
+    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
+    const payload = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(payload.lastSourcePath).toBeNull()
+    // 前提：这本书此前确实被记成了「上次打开的那本」——否则上面那条断言可能只是因为
+    // lastSourcePath 从来就没被写过，「清成 null」与「压根没写过」区分不开。
+    const seen = saveSettings.mock.calls.map((c) => c[0].lastSourcePath)
+    expect(seen).toContain(novel.sourcePath)
   })
 
   it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {
@@ -378,6 +401,13 @@ describe('设置的持久化', () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    // 【断言载荷，而不是只断言「被调用过」】只问「调用过没有」的话，一个写完空壳的实现
+    // 也能过。这里要求落盘的正是刚从磁盘读回来的那份——release 进去的那三个非默认值
+    // （文档名 / 外观 / 纸张）都必须原样带出来。
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.docTitle).toBe('季度汇报')
+    expect(payload.themeSource).toBe('dark')
+    expect(payload.darkPaper).toBe(true)
   })
 
   it('改了文档名之后会把设置写回去', async () => {
