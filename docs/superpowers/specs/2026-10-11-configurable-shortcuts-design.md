@@ -84,19 +84,21 @@ export interface KeyChord {
 `AppSettings` 加：
 
 ```ts
-shortcuts: Record<ShortcutId, string>
+shortcuts: Partial<Record<ShortcutId, string>>
 ```
 
-`defaultSettings()` 因此要收一个 `PlatformKind`——默认值是分平台的，这个函数没法再保持零参。同理 `createSessionStore()` 也要能拿到平台（由 `session.ts` 把 `process.platform` 传进去，而不是让它自己去读 `process`，这样测试能指定平台）。
+**稀疏表：缺条目 = 用该平台的默认值**，由 core 的 `resolveShortcuts(raw, kind)` 补齐；`{}` 就是「全默认」。
+
+【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是 `defaultSettings()` 与 `createSessionStore()` 都得加一个 `PlatformKind` 参数——而 `createSessionStore` 在测试里有 40 处调用点、`defaultSettings()` 有 15 处。稀疏之后这两个函数的签名**一个都不用动**，core 也不必去读 `process`（那是 node 的东西，而 core 要能被渲染层共用）。顺带一个好处：将来加第四条快捷键时，老用户的文件天然就是「缺这一条」。
 
 **向后兼容是本次最容易毁数据的地方。** `sessionStore.ts` 现在的 `withRatioFilled` 只认 `ratio` 一个字段。旧 `settings.json` 里没有 `shortcuts`，而 `settingsProblem` 的取舍是「**一个字段不合格就整份退回默认值**」——直接加这个必填字段，会让老用户升级一次就把改过的**文档名 / 外观 / 纸张一起丢掉**。
 
-所以要把它泛化成 `withDefaultsFilled(v, platform)`：
+所以要把它泛化成 `withDefaultsFilled`，补的是**键本身**：旧文件缺 `shortcuts` 就补成 `{}`（逐条的默认值归 `resolveShortcuts` 管，不在这层）。
 
-- **「键不存在」= 旧版本写的** → 补该平台的默认值
+- **「键不存在」= 旧版本写的** → 补上默认值
 - **「值不合法」= 坏文件** → 整份退回默认值（既有姿态不变）
 
-**为什么泛化而不是再写一个专用函数**：必须**逐条补**才能覆盖「将来加第四条快捷键、老用户的表里没有它」这种情况。写成「有 `shortcuts` 就整个跳过」的话，下一次加字段又会踩同一个坑。
+写成「缺哪个键补哪个」而不是再写一个专用函数：`ratio` 那次就是专用函数，再来一个 `withShortcutsFilled` 之后，下一次加字段还是得记得写第三个。
 
 ## 6. 分发 —— 一条快捷键只在一个地方执行
 
