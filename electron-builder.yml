@@ -14,13 +14,20 @@ asar: true
 
 mac:
   category: public.app-category.productivity
+  # 【产物名为什么要显式写】默认模板是 `${productName}-${version}-${arch}.${ext}`，但
+  # `expandMacro` 在 arch 为空时会**把 `-${arch}` 整段删掉**（连同 ` ${arch}` / `_${arch}`
+  # / `/${arch}`）。于是 Intel 那个 dmg 出来叫 `WorkingTitle-0.1.0.dmg`——跟 arm64 的
+  # 放在一起，根本看不出哪个是哪个。写死之后两个架构都带后缀。
+  #
+  # 【平台名为什么写死成 `mac` 而不用 `${platform}`】那个宏展开的是 **`process.platform`**,
+  # 也就是**构建机**的平台，不是目标平台——在 Mac 上打 Windows 包会得到 `darwin`。
+  # 想要正确的平台名只能在各平台的段里各写一遍。
+  artifactName: ${productName}-v${version}-mac-${arch}.${ext}
+  # 只出 dmg，两个架构各一个，**不出 zip**。
+  # dmg 本来就是「挂载一个磁盘映像、把 .app 拖出来」，自身不安装任何东西——
+  # zip 那条「不想跑安装器」的理由在 macOS 上由 dmg 本身满足了，多出一份 zip 只是多一个要维护的产物。
   target:
     - target: dmg
-      arch:
-        - arm64
-        - x64
-    # zip 是「解压即用」那条路：解开就是 WorkingTitle.app，不经过安装器。
-    - target: zip
       arch:
         - arm64
         - x64
@@ -29,11 +36,15 @@ dmg:
   title: ${productName}
 
 win:
+  # 覆盖掉 nsis 自己的默认名（`${productName} Setup ${version}.${ext}`），
+  # 让安装器与 zip 用同一套命名，一眼能对上。
+  artifactName: ${productName}-v${version}-win-${arch}.${ext}
   target:
     - target: nsis
       arch:
         - x64
-    # 同上。win 的 zip 解开来是 WorkingTitle.exe 与它的依赖文件，绿色版。
+    # zip 是「解压即用」那条路：解开就是 WorkingTitle.exe 与它的依赖文件，绿色版。
+    # **只有 Windows 出它**——nsis 才是真正会写注册表、可能要管理员权限的那个，zip 是它的替代。
     - target: zip
       arch:
         - x64
@@ -46,6 +57,7 @@ nsis:
   shortcutName: WorkingTitle
 
 linux:
+  artifactName: ${productName}-v${version}-linux-${arch}.${ext}
   target:
     - AppImage
   category: Office

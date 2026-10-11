@@ -1,7 +1,9 @@
 name: Build
 
 on:
+  # 手动触发：只构建、把产物放进 Actions 的 Artifacts，**不发 release**。
   workflow_dispatch:
+  # 推 v* 标签就构建并发布。在网页上「创建 release」也会生成标签，同样会触发这条。
   push:
     tags:
       - 'v*'
@@ -14,9 +16,8 @@ jobs:
         include:
           - os: macos-latest
             script: dist:mac
-            artifact: |
-              release/*.dmg
-              release/*.zip
+            # macOS 只出 dmg（arm64 + x64），不出 zip —— 见 electron-builder.yml
+            artifact: release/*.dmg
           - os: windows-latest
             script: dist:win
             artifact: |
@@ -32,13 +33,53 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # 【为什么要有这一步】产物名里的版本号取自 package.json（`WorkingTitle-v${version}-…`），
+      # 而 release 的名字取自标签。两者不一致的话，你会得到一个叫 v0.2.0 的 release，
+      # 里面的文件却写着 WorkingTitle-v0.1.0-mac-arm64.dmg——而且没人会在当下发现。
+      # 直接失败，比发一个自相矛盾的版本强。
+      # 放在 setup-node 之后，是为了保证 `node` 一定在 PATH 上。
+      - name: 校验 tag 与 package.json 的版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::标签是 v$tag，package.json 里是 $pkg。先把 version 改成 $tag、提交，再打这个标签。"
+            exit 1
+          fi
+          echo "版本一致：v$tag"
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm ${{ matrix.script }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-build
           path: ${{ matrix.artifact }}
+
+  release:
+    # 只有推标签才发；手动触发的运行到上面那个作业为止。
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # 【必须显式声明】本仓库的 Actions 默认权限是 read，不写这一行，创建 release 会 403。
+      contents: write
+    steps:
+      # 把两个平台各自上传的 artifact 合并到一个目录。merge-multiple 是 v4 的关键参数，
+      # 不加的话会下成 dist/macos-latest-build/… 和 dist/windows-latest-build/… 两层。
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 列出将要发布的文件
+        run: find dist -type f | sort
+      # 按标签找 release：已经存在（你手动建的那个）就往里追加文件，不存在就新建一个。
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true
+          draft: false
