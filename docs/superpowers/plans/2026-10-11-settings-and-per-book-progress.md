@@ -584,7 +584,18 @@ Expected: 全 PASS，exit 0。
 >   })
 > ```
 >
-> 代价（有意接受）：Task 3~6 之间重启会静默落到空状态；磁盘上的进度不受影响，Task 6/7 之后恢复。
+> **代价（这段初稿写错过，实测复核时纠正）**：Task 3~6 之间**不是**「只是恢复不了、进度不受影响」。
+> `App.tsx` 的保存 effect 在 `engine` 变成非 null 之后 **600ms 自动落盘一次，不需要用户敲一个字**，
+> 于是这个窗口的准确描述是：**恢复死了、清除也死了（此时的 `clearAll` 根本不碰 `sessions/`）、
+> 而用户只要重新导入那本书，cursor 0 就写进了它的记录**。
+>
+> 三件事因此成立：
+> 1. 别拿在读的那本书试这个分支，也别把这个中间提交单独合出去；
+> 2. Task 5 会给 `readSession` / `writeSession` 补入参类型闸（见 Task 5），那时 `ipc.ts` 这条
+>    guard 就冗余了——Task 6 删掉它，行为由 store 自己兜住；
+> 3. 真正的收口在 Task 7：`openNovel` 必须读会话（见 Task 7 那条），否则「导入一本读过的书」
+>    永远是重新开始。
+>
 > 提交时把 `src/main/ipc.ts` 一并 `git add`。
 
 - [ ] **Step 7: 提交**
@@ -828,14 +839,71 @@ describe('旧版单槽会话的迁移', () => {
     expect(existsSync(join(dir, 'session.json'))).toBe(true)
     expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8')).cursor).toBe(77)
   })
+
+  // 第二扇门：**会话那一半写成功了**，「上次打开的是哪本」没落盘时同样不能删。触发条件：
+  // 两次写之间磁盘满了，或 settings.json 被一个同名目录占住（写 .tmp 成功、renameSync 到
+  // 目录失败）。少了这道闸，迁移好的记录没有任何人去读它——用户手动导入那本书就被 cursor 0 覆盖。
+  it('迁移时 lastSourcePath 写不进去也不删旧文件', () => {
+    const store = createSessionStore(dir)
+    const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 55 })
+    writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
+    mkdirSync(join(dir, 'settings.json')) // 占位：让 settings.json 写不进去
+
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      store.migrateLegacySession()
+      // 前提：会话那一半**确实写成功了**——否则下面的断言可能只是因为整条迁移根本没跑起来
+      expect(existsSync(sessionFile(dir, '/tmp/旧书.txt'))).toBe(true)
+      expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('未能落地')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+  })
 })
 ```
 
-> **同时把 `writeSessionFile` 的返回类型从 `void` 改成 `boolean`**（`true` = 确实落地了）：
-> 迁移那条路必须能问出「写成功了没有」，否则只能靠 `existsSync` 猜。改法就是把两处 `return`
-> 分别写成 `return true` / `return false`（catch 里那条 warn 保留）。`writeSession` 那个公开
-> 方法**忽略**返回值、接口仍是 `void`——「这一次有没有存上」不是渲染层能处置的事，它只该
-> 在日志里留痕。Task 5 的用例里那条「写不进 sessions/ 就不删旧文件」就是这条返回值的判据。
+> **同时把 `writeSessionFile` 与 `writeSettingsFile` 的返回类型从 `void` 改成 `boolean`**
+> （`true` = 确实落地了）：迁移那条路必须能问出「写成功了没有」，否则只能靠 `existsSync` 猜。
+> 改法就是把各自的 `return` 分别写成 `return true` / `return false`（catch 里那条 warn 保留）。
+> 两个公开方法 `writeSession` / `writeSettings` **忽略**返回值、接口仍是 `void`——「这一次
+> 有没有存上」不是渲染层能处置的事，它只该在日志里留痕。
+>
+> **同一个提交里再给 `readSession` / `writeSession` 补一道入参类型闸**：
+>
+> ```ts
+>     readSession(sourcePath: string): PersistedSession | null {
+>       // 【为什么要闸】sourcePath 不是字符串时，sessionFileName 会在 createHash 里抛
+>       // ERR_INVALID_ARG_TYPE，而那是**在 readSessionFile 的 try 之外**（参数先求值）——
+>       // 异常会一路冒到 ipcMain.handle，把渲染层那次 invoke 打成 rejection。
+>       // 仓库内当前不可达（toSession 恒给字符串、ipc.ts 那条 guard 还在），但这条通道
+>       // 收的是渲染层未经校验的载荷，而「读回来的东西一律校验」是本文件的既有姿态——
+>       // 这属于同一类，只是站在 IPC 那一侧。问不到就按无记录，与别处一致。
+>       if (typeof sourcePath !== 'string') return null
+>       return readSessionFile(sessionFile(sourcePath), sourcePath)
+>     },
+>
+>     writeSession(s: PersistedSession): void {
+>       if (typeof s?.sourcePath !== 'string') {
+>         console.warn('[wt] 保存会话失败：sourcePath 不是字符串，本次进度未落盘')
+>         return
+>       }
+>       writeSessionFile(sessionFile(s.sourcePath), s)
+>     },
+> ```
+>
+> 有了它，Task 3 在 `ipc.ts` 放的那条过渡 guard 就冗余了——Task 6 可以放心删掉它，
+> 行为由 store 自己兜住（见 Task 6）。
+>
+> **再补两处小东西（都是同一次改动顺手）：**
+> - `readSessionFile(file, sourcePath)` 的两个参数**必须互相一致**（`file` 得是
+>   `sessionFile(sourcePath)` 的结果），这条不变量目前只靠唯一的调用点保证——在它上面写一行
+>   注释点明。
+> - 错配那条 warn 现在只给 32 位 hex 的文件名，读日志的人既不知道记的是哪本、也不知道请求的
+>   是哪本。**把两个路径都打出来**（现有断言只查「不是同一本」这个子串，不会红）。
+> - 顺手修掉注释里还写着 `session.json` 的地方：`sessionStore.ts` 里 `writeSessionFile` 中
+>   「写了一半的 session.json」→「写了一半的会话文件」。（`cacheMetaProblem` 与
+>   `guardB.test.ts` 那两处由 Task 4 修。）
 
 - [ ] **Step 2: 跑一遍，确认红**
 
@@ -871,22 +939,31 @@ Expected: FAIL —— `store.migrateLegacySession is not a function`。
       }
 
       const target = sessionFile(legacy.sourcePath)
-      // 新版已经有一份就不覆盖：那一份是更新的，旧文件只是上一代格式的残留。
+      // 【本任务唯一会毁数据的地方，判据要强】下面删掉的是用户进度唯一的副本，所以
+      // 「能不能删」必须两条同时成立，任何一条不成立就原样留着、下次启动重试：
       //
-      // 【写失败就绝不删旧文件——这是本任务唯一会毁数据的地方】`writeSessionFile` 是
-      // 「记一条 warn 然后返回」的姿势，而下面那几行删掉的是**用户进度唯一的副本**。
-      // 磁盘满（写要空间、rm 不要）、或者 sessions 被一个同名文件占住（mkdir 抛、rm 照旧
-      // 成功）都会走到这条路上：删完之后进度不可恢复，而且下一次启动的 600ms 自动保存
-      // 会用 cursor=0 覆盖现场。所以要的是「确认落地了才删」。
-      if (!existsSync(target) && !writeSessionFile(target, legacy)) {
-        console.warn('[wt] 旧版会话迁移失败，保留原文件、下次启动重试：', legacySessionPath)
-        return
-      }
-
-      // 旧版没有 settings.json，「上次打开的是哪本」原先只写在会话文件里。
+      // 1. 新位置确实有一份**读得出来**的记录。判据用 `readSessionFile(...) !== null` 而不是
+      //    `existsSync`：后者只回答「有个东西在那儿」，一个空的或截断的 target 会让这次迁移
+      //    跳过写、然后把旧文件删掉——用一个读不出来的残留压掉一份完好的旧记录。
+      //    （target 本来就有一份**能读**的记录时短路掉写：那一份是更新的，旧文件只是上一代
+      //    格式的残留，不该倒回去。）
+      // 2. 「上次打开的是哪本」也落盘了。它在旧版只写在会话文件里；这一条写不进去，迁移好的
+      //    记录就没有任何人去读它——用户手动导入那本书时会被 cursor 0 覆盖掉。
+      //    （Task 7 把导入路径改成「先读会话」之后，这一条的后果降级成「不会自动打开」，
+      //    但闸留着仍然对：能确认的事就确认。）
+      //
+      // 触发条件都很现实：磁盘满（写要空间、rm 不要）、sessions 被一个同名文件占住
+      // （mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复。
+      const alreadyMigrated = readSessionFile(target, legacy.sourcePath) !== null
+      const migrated = alreadyMigrated || writeSessionFile(target, legacy)
       const settings = readSettingsFile(settingsPath)
-      if (settings.lastSourcePath === null) {
+      const lastSourcePathWritten =
+        settings.lastSourcePath !== null ||
         writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+
+      if (!migrated || !lastSourcePathWritten) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
       }
 
       try {
@@ -939,8 +1016,16 @@ git commit -F /tmp/wt-msg.txt
 ## Task 6: IPC 通道
 
 **Files:**
-- Modify: `src/main/channels.ts`、`src/main/ipc.ts`、`src/preload/index.ts`、`src/renderer/src/types/global.d.ts`
+- Modify: `src/main/channels.ts`、`src/main/ipc.ts`、`src/preload/index.ts`
 - Modify: `tests/unit/ipcContract.test.ts`
+
+> **`global.d.ts` 刻意不在这里改。** 它声明的是**渲染层**看到的契约，而 `loadSession` 改成
+> 必填参数之后，唯一的调用点 `App.tsx` 不跟着改就是 `TS2554: Expected 1 arguments, but got 0`
+> ——于是本任务的 `pnpm typecheck` 会当场红（这是初稿的排期错误，复核时发现）。契约与它的
+> 唯一消费者必须同一次改，所以 `global.d.ts` 挪到 Task 7 与 `App.tsx` 一起。
+>
+> preload 不受影响：`global.d.ts` 与 preload 各自的 `WtApi` 是两份独立声明，preload 加参数
+> 不会让渲染层那侧报错。
 
 - [ ] **Step 1: 改契约用例**
 
@@ -967,16 +1052,12 @@ Expected: FAIL —— 实际对象里多了两个键。
   saveSettings: 'wt:save-settings',
 ```
 
-`src/main/ipc.ts`：import 类型加 `AppSettings`，并把四条 handler 改成：
+`src/main/ipc.ts`：import 类型加 `AppSettings`，四条 handler 改成：
 
 ```ts
   ipcMain.handle(CH.loadSession, (_e, sourcePath: string): PersistedSession | null =>
     getStore().readSession(sourcePath)
   )
-```
-
-（这一条**替换掉 Task 3 Step 6 里放的那条过渡实现**——那条对缺参返回 null 的分支到此结束，
-`sourcePath` 从本任务起是必填契约。别把两者留成两份。）
 
   ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
     getStore().writeSession(session)
@@ -993,7 +1074,12 @@ Expected: FAIL —— 实际对象里多了两个键。
   })
 ```
 
-`src/preload/index.ts`（`loadSession` 那三行替换成）：
+**同时删掉 Task 3 放的那条过渡 guard**（连同它的注释），把 handler 写成上面那一行。
+删得掉是因为 Task 5 给 `readSession` 补了入参类型闸：渲染层在本任务之后、Task 7 之前仍然
+不传 `sourcePath`，那时 `readSession(undefined)` 直接返回 `null`（按无记录），**不会抛**。
+两条 guard 留成两份才是要避免的。
+
+`src/preload/index.ts`（`loadSession` / `saveSession` / `clearSession` 那三行替换成五条）：
 
 ```ts
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
@@ -1003,27 +1089,8 @@ Expected: FAIL —— 实际对象里多了两个键。
   saveSettings: (settings: unknown) => ipcRenderer.invoke(CH.saveSettings, settings),
 ```
 
-（preload 的返回值刻意不标具体类型，与 `importNovel` / `saveSession` 一致——渲染层看到的契约
-由 `global.d.ts` 负责，两处不重复维护。）
-
-`src/renderer/src/types/global.d.ts`：顶部 import 与 `ThemeSource` 改成从 core 转出：
-
-```ts
-import type { AppSettings, Novel, PersistedSession, ThemeSource } from '../../../core/types'
-
-export type { ThemeSource }
-```
-
-（删掉原先那行 `export type ThemeSource = 'system' | 'light' | 'dark'`——定义只留 core 一处，
-渲染层再声明一份的话，两处会各自漂移。）`WtApi` 里 `loadSession` 改签名并补两条：
-
-```ts
-  loadSession: (sourcePath: string) => Promise<PersistedSession | null>
-  saveSession: (session: PersistedSession) => Promise<void>
-  clearSession: () => Promise<void>
-  loadSettings: () => Promise<AppSettings>
-  saveSettings: (settings: AppSettings) => Promise<void>
-```
+（preload 的返回值刻意不标具体类型，与 `importNovel` 一致——渲染层看到的契约由 `global.d.ts`
+负责，两处不重复维护。）
 
 - [ ] **Step 4: 跑门禁**
 
@@ -1033,14 +1100,15 @@ Expected: 两条 tsc 无输出、用例 PASS、exit 0。
 - [ ] **Step 5: 提交**
 
 ```bash
-cat > /tmp/wt-msg.txt <<'MSG'
+cat > /tmp/wt-msg-t6.txt <<'MSG'
 feat: 加设置的 IPC 通道，loadSession 按书取
 
 load-session 现在带 sourcePath：进度按书分文件之后，「读哪一本的进度」必须问得明确。
-设置走 load-settings / save-settings 两条新通道。
+设置走 load-settings / save-settings 两条新通道。Task 3 那条过渡 guard 删掉——入参类型闸
+已经挪进 store 的 readSession 里，缺参按无记录返回，不再需要 handler 自己兜。
 MSG
-git add src/main/channels.ts src/main/ipc.ts src/preload/index.ts src/renderer/src/types/global.d.ts tests/unit/ipcContract.test.ts
-git commit -F /tmp/wt-msg.txt
+git add src/main/channels.ts src/main/ipc.ts src/preload/index.ts tests/unit/ipcContract.test.ts
+git commit -F /tmp/wt-msg-t6.txt
 ```
 
 ---
@@ -1048,8 +1116,16 @@ git commit -F /tmp/wt-msg.txt
 ## Task 7: 渲染层读设置、写设置
 
 **Files:**
-- Modify: `src/renderer/src/App.tsx`
+- Modify: `src/renderer/src/App.tsx`、`src/renderer/src/types/global.d.ts`
 - Modify: `tests/setup.ts`、`tests/unit/app.test.tsx`
+
+> **`global.d.ts` 在本任务里（从 Task 6 挪过来的）**：它声明的渲染层契约必须与它的唯一消费者
+> `App.tsx` 同一次改，否则中间那个提交的 `pnpm typecheck` 是红的。
+>
+> **本任务还要修一个真 bug（复核时发现的，计划初稿漏了）**：`openNovel` 一直是
+> `new TypingEngine(next)`——**从不读会话**，而「导入小说」走的正是它。叠加那条 600ms 自动保存，
+> 最终形态下「导入一本读过的书」= 全新引擎 → 落盘 cursor 0 → **覆盖那本书的进度**。
+> 那正是本特性存在的理由，也会让 Task 8 验收的第 2 条在真机上必失败。见 Step 4 (b)。
 
 - [ ] **Step 1: 改两个桩，让门禁先编译得过**
 
@@ -1070,6 +1146,25 @@ git commit -F /tmp/wt-msg.txt
 顶部加同一条 import，并把类型 import 补成
 `import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'`
 （下面那条守卫用例要用 `AppSettings`）。
+
+**`src/renderer/src/types/global.d.ts`**：顶部 import 与 `ThemeSource` 改成从 core 转出：
+
+```ts
+import type { AppSettings, Novel, PersistedSession, ThemeSource } from '../../../core/types'
+
+export type { ThemeSource }
+```
+
+（删掉原先那行 `export type ThemeSource = 'system' | 'light' | 'dark'`——定义只留 core 一处，
+渲染层再声明一份的话两处会各自漂移。）`WtApi` 里 `loadSession` 改签名并补两条：
+
+```ts
+  loadSession: (sourcePath: string) => Promise<PersistedSession | null>
+  saveSession: (session: PersistedSession) => Promise<void>
+  clearSession: () => Promise<void>
+  loadSettings: () => Promise<AppSettings>
+  saveSettings: (settings: AppSettings) => Promise<void>
+```
 
 - [ ] **Step 2: 写用例**
 
@@ -1182,17 +1277,46 @@ import type { AppSettings, InputMode, Novel } from '../../core/types'
   const [settingsLoaded, setSettingsLoaded] = useState(false)
 ```
 
-(b) `openNovel` 里补一行（导入与启动恢复都经过它）：
+(b) `openNovel` 改成**先读这本书自己的进度再决定是接着读还是从头**。这是本特性能否成立的那一处
+——「导入小说」走的正是它，而它原先无条件 `new TypingEngine(next)`：
 
 ```tsx
-  const openNovel = useCallback((next: Novel) => {
-    const fresh = new TypingEngine(next)
+  /**
+   * 打开一本书：**先问磁盘上有没有这本书的进度**，有就接着读，没有才从零开始。
+   *
+   * 【为什么必须在这里问】「导入小说」走的就是这个函数，而启动恢复也走它。少了这次读盘，
+   * 导入一本读过的书＝全新引擎 ＝600ms 后把 cursor 0 落盘覆盖掉那本书的进度——而「每本书
+   * 各留一份进度」存在的全部意义就是这一条。判断只有这一处，调用方不必各自判一遍。
+   */
+  const openNovel = useCallback(async (next: Novel): Promise<void> => {
+    // 递增序号，用来丢掉过期的那一次：读盘是异步的，用户连续导入两本时，先发起、后返回的
+    // 那一次会把后打开的书顶掉。
+    const seq = ++openSeqRef.current
+    const api = getApi()
+    const session = api ? await api.loadSession(next.sourcePath) : null
+    if (seq !== openSeqRef.current) return
+
     setNovel(next)
-    setEngine(fresh)
+    setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
     setExpanded(false)
     setLastSourcePath(next.sourcePath)
   }, [])
 ```
+
+配套：在 `engineRef` 那几行旁边加
+
+```tsx
+  /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
+  const openSeqRef = useRef(0)
+```
+
+并把两处调用点改成 `void openNovel(...)`：`handleImport` 里是
+`await openNovel(next)`（`handleImport` 本身已经是 async），启动 flow 里见 (d)。
+
+> **顺带修掉一个既有问题（换成按书存之后更显眼了）**：会话保存那个 `useEffect` 的 cleanup 会
+> `clearTimeout` 掉待发的定时器，而换书时 `engine` 变了，于是**上一本那一次的进度不会落盘**
+> （600ms 之内换书就丢一次）。天然修法是在 `openNovel` 开头先把当前这本 flush 一次——
+> 复用下面 beforeunload 那个 `flush` 的函数体，把它提成一个 `useCallback` 再在两处调用。
 
 (c) `handleClearSession` 里补一行：
 
@@ -1228,16 +1352,9 @@ import type { AppSettings, InputMode, Novel } from '../../core/types'
       try {
         const loaded = await api.openNovelPath(target)
         if (cancelled) return
-        // 会话按【这本书自己的路径】取：别的书的进度仍在磁盘上，只是这一次不去读它。
-        const session = await api.loadSession(loaded.sourcePath)
-        if (cancelled) return
-        if (session) {
-          setNovel(loaded)
-          setEngine(TypingEngine.fromSession(loaded, session))
-          setLastSourcePath(loaded.sourcePath)
-        } else {
-          openNovel(loaded)
-        }
+        // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下的
+        // 那本书的进度，别的书留在磁盘上、这一次不去读。
+        await openNovel(loaded)
       } catch {
         // 原文件已不可用：停在空状态，等用户重新导入
       }
