@@ -321,6 +321,12 @@ function writeSettingsFile(path: string, s: AppSettings): void {
 }
 ```
 
+**一条口径说明（写进注释或留在这里都行，但别读错）：** 校验失败是**整份回退**，不是逐字段恢复：一份手改过的
+`"themeSource": "sepia"` 会连 `docTitle` / `darkPaper` / `lastSourcePath` 一起丢掉。这是刻意与
+`sessionProblem` / `cacheMetaProblem` 两个家族保持一致（三份校验器同一个姿势），**不是**说受影响的
+只有坏的那个键——`readSettingsFile` 的警告里「按默认值处理」指的是整份。丢掉 `lastSourcePath` 是
+有行为后果的：应用不再自动打开上次那本书。
+
 (d) `createSessionStore` 里加路径与两个方法（`settingsPath` 紧跟 `sessionPath` 那几行）：
 
 ```ts
