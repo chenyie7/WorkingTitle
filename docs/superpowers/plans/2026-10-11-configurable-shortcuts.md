@@ -1273,7 +1273,6 @@ import {
   fromChord,
   normalizeSpec,
   platformKind,
-  resolveShortcuts,
   type KeyChord,
   type ResolvedShortcuts,
   type ShortcutId
@@ -1295,6 +1294,12 @@ export type ShortcutActions = Record<ShortcutId, () => void>
  *
  * 【合成期间一律返回 null】那一下的按键属于输入法（选词、翻页都可能是组合键），把它当成
  * 快捷键会打断候选框。这条与 CLAUDE.md 里「合成期间不能碰 textarea」是同一个道理的另一面。
+ *
+ * 【但 `e.isComposing` 只在「监听原生事件」这个前提下成立】分发器挂在 `window` 上，收到的
+ * 就是真 DOM 事件，所以这个字段读得到。而 **React 的合成事件不暴露它**（取到的是
+ * `undefined`，`InputCapture.tsx` 里记过同一件事），于是这个判断恒假、合成过滤**静默失效**。
+ * 真到那一天也不会有一条用例变红：jsdom 里没有真输入法，这条只有真机判得出来。谁要把分发器
+ * 挪进 React 的 `onKeyDown`，得自己把这一层补回来（改读 `e.nativeEvent.isComposing`）。
  */
 export function toChord(e: KeyboardEvent): KeyChord | null {
   if (e.isComposing) return null
@@ -1361,13 +1366,14 @@ export function useShortcutDispatcher({
 ```
 
 > 文件顶部的 import 要从 core 取这几样：
-> `SHORTCUTS`、`fromChord`、`normalizeSpec`、`platformKind`、`resolveShortcuts`，
+> `SHORTCUTS`、`fromChord`、`normalizeSpec`、`platformKind`，
 > 以及类型 `KeyChord`、`ResolvedShortcuts`、`ShortcutId`。
+> （`resolveShortcuts` 不在这里：表由调用方 resolve 好传进来，本文件用不到它。）
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `pnpm vitest run tests/unit/shortcutDispatch.test.ts`
-Expected: PASS，全部 9 条通过
+Expected: PASS，全部通过
 
 - [ ] **Step 5: 提交**
 
