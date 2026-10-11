@@ -3794,30 +3794,47 @@ export function resetStore(): void {
 import { app, Menu, shell, type BrowserWindow } from 'electron'
 import { CH, type MenuCommand } from './ipc'
 
+/**
+ * 建原生应用菜单。**只有 macOS 会真的建出菜单**，见下面的注释。
+ */
 export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
   const send = (cmd: MenuCommand): void => {
     getWindow()?.webContents.send(CH.menuCommand, cmd)
   }
 
-  const isMac = process.platform === 'darwin'
+  // 【为什么非 macOS 一个菜单都不建】Windows / Linux 的原生菜单栏渲染在**窗口内部**、
+  // 标题栏正下方那一行，而真 Word 那个位置是功能区（文件 / 开始 / 插入 …）。一条
+  // 「文件 编辑 视图 帮助」横在那儿，伪装的意图当场就露了——这跟状态栏那几处破绽是同一类问题。
+  //
+  // macOS 相反：菜单在**屏幕顶部**，每个 Mac 应用都有、真 Word 也有，不构成破绽；而且
+  // ⌘Q / ⌘H / ⌘C 这些系统级快捷键靠它，去掉会连带废掉。
+  //
+  // 【不建菜单会连带失去什么（仅 Windows / Linux）】
+  //  - `Ctrl+O`（导入小说）失效——改从设置对话框进（`⌘/Ctrl + ,` →「导入小说」按钮）；
+  //  - 撤销/重做/复制/粘贴这些 `role` 没了——但**可编辑元素里的 Ctrl+C/V/X/A/Z 由 Chromium
+  //    自己处理，与菜单无关**，所以设置里的文档名、比例框照常能复制粘贴。
+  //
+  // 【为什么不用 setMenuBarVisibility(false) 保留加速键】那条路是「菜单还在、只是藏起来」，
+  // 藏得干不干净依赖平台行为（autoHideMenuBar 与 Alt 键的交互），而本机只有 macOS、
+  // 验不了 Windows。`setApplicationMenu(null)` 是**确定没有菜单**，伪装上不留任何余地。
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null)
+    return
+  }
 
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? ([
-          {
-            label: app.name,
-            submenu: [
-              { label: '关于 ' + app.name, click: () => send('about') },
-              { type: 'separator' },
-              { role: 'hide', label: '隐藏' },
-              { role: 'hideOthers', label: '隐藏其他' },
-              { role: 'unhide', label: '显示全部' },
-              { type: 'separator' },
-              { role: 'quit', label: '退出' }
-            ]
-          }
-        ] as Electron.MenuItemConstructorOptions[])
-      : []),
+    {
+      label: app.name,
+      submenu: [
+        { label: '关于 ' + app.name, click: () => send('about') },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出' }
+      ]
+    },
     {
       label: '文件',
       submenu: [
@@ -3831,7 +3848,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): void {
           click: () => send('clear-session')
         },
         { type: 'separator' },
-        isMac ? { role: 'close', label: '关闭窗口' } : { role: 'quit', label: '退出' }
+        { role: 'close', label: '关闭窗口' }
       ]
     },
     {
