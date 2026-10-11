@@ -113,11 +113,32 @@
   border-right: none;
 }
 
+/* 组内的排布：**两行、按列填充**。
+ *
+ * 这正是真 Word 功能区的排法——小按钮分两行填满组高，大按钮占满整列。
+ * `grid-auto-flow: column` + 固定两行 = 先把第一列的两个位置填掉、再开下一列。
+ * 于是「剪贴板」组按 [粘贴(大), 剪切, 复制, 格式刷(大)] 的顺序自然排成
+ *
+ *     粘贴 | 剪切 | 格式刷
+ *          | 复制 |
+ *
+ * 而不用在数据里描述任何位置。哪些项占满整列，见下面 `grid-row: span 2` 那组规则。
+ */
 .wt-group__body {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
   align-items: center;
+  justify-items: center;
   gap: 2px;
-  flex: 1;
+}
+
+/* 占满整列（跨两行）的几种控件：大按钮、下拉框、样式库。
+   小按钮（含分割按钮）只占一格，两行填满时才是 Word 那个样子。 */
+.wt-btn--large,
+.wt-combo,
+.wt-gallery {
+  grid-row: span 2;
 }
 
 .wt-group__label {
@@ -378,21 +399,6 @@
 .wt-split__caret {
   width: 10px;
   height: 10px;
-}
-
-/* ---- 格子布局（剪贴板组里「剪切/复制/格式刷」贴满「粘贴」的高度）----
- * 列数由 JS 通过 inline style 给（见 Toolbar 的 `repeat(N, auto)`），这里只管行距。
- *
- * 【奇数项为什么不让最后一项横跨整行】试过。两项并排约 58px，扣掉 `.wt-btn` 的
- * 左右内边距只剩 44px，装不下「格式刷」三个字 + 图标的约 53px，会溢出；
- * 不放标签则是一个 58px 宽、中间孤零零一个小图标的按钮，比右下角留着空位更怪。
- * 所以就让右下角空着——那一格没有边框，看不出来。
- */
-.wt-grid {
-  display: grid;
-  gap: 2px;
-  align-items: center;
-  justify-items: center;
 }
 
 .wt-sep {

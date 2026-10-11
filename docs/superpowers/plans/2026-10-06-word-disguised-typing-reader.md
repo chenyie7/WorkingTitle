@@ -4730,11 +4730,32 @@ body {
   border-right: none;
 }
 
+/* 组内的排布：**两行、按列填充**。
+ *
+ * 这正是真 Word 功能区的排法——小按钮分两行填满组高，大按钮占满整列。
+ * `grid-auto-flow: column` + 固定两行 = 先把第一列的两个位置填掉、再开下一列。
+ * 于是「剪贴板」组按 [粘贴(大), 剪切, 复制, 格式刷(大)] 的顺序自然排成
+ *
+ *     粘贴 | 剪切 | 格式刷
+ *          | 复制 |
+ *
+ * 而不用在数据里描述任何位置。哪些项占满整列，见下面 `grid-row: span 2` 那组规则。
+ */
 .wt-group__body {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
   align-items: center;
+  justify-items: center;
   gap: 2px;
-  flex: 1;
+}
+
+/* 占满整列（跨两行）的几种控件：大按钮、下拉框、样式库。
+   小按钮（含分割按钮）只占一格，两行填满时才是 Word 那个样子。 */
+.wt-btn--large,
+.wt-combo,
+.wt-gallery {
+  grid-row: span 2;
 }
 
 .wt-group__label {
@@ -4995,21 +5016,6 @@ body {
 .wt-split__caret {
   width: 10px;
   height: 10px;
-}
-
-/* ---- 格子布局（剪贴板组里「剪切/复制/格式刷」贴满「粘贴」的高度）----
- * 列数由 JS 通过 inline style 给（见 Toolbar 的 `repeat(N, auto)`），这里只管行距。
- *
- * 【奇数项为什么不让最后一项横跨整行】试过。两项并排约 58px，扣掉 `.wt-btn` 的
- * 左右内边距只剩 44px，装不下「格式刷」三个字 + 图标的约 53px，会溢出；
- * 不放标签则是一个 58px 宽、中间孤零零一个小图标的按钮，比右下角留着空位更怪。
- * 所以就让右下角空着——那一格没有边框，看不出来。
- */
-.wt-grid {
-  display: grid;
-  gap: 2px;
-  align-items: center;
-  justify-items: center;
 }
 
 .wt-sep {
@@ -5894,16 +5900,6 @@ export type ToolbarItem =
   | { kind: 'gallery'; id: string; title: string; entries: readonly string[] }
   /** 主按钮 + 右侧展开箭头（下划线 / 项目符号 / 编号）。主按钮是 toggle，箭头只弹提示。 */
   | { kind: 'split'; id: string; label: string; title: string; icon: FluentIcon }
-  /**
-   * 把一个组里的小按钮排成 `columns` 列。**存在的唯一理由是高度对齐**：
-   *
-   * 真 Word 的「剪贴板」组里，「粘贴」是大按钮（64px 高），而「剪切/复制/格式刷」是三个
-   * 小按钮——它们不是横着飘在旁边，而是排成两列**贴满那 64px**。少了这层，整组看起来就是
-   * 「一个大方块边上飘着三个小的」，实测被一眼指出「太大、很奇怪」。
-   *
-   * 所以这不是通用的栅格，是「让若干小按钮凑出与相邻大按钮同高的一块」。
-   */
-  | { kind: 'grid'; id: string; columns: number; items: ToolbarItem[] }
 
 export interface ToolbarGroup {
   label: string
@@ -6117,12 +6113,10 @@ export function Toolbar({
   const { toggles, toggle, notify } = useToolbar()
 
   /**
-   * 渲染一个「叶子」控件（不能再往下拆的那些）。
-   *
-   * 【为什么抽成函数】`grid` 里的每一项必须与直接摆在组里的一项走**同一套**渲染规则，
-   * 否则同一个按钮放进格子就换了样式。分开写两份迟早会漂移。
+   * 渲染一个控件。抽成函数只是因为它在两处被调用（组内、以及下面那份兜底）——
+   * 组内的两行排布是 CSS 的事，与这里无关，见 `ribbon.css` 的 `.wt-group__body`。
    */
-  const renderLeaf = (item: ToolbarItem): ReactNode => {
+  const renderItem = (item: ToolbarItem): ReactNode => {
     if (item.kind === 'settings') {
       return (
         <button
@@ -6167,11 +6161,6 @@ export function Toolbar({
       )
     }
 
-    if (item.kind === 'grid') {
-      // 只会从 renderItem 进来；写在这里是为了让类型收敛，不是一条真实路径。
-      return null
-    }
-
     const active = Boolean(toggles[item.id])
     const Icon = item.icon
     // 有图标、又不是大按钮 → 只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
@@ -6195,20 +6184,6 @@ export function Toolbar({
         {Icon ? <Icon filled={active} className="wt-btn__icon" /> : null}
         <span className="wt-btn__label">{item.label}</span>
       </button>
-    )
-  }
-
-  const renderItem = (item: ToolbarItem): ReactNode => {
-    if (item.kind !== 'grid') return renderLeaf(item)
-    return (
-      <div
-        key={item.id}
-        className="wt-grid"
-        data-testid={`grid-${item.id}`}
-        style={{ gridTemplateColumns: `repeat(${item.columns}, auto)` }}
-      >
-        {item.items.map(renderItem)}
-      </div>
     )
   }
 
@@ -6331,20 +6306,19 @@ const STYLE_ENTRIES = ['正文', '标题 1', '标题 2', '标题 3', '无间隔'
 const CLIPBOARD_GROUP: ToolbarGroup = {
   label: '剪贴板',
   items: [
-    // 真 Word 的「粘贴」是带展开箭头的大按钮；这里没给 `split` 做大按钮尺寸（那要另写一套
-    // 箭头定位的样式），所以粘贴用大按钮，箭头留给下面几个真正需要它的地方。
+    // 数组顺序就是排布顺序。组内按【两行、按列填充】排（见 ribbon.css 的 `.wt-group__body`），
+    // 于是这四项落成「粘贴(大) | 剪切 / 复制 | 格式刷(大)」——大按钮占满整列。
+    // 全是小按钮横排一溜的话，整组看起来像「一个大方块边上飘着几个小的」，实测被指出很奇怪。
     { kind: 'placeholder', id: 'paste', label: '粘贴', title: '粘贴', icon: IconPaste, large: true },
-    // 剩下三个排成两列**贴满粘贴那 64px**。横着排成一溜的话，整组看起来就是
-    // 「一个大方块边上飘着三个小的」——实测被一眼指出「太大、很奇怪」。
+    { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
+    { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
     {
-      kind: 'grid',
-      id: 'clipboard-actions',
-      columns: 2,
-      items: [
-        { kind: 'placeholder', id: 'cut', label: '剪切', title: '剪切', icon: IconCut },
-        { kind: 'placeholder', id: 'copy', label: '复制', title: '复制', icon: IconCopy },
-        { kind: 'placeholder', id: 'brush', label: '格式刷', title: '格式刷', icon: IconFormatPainter }
-      ]
+      kind: 'placeholder',
+      id: 'brush',
+      label: '格式刷',
+      title: '格式刷',
+      icon: IconFormatPainter,
+      large: true
     }
   ]
 }
