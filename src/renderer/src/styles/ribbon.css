@@ -832,3 +832,24 @@
   /* 深色下强调色是浅蓝，配深字对比最强 */
   color: #10141a;
 }
+
+/* 快捷键录制框。做成 button 而不是 input：这个应用的焦点豁免名单里有 `input`，
+   而录制要自己接管 keydown——做成 input 的话那一下会同时被当作「在输入框里打字」。 */
+.wt-shortcut {
+  min-width: 148px;
+  padding: 4px 10px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--wt-text);
+  background: var(--wt-chrome);
+  border: 1px solid var(--wt-chrome-border);
+  border-radius: var(--wt-radius);
+  cursor: pointer;
+}
+
+.wt-shortcut--recording {
+  color: var(--wt-text-muted);
+  border-color: var(--wt-primary);
+  border-style: dashed;
+}

@@ -1,6 +1,28 @@
-import { useEffect, useMemo, type FocusEvent } from 'react'
+// `KeyboardEvent` 要**改名**导入：这个名字一进来就盖住了 DOM 那个（下面 Esc 关闭用的
+// `window.addEventListener('keydown', …)` 收的正是 DOM 事件），而两者不通用——React 的
+// `KeyboardEvent<Element>` 上多一个 `nativeEvent`、DOM 的则多十几个字段，互相都赋不过去，
+// 直接照抄会把那条既有代码判成类型错。
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
+import {
+  SHORTCUTS,
+  defaultShortcut,
+  findConflict,
+  formatShortcut,
+  fromChord,
+  platformKind,
+  resolveShortcuts,
+  shortcutProblem,
+  type ShortcutId
+} from '../../../core/shortcuts'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
@@ -34,6 +56,29 @@ export interface SettingsDialogProps {
   onThemeSourceChange: (next: ThemeSource) => void
   /** 有没有打开小说：「当前书」的比例框据此禁用——没有书就没有「当前书」 */
   novelOpen: boolean
+  /**
+   * 用户改过的那些快捷键——**稀疏表**：缺条目就是「用该平台的默认值」。
+   *
+   * 【别把它当成补齐过的那张表】下面每一条都写着 `?? defaultShortcut(...)`，正是为这件事。
+   * 以为它恒满的话，那个兜底看起来就像多余的，删掉之后没改过的快捷键会变成 `undefined`。
+   * 补齐这一步按平台做，而平台是另一个 prop。
+   *
+   * 【值类型里那个 `| undefined` 是有意的】上游拿的是 `AppSettings.shortcuts`，它的类型是
+   * `Partial<Record<ShortcutId, string>>`——索引访问本来就可能取不到。写成
+   * `Record<string, string>` 的话调用方那一个 prop 直接编译不过（实测 TS2345：'string' index
+   * signatures are incompatible）。
+   */
+  shortcuts: Record<string, string | undefined>
+  /** 平台原值（`window.api.platform`），用来决定 ↺ 恢复成哪一套默认值。 */
+  platform: string
+  /** 快捷键改完的提交。与文档名一样，点了保存才生效。 */
+  onShortcutsChange: (next: Record<string, string | undefined>) => void
+  /**
+   * 录制态变化时通知外面。
+   * 【为什么必须通知】录制期间分发器必须静音——不然录 `⌘O` 会当场触发一次真导入，
+   * 用户在设置里按下组合键的那一刻文件选择框就弹出来了。
+   */
+  onRecordingChange: (recording: boolean) => void
 }
 
 const THEME_OPTIONS = [
@@ -62,10 +107,25 @@ export function SettingsDialog({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
-  novelOpen
+  novelOpen,
+  shortcuts,
+  platform,
+  onShortcutsChange,
+  onRecordingChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()
+
+  const kind = platformKind(platform)
+  /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
+  const [recording, setRecording] = useState<ShortcutId | null>(null)
+
+  // 录制态一变就告诉外面（分发器据此静音）。卸载时也要说一声 false，否则关掉对话框
+  // 之后分发器会一直哑着——而用户完全看不出为什么快捷键失效了。
+  useEffect(() => {
+    onRecordingChange(recording !== null)
+  }, [recording, onRecordingChange])
+  useEffect(() => () => onRecordingChange(false), [onRecordingChange])
 
   /**
    * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
@@ -112,11 +172,78 @@ export function SettingsDialog({
           return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
         },
         commit: (value) => setGlobalRatio(Number(value))
-      }
+      },
+      // 快捷键：**每一条一行**，从 core 的注册表推出来（加一条快捷键不必来这里改代码）
+      ...SHORTCUTS.map((def): DeferredField => ({
+        id: `shortcut-${def.id}`,
+        committed: shortcuts[def.id] ?? defaultShortcut(def.id, kind),
+        // 草稿可能是「录制中」这个状态，此时不留任何东西；真出草稿时它一定已经是合法规范串
+        normalize: (raw, committed) => (raw === '' ? committed : raw),
+        commit: (value) => {
+          // 【与默认值相同时把这一条抹掉】稀疏表里「显式写回默认值」与「从未改过」对读取方
+          // 完全没有区别（`resolveShortcuts` 两者都落到同一个默认值），那就没有理由把表撑大。
+          // 点 ↺ 之后这一条消失，正是这个意思。
+          const next = { ...shortcuts }
+          if (value === defaultShortcut(def.id, kind)) delete next[def.id]
+          else next[def.id] = value
+          onShortcutsChange(next)
+        }
+      }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio]
+    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
+
+  /**
+   * 冲突检测要比的是**草稿**，不是已提交值。
+   *
+   * 少了这一层，用户在同一个对话框里把两条改成同一个键时，第二次会看不出冲突（因为已提交
+   * 值还没变），保存下去两条就都是它——而引擎里只会有一条生效。
+   */
+  const resolvedTable = useMemo(() => {
+    const raw: Partial<Record<ShortcutId, string>> = { ...shortcuts }
+    for (const def of SHORTCUTS) {
+      const draft = drafts[`shortcut-${def.id}`]
+      if (typeof draft === 'string' && draft !== '') raw[def.id] = draft
+    }
+    return resolveShortcuts(raw, kind)
+  }, [shortcuts, drafts, kind])
+
+  /** 录制键位。**不 preventDefault 掉所有键**——只有认出是组合键、或按 Esc 时才拦。 */
+  const handleRecordKey =
+    (id: ShortcutId) =>
+    (e: ReactKeyboardEvent<HTMLElement>): void => {
+      if (recording !== id) return
+      if (e.key === 'Escape') {
+        // Esc 只是取消录制，值不变。**它同时也是对话框自己的关闭键**——所以必须停在这一层，
+        // 否则用户想取消录制会把整个对话框关掉（那一瞬间的草稿全丢）。
+        e.preventDefault()
+        e.stopPropagation()
+        setRecording(null)
+        return
+      }
+      const chord = toChord(e.nativeEvent)
+      if (chord === null) return
+      const spec = fromChord(chord)
+      if (spec === null) {
+        notify('必须带一个修饰键（⌘/Ctrl/Alt），而且键位要在支持范围内')
+        return
+      }
+      const problem = shortcutProblem(spec, kind)
+      if (problem === 'reserved') {
+        notify('这个组合被 macOS 的系统菜单占用了（退出 / 关闭 / 复制粘贴等）')
+        return
+      }
+      const clash = findConflict(resolvedTable, spec, id)
+      if (clash !== null) {
+        const label = SHORTCUTS.find((d) => d.id === clash)?.label ?? clash
+        notify(`与「${label}」冲突`)
+        return
+      }
+      e.preventDefault()
+      setDraft(`shortcut-${id}`, spec)
+      setRecording(null)
+    }
 
   // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
   useEffect(() => {
@@ -364,6 +491,43 @@ export function SettingsDialog({
               深色模式下也变暗
             </label>
           </div>
+
+          {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
+          {SHORTCUTS.map((def) => {
+            const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
+            const isRecording = recording === def.id
+            return (
+              <div className="wt-modal__row" key={def.id}>
+                <span className="wt-modal__label">{def.label}</span>
+                <button
+                  type="button"
+                  className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
+                  data-testid={`shortcut-${def.id}-input`}
+                  aria-label={`${def.label}的快捷键`}
+                  onKeyDown={handleRecordKey(def.id)}
+                  onBlur={() => {
+                    // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
+                    if (recording === def.id) setRecording(null)
+                  }}
+                  onClick={() => setRecording(def.id)}
+                >
+                  {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                </button>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid={`shortcut-${def.id}-reset`}
+                  aria-label={`把${def.label}恢复为默认`}
+                  onClick={() => {
+                    setRecording(null)
+                    setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
+                  }}
+                >
+                  ↺
+                </button>
+              </div>
+            )
+          })}
 
           <div className="wt-modal__row">
             <span className="wt-modal__label">
