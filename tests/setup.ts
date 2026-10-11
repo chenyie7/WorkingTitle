@@ -1,5 +1,6 @@
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
+import { defaultSettings } from '../src/core/types'
 import type { WtApi } from '../src/renderer/src/types/global'
 
 /**
@@ -26,6 +27,8 @@ const benignApi: WtApi = {
   loadSession: async () => null,
   saveSession: async () => {},
   clearSession: async () => {},
+  loadSettings: async () => defaultSettings(),
+  saveSettings: async () => {},
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,

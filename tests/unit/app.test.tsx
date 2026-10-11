@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
 import { splitChapters } from '../../src/core/chapters'
-import type { Novel, PersistedSession } from '../../src/core/types'
+import { defaultSettings } from '../../src/core/types'
+import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 function makeNovel(): Novel {
   const text = '第一章 甲\nAAAAAAAAAA\n第二章 乙\nBBBBBBBBBB\n'
@@ -25,18 +26,36 @@ function revealedChars(): number {
 }
 
 let saved: PersistedSession | null = null
+/** 最近一次 `loadSession` 是【按哪本书的路径】去取的。null = 从没按路径取过。 */
+let sessionAskedFor: string | null = null
 
 function installApi(novel: Novel | null, session: PersistedSession | null = null): void {
   saved = null
+  sessionAskedFor = null
   ;(window as unknown as { api: unknown }).api = {
     importNovel: vi.fn(async () => novel),
     openNovelPath: vi.fn(async () => novel as Novel),
     initialNovelPath: vi.fn(async () => null),
-    loadSession: vi.fn(async () => session),
+    loadSession: vi.fn(async (sourcePath: string) => {
+      sessionAskedFor = sourcePath
+      return session
+    }),
     saveSession: vi.fn(async (s: PersistedSession) => {
       saved = s
     }),
     clearSession: vi.fn(async () => {}),
+    /**
+     * 【最后一项刻意不是 `defaultSettings()` 的那个 null】`lastSourcePath` 现在是启动恢复的唯一
+     * 线索：按书取进度之后，「读完哪本接着读」必须先知道是哪本。桩里让设置指向本用例这本，
+     * 就等于「用户上次打开的就是它」——那是真的 settings.json 在这本书读过之后的样子。
+     * 若留 null，启动就什么都不开（正合 `installApi(null)` 那条用例），而
+     * 「有会话时启动即恢复到上次位置」会红成 0 个字：它现在测的正是「设置指路 → 取那本的进度」。
+     */
+    loadSettings: vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel?.sourcePath ?? null
+    })),
+    saveSettings: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
     setThemeSource: vi.fn(async () => {}),
@@ -256,5 +275,106 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('page-empty')).toBeTruthy()
     expect(screen.getByTestId('status-chapter').textContent).toBe('—')
     expect(revealedChars()).toBe(0)
+  })
+})
+
+describe('设置的持久化', () => {
+  it('启动时把磁盘上的设置读进界面', async () => {
+    installApi(null)
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      docTitle: '季度汇报',
+      themeSource: 'dark' as const,
+      darkPaper: true,
+      lastSourcePath: null
+    }))
+    render(<App />)
+    // doc-title 是蓝条上那个文档名（Ribbon.tsx 里 data-testid="doc-title"）
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+  })
+
+  // 【这条是本次改动里最容易写错的一条】设置是「改了就写回」的，而首帧渲染时三个状态
+  // 还都是默认值——读盘是异步的。少了 settingsLoaded 那道闸，启动会先拿着默认值写一遍，
+  // 把磁盘上真正的设置冲掉，然后才读到已经被自己冲掉的默认值。
+  //
+  // 【读盘必须真的挂住】桩若立即 resolve，settingsLoaded 马上就是 true，那个 effect 写盘
+  // 是**正确行为**——这条用例就变成「测不出守卫在不在」的空跑。所以这里用一个手动放行的
+  // Promise，并分两段断言：挂住时一次都不许写，放行之后必须写。第二段是前提自检，
+  // 少了它，一个「防抖根本没接上」的实现也能让第一段绿。
+  it('读回设置之前不写盘（否则会用自己的默认值覆盖磁盘）', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    let release: (s: AppSettings) => void = () => {}
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(
+      () =>
+        new Promise<AppSettings>((resolve) => {
+          release = resolve
+        })
+    )
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSettings).not.toHaveBeenCalled()
+
+    // 【第二段为什么是 waitFor 而不是再推进一次定时器】`advanceTimersByTimeAsync(2000)` 跑在
+    // React 把「settingsLoaded 变 true」那一帧提交【之前】：那个 effect 因此是在这一刻之后才
+    // 排上 600ms 定时器的，推进窗口里根本没有它。`shouldAdvanceTime: true` 下 waitFor 的实时
+    // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
+    // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
+    await act(async () => {
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null })
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+  })
+
+  it('改了文档名之后会把设置写回去', async () => {
+    installApi(makeNovel())
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+    importViaSettings()
+    openSettings()
+    fireEvent.change(screen.getByTestId('doc-title-input'), { target: { value: '季度汇报' } })
+    fireEvent.blur(screen.getByTestId('doc-title-input'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.docTitle).toBe('季度汇报')
+  })
+})
+
+describe('导入一本读过的书', () => {
+  // 【这是本特性存在的理由，也是初稿漏掉的那条】openNovel 原先是 `new TypingEngine(next)`
+  // ——**从不读会话**，而「导入小说」走的正是它。少了读盘这一步，导入一本读过的书＝全新引擎
+  // ＝600ms 后把 cursor 0 落盘覆盖掉那本书的进度。
+  it('导入时接着上次读，而不是从头开始', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 20,
+      revealStart: 0,
+      chapterPos: [20, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+
+    // 接着上次读 ⇒ 阅读区显示 20 个字（而不是 0）
+    await waitFor(() => expect(revealedChars()).toBe(20))
+    // 【这一条才是钉住「按书取进度」的】只断言「显示了 20 个字」是不够的——实现之前它也是绿的：
+    // 旧启动流程里那段「先 loadSession()（无参）再比 sourcePath」照样能恢复到 20 个字，于是这
+    // 条用例在改之前就能通过（实测：只加用例、还没动 App.tsx 的那一轮，它已经在 12 passed 里）。
+    // 有证明力的是「有人按这本书的路径去问过进度」：openNovel 若不读会话，这一项恒为 null。
+    expect(sessionAskedFor).toBe(novel.sourcePath)
   })
 })

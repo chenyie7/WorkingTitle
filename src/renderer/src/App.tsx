@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TypingEngine } from '../../core/engine'
-import type { InputMode, Novel } from '../../core/types'
+import { DEFAULT_DOC_TITLE } from '../../core/types'
+import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
 import { Ribbon } from './components/Ribbon'
@@ -40,11 +41,22 @@ export default function App() {
    * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
    * 默认取一个中性的 `文档1`。
    */
-  const [docTitle, setDocTitle] = useState('文档1')
+  const [docTitle, setDocTitle] = useState(DEFAULT_DOC_TITLE)
   /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
   const [darkPaper, setDarkPaper] = useState(false)
   /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
   const [themeSource, setThemeSource] = useState<ThemeSource>('system')
+  /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
+  const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
+  /**
+   * 设置是否已经读回来了。
+   *
+   * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
+   * 防抖 effect），而首帧渲染时这四个状态还都是默认值——读盘是异步的。于是那个 effect
+   * 会先拿着「文档1 / 跟随系统 / 不暗 / null」写一遍，把磁盘上真正的设置冲掉，然后才读到
+   * 已经被自己冲掉的默认值。
+   */
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   useSystemTheme()
   useDarkPaper(darkPaper)
@@ -52,22 +64,53 @@ export default function App() {
   const engineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   engineRef.current = engine
+  const settingsRef = useRef<AppSettings | null>(null)
+  settingsRef.current = settingsLoaded ? { docTitle, themeSource, darkPaper, lastSourcePath } : null
+  /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
+  const openSeqRef = useRef(0)
 
   const state = useTypingEngine(engine)
 
-  const openNovel = useCallback((next: Novel) => {
-    const fresh = new TypingEngine(next)
-    setNovel(next)
-    setEngine(fresh)
-    setExpanded(false)
+  /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
+  const flushSession = useCallback((): void => {
+    const api = getApi()
+    const current = engineRef.current
+    if (api && current) void api.saveSession(current.toSession())
   }, [])
+
+  /**
+   * 打开一本书：**先问磁盘上有没有这本书的进度**，有就接着读，没有才从零开始。
+   *
+   * 【为什么必须在这里问】「导入小说」走的就是这个函数，启动恢复也走它。少了这次读盘，
+   * 导入一本读过的书＝全新引擎＝600ms 后把 cursor 0 落盘覆盖掉那本书的进度——而「每本书
+   * 各留一份进度」存在的全部意义就是这一条。判断只有这一处，调用方不必各自判一遍。
+   */
+  const openNovel = useCallback(
+    async (next: Novel): Promise<void> => {
+      // 换书之前先把上一本存一次：下面那个保存 effect 的 cleanup 会 clearTimeout 掉待发的
+      // 定时器，而换书会让 engine 变——600ms 之内连开两本时，上一本那一次就永远不落盘了。
+      flushSession()
+      // 递增序号，用来丢掉过期的那一次：读盘是异步的，用户连续导入两本时，先发起、后返回的
+      // 那一次会把后打开的书顶掉。
+      const seq = ++openSeqRef.current
+      const api = getApi()
+      const session = api ? await api.loadSession(next.sourcePath) : null
+      if (seq !== openSeqRef.current) return
+
+      setNovel(next)
+      setEngine(session ? TypingEngine.fromSession(next, session) : new TypingEngine(next))
+      setExpanded(false)
+      setLastSourcePath(next.sourcePath)
+    },
+    [flushSession]
+  )
 
   const handleImport = useCallback(async () => {
     const api = getApi()
     if (!api) return
     const next = await api.importNovel()
     if (!next) return
-    openNovel(next)
+    await openNovel(next)
   }, [openNovel])
 
   const handleClearSession = useCallback(async () => {
@@ -76,12 +119,15 @@ export default function App() {
     await api.clearSession()
     setNovel(null)
     setEngine(null)
+    // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
+    // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
+    setLastSourcePath(null)
   }, [])
 
-  // 启动：先看命令行有没有指定 txt，再尝试恢复上次会话
+  // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
   useEffect(() => {
     const api = getApi()
-    // 没有 api，就没有「命令行参数」和「上次会话」这两件事可做——直接停在空状态。
+    // 没有 api，就没有「设置」「命令行参数」「上次打开的书」这三件事可做——直接停在空状态。
     // 这【不是】多余的防御：少了它，下面第一个 await 会变成 unhandled rejection，
     // 用例行照旧报 passed、汇总行却是 `Errors 1 error`，vitest 的 exit code 是 1。
     if (!api) return
@@ -89,41 +135,28 @@ export default function App() {
     let cancelled = false
 
     const boot = async (): Promise<void> => {
-      const initialPath = await api.initialNovelPath()
-      const session = await api.loadSession()
+      // 设置先读：它同时给出「上次打开的是哪本」。命令行参数优先于它。
+      const settings = await api.loadSettings()
+      if (cancelled) return
+      setDocTitle(settings.docTitle)
+      setDarkPaper(settings.darkPaper)
+      setThemeSource(settings.themeSource)
+      setLastSourcePath(settings.lastSourcePath)
+      setSettingsLoaded(true)
 
-      if (initialPath) {
-        // 命令行给的文件可能打不开（已删除、权限、EISDIR、解不出编码……）。
-        // 没有这个 try 的话错误会以【未处理的 rejection】形式冒到启动期：空状态不显示、
-        // 也没有任何提示。catch 里刻意【不 return】：失败就不阻断启动，继续走下面的
-        // 会话恢复 / 空状态兜底——用户至少还能看到界面并重新导入。
-        // 两条都真机实测过（Task 12，chmod 000 的 txt 当命令行参数 + 同一个 userData 里
-        // 留着上次会话）：无 unhandled rejection，且会话照常恢复到「已显示 300 字」。
-        // 注意这两条**单测里是零覆盖**——把整个 try/catch 删掉，渲染层用例全绿。
-        try {
-          const loaded = await api.openNovelPath(initialPath)
-          if (cancelled) return
-          if (session && session.sourcePath === loaded.sourcePath) {
-            setNovel(loaded)
-            setEngine(TypingEngine.fromSession(loaded, session))
-          } else {
-            openNovel(loaded)
-          }
-          return
-        } catch {
-          // 与下面会话恢复那条 catch 同形：静默降级，不阻断启动
-        }
-      }
+      const target = (await api.initialNovelPath()) ?? settings.lastSourcePath
+      if (!target || cancelled) return
 
-      if (session) {
-        try {
-          const loaded = await api.openNovelPath(session.sourcePath)
-          if (cancelled) return
-          setNovel(loaded)
-          setEngine(TypingEngine.fromSession(loaded, session))
-        } catch {
-          // 原文件已不可用：停在空状态，等用户重新导入
-        }
+      // 目标文件可能打不开（已删除、权限、EISDIR、解不出编码……）。没有这个 try 的话错误会
+      // 以【未处理的 rejection】形式冒到启动期：空状态不显示、也没有任何提示。catch 里刻意
+      // 不做别的：失败就停在空状态，用户至少还能看到界面并重新导入。
+      try {
+        const loaded = await api.openNovelPath(target)
+        if (cancelled) return
+        // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
+        await openNovel(loaded)
+      } catch {
+        // 原文件已不可用：停在空状态，等用户重新导入
       }
     }
 
@@ -154,17 +187,30 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [engine, state])
 
+  // 设置持久化（防抖）。与会话同一套节奏：600ms 内的连续改动只落盘一次。
+  useEffect(() => {
+    const api = getApi()
+    // 读回来之前不写，见 settingsLoaded 的说明
+    if (!api || !settingsLoaded) return
+    const timer = window.setTimeout(() => {
+      void api.saveSettings({ docTitle, themeSource, darkPaper, lastSourcePath })
+    }, SAVE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [docTitle, themeSource, darkPaper, lastSourcePath, settingsLoaded])
+
   // 关闭前强制落盘
   useEffect(() => {
     const api = getApi()
     if (!api) return
     const flush = (): void => {
-      const current = engineRef.current
-      if (current) void api.saveSession(current.toSession())
+      flushSession()
+      // 设置也有防抖窗口：改完文档名立刻关窗（或退出）会落在窗口里，关窗前的最后一次补上。
+      const settings = settingsRef.current
+      if (settings) void api.saveSettings(settings)
     }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
-  }, [])
+  }, [flushSession])
 
   const visibleText = engine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
