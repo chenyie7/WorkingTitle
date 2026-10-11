@@ -219,7 +219,81 @@ import {
   SendFilled,
   SendRegular,
   TextProofingToolsFilled,
-  TextProofingToolsRegular
+  TextProofingToolsRegular,
+  TextAddFilled,
+  TextAddRegular,
+  ArrowClockwiseFilled,
+  ArrowClockwiseRegular,
+  DocumentEndnoteFilled,
+  DocumentEndnoteRegular,
+  TextQuoteFilled,
+  TextQuoteRegular,
+  DatabaseFilled,
+  DatabaseRegular,
+  LibraryFilled,
+  LibraryRegular,
+  ClosedCaptionFilled,
+  ClosedCaptionRegular,
+  TableSimpleFilled,
+  TableSimpleRegular,
+  TagFilled,
+  TagRegular,
+  DocumentTextFilled,
+  DocumentTextRegular,
+  ArrowNextFilled,
+  ArrowNextRegular,
+  ArrowPreviousFilled,
+  ArrowPreviousRegular,
+  BookQuestionMarkFilled,
+  BookQuestionMarkRegular,
+  AccessibilityFilled,
+  AccessibilityRegular,
+  TranslateFilled,
+  TranslateRegular,
+  LocalLanguageFilled,
+  LocalLanguageRegular,
+  CommentDismissFilled,
+  CommentDismissRegular,
+  CommentMultipleFilled,
+  CommentMultipleRegular,
+  DocumentEditFilled,
+  DocumentEditRegular,
+  PanelRightFilled,
+  PanelRightRegular,
+  CheckmarkCircleFilled,
+  CheckmarkCircleRegular,
+  DismissCircleFilled,
+  DismissCircleRegular,
+  ItemCompareFilled,
+  ItemCompareRegular,
+  MergeFilled,
+  MergeRegular,
+  LockClosedFilled,
+  LockClosedRegular,
+  DocumentGlobeFilled,
+  DocumentGlobeRegular,
+  DocumentBulletListFilled,
+  DocumentBulletListRegular,
+  DraftsFilled,
+  DraftsRegular,
+  DocumentOnePageMultipleFilled,
+  DocumentOnePageMultipleRegular,
+  ArrowAutofitWidthFilled,
+  ArrowAutofitWidthRegular,
+  ZoomInFilled,
+  ZoomInRegular,
+  WindowNewFilled,
+  WindowNewRegular,
+  BoardSplitFilled,
+  BoardSplitRegular,
+  DualScreenFilled,
+  DualScreenRegular,
+  ArrowSyncFilled,
+  ArrowSyncRegular,
+  WindowMultipleFilled,
+  WindowMultipleRegular,
+  CodeFilled,
+  CodeRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -356,6 +430,59 @@ export const IconRotate = bundleIcon(ArrowRotateClockwiseFilled, ArrowRotateCloc
 /* 「文件」页补充的几个。 */
 export const IconSaveAs = bundleIcon(SaveCopyFilled, SaveCopyRegular)
 export const IconShare = bundleIcon(SendFilled, SendRegular)
+
+/* 「引用」页用到的一组。查不到 `Endnote`（尾注用 `DocumentEndnote`）、
+   查不到 `Index`（插入索引用 `DocumentText`）。 */
+export const IconAddText = bundleIcon(TextAddFilled, TextAddRegular)
+export const IconUpdateField = bundleIcon(ArrowClockwiseFilled, ArrowClockwiseRegular)
+export const IconEndnote = bundleIcon(DocumentEndnoteFilled, DocumentEndnoteRegular)
+export const IconCitation = bundleIcon(TextQuoteFilled, TextQuoteRegular)
+export const IconSources = bundleIcon(DatabaseFilled, DatabaseRegular)
+export const IconBibliography = bundleIcon(LibraryFilled, LibraryRegular)
+export const IconCaption = bundleIcon(ClosedCaptionFilled, ClosedCaptionRegular)
+export const IconUpdateTable = bundleIcon(TableSimpleFilled, TableSimpleRegular)
+export const IconMarkEntry = bundleIcon(TagFilled, TagRegular)
+export const IconInsertIndex = bundleIcon(DocumentTextFilled, DocumentTextRegular)
+
+/* 「审阅」页用到的一组。查不到 `CommentDelete` / `CommentPrevious` / `CommentNext`
+   / `DocumentCompare`，分别用 `CommentDismiss` / `ArrowPrevious` / `ArrowNext`
+   / `ItemCompare` 顶上。 */
+export const IconThesaurus = bundleIcon(BookQuestionMarkFilled, BookQuestionMarkRegular)
+export const IconAccessibility = bundleIcon(AccessibilityFilled, AccessibilityRegular)
+export const IconTranslate = bundleIcon(TranslateFilled, TranslateRegular)
+export const IconLanguage = bundleIcon(LocalLanguageFilled, LocalLanguageRegular)
+export const IconDeleteComment = bundleIcon(CommentDismissFilled, CommentDismissRegular)
+export const IconShowComments = bundleIcon(CommentMultipleFilled, CommentMultipleRegular)
+export const IconTrackChanges = bundleIcon(DocumentEditFilled, DocumentEditRegular)
+export const IconReviewPane = bundleIcon(PanelRightFilled, PanelRightRegular)
+export const IconAccept = bundleIcon(CheckmarkCircleFilled, CheckmarkCircleRegular)
+export const IconReject = bundleIcon(DismissCircleFilled, DismissCircleRegular)
+export const IconCompare = bundleIcon(ItemCompareFilled, ItemCompareRegular)
+export const IconMergeDocs = bundleIcon(MergeFilled, MergeRegular)
+export const IconRestrictEditing = bundleIcon(LockClosedFilled, LockClosedRegular)
+export const IconPrevItem = bundleIcon(ArrowPreviousFilled, ArrowPreviousRegular)
+export const IconNextItem = bundleIcon(ArrowNextFilled, ArrowNextRegular)
+
+/* 「视图」页用到的一组。
+   `IconPageView` 与 `IconCoverPage` 用的是同一个字形（`DocumentOnePage`）：
+   真 Word 里「页面视图」与「单页」本来就是同一个意思，这里照搬，不硬造区别。
+   两处都用到它，所以导出两个名字。 */
+export const IconPageView = bundleIcon(DocumentOnePageFilled, DocumentOnePageRegular)
+export const IconWebLayout = bundleIcon(DocumentGlobeFilled, DocumentGlobeRegular)
+export const IconOutlineView = bundleIcon(DocumentBulletListFilled, DocumentBulletListRegular)
+export const IconDraftView = bundleIcon(DraftsFilled, DraftsRegular)
+export const IconMultiPage = bundleIcon(
+  DocumentOnePageMultipleFilled,
+  DocumentOnePageMultipleRegular
+)
+export const IconPageWidth = bundleIcon(ArrowAutofitWidthFilled, ArrowAutofitWidthRegular)
+export const IconZoom = bundleIcon(ZoomInFilled, ZoomInRegular)
+export const IconNewWindow = bundleIcon(WindowNewFilled, WindowNewRegular)
+export const IconSplitWindow = bundleIcon(BoardSplitFilled, BoardSplitRegular)
+export const IconSideBySide = bundleIcon(DualScreenFilled, DualScreenRegular)
+export const IconSyncScroll = bundleIcon(ArrowSyncFilled, ArrowSyncRegular)
+export const IconSwitchWindow = bundleIcon(WindowMultipleFilled, WindowMultipleRegular)
+export const IconMacro = bundleIcon(CodeFilled, CodeRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)
