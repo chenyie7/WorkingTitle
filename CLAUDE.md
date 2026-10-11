@@ -265,6 +265,14 @@ Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂
   不写这行创建 release 会 403——这是「CI 全绿但 release 没出来」最常见的原因。
 - **在网页上「创建 release」也会触发**（它会生成标签），但那样容易踩版本号不一致那条。
   推荐先改 version 再打标签。想先人工审一遍，把工作流里 `draft: false` 改成 `true`。
+- **`dist:mac` / `dist:win` 末尾那两句 `--publish never` 不能删。** electron-builder 在 CI 里
+  遇到标签构建会**自动启用发布**，于是去找 `GH_TOKEN`；找不到就报错退出——
+  ```text
+  ⨯ GitHub Personal Access Token is not set, neither programmatically, nor using env "GH_TOKEN"
+  ```
+  症状很有迷惑性：**安装包其实已经打好了**（日志里能看到 `• building target=DMG …`），
+  只是最后一步白跑。发布统一交给 `release` 作业里的 softprops 做——不让两个平台的构建作业
+  各自去建 release，那样会有竞态。
 
 没有配自动更新（`electron-builder.yml` 里没有 `publish` 段），所以 Release 只是给人下载用的；
 打包时 Electron 那边生成的那个 `latest-mac.yml` 用不上，也没被传上去。
