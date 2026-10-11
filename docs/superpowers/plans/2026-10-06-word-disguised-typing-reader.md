@@ -4627,7 +4627,9 @@ body {
 .wt-ribbon__title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* 三个子元素是「文档名 / - / Word」，要挨着排成一个标题；10px 的 gap 会把它拉成
+     「文档1  -  Word」，不像标题。连字符两侧的呼吸感由它自己的左右外边距给。 */
+  gap: 5px;
   height: 32px;
   padding: 0 14px;
   background: var(--wt-titlebar);
@@ -4642,9 +4644,16 @@ body {
 
 /* 蓝条上的文档名。**一段静态文本**：改名搬进了设置对话框，这里不再可点——
    一个能点开输入框的「文档1」正是伪装里最显眼的那类破绽。
-   仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid。 */
+   仍旧做成独立元素（而不是并在 title-app 里）是为了 `doc-title` 这个 testid；
+   同理，下面那个连字符也是独立元素——一旦并进这个 span，`doc-title` 的 textContent
+   就不再是「文档1」而是「文档1 - Word」，多处断言都会跟着变。 */
 .wt-ribbon__title-doc {
   opacity: 0.88;
+}
+
+/* 「文档1 - Word」里那个连字符。压暗一档，让两个实词更清楚。 */
+.wt-ribbon__title-sep {
+  opacity: 0.6;
 }
 
 .wt-tabs {
@@ -4653,9 +4662,11 @@ body {
   gap: 2px;
   padding: 0 10px;
   height: 34px;
-  /* 比 --wt-chrome 再深一档：选中页签是纯白、靠「与下方功能区连成一片」表达，
-     标签条不压深的话两者几乎同色，只剩蓝字能分辨了。 */
-  background: #eef0f4;
+  /* 与标题条共用同一个 token：两条合成一整块蓝。这正是真 Word「彩色」主题的样子——
+     标题栏与标签条同色，选中的页签是一块从白色功能区升上来的白形状，靠「与下方功能区
+     连成一片」表达选中，而不是靠描边。深色下这个 token 是近黑，但标签条另有覆盖，见
+     文件末尾那段深色外观。 */
+  background: var(--wt-titlebar);
 }
 
 .wt-tab {
@@ -4664,15 +4675,18 @@ body {
   padding: 6px 14px 7px;
   font-size: 12.5px;
   font-family: inherit;
-  color: var(--wt-text-muted);
+  /* 蓝底上写白字。用 --wt-titlebar-text 而不是写死 #fff：深色下标签条是近黑，
+     这个 token 也跟着翻成浅色。 */
+  color: var(--wt-titlebar-text);
   cursor: pointer;
   border-radius: var(--wt-radius-lg) var(--wt-radius-lg) 0 0;
   transition: background-color 90ms ease;
 }
 
+/* 未选中的页签在蓝底上不能压暗——压暗出来是脏蓝，不是「次要」。用一层半透明白提亮。 */
 .wt-tab:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--wt-text);
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--wt-titlebar-text);
 }
 
 /* 选中态靠「与下方白色功能区连成一片」表达，而不是加一圈描边——
@@ -4681,6 +4695,16 @@ body {
   background: #ffffff;
   color: var(--wt-blue);
   font-weight: 600;
+}
+
+/* 悬停**已经选中的**那个页签时，要维持它「与下方功能区连成一片」的样子。
+   没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有 (0,1,0)，
+   前者盖后者——白底被换成 16% 的半透明白、字色也翻成白色，在蓝底标签条上就是
+   「一块淡蓝 + 白字看不见」。本条特异度与 `.wt-tab:hover` **相同**，靠**源码顺序**
+   （排在它之后）胜出，所以不能往上挪。 */
+.wt-tab--active:hover {
+  background: #ffffff;
+  color: var(--wt-blue);
 }
 
 .wt-toolbar {
@@ -4992,6 +5016,9 @@ body {
 
 /* ================= 深色外观 =================
    这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
+/* 深色下**不**跟 --wt-titlebar（那是 #1f1f22）走：选中页签的底色与功能区同为 #202024，
+   标签条若也落在 #1f1f22 就只差一档，「选中页签与下方功能区连成一片」当场看不出来。
+   压到 #191919 拉开一档，选中态才立得住。 */
 [data-theme='dark'] .wt-tabs {
   background: #191919;
 }
@@ -5002,6 +5029,14 @@ body {
 
 /* 选中页签仍靠「与下方功能区连成一片」表达：两边用同一个底色 */
 [data-theme='dark'] .wt-tab--active {
+  background: #202024;
+  color: var(--wt-accent);
+}
+
+/* 与浅色那条同理，只是这里两边都多一个属性选择器：`[data-theme='dark'] .wt-tab:hover`
+   是 (0,3,0)，`[data-theme='dark'] .wt-tab--active` 是 (0,2,0)，前者照样盖后者。
+   本条 (0,3,0) 且排在后面，胜出。 */
+[data-theme='dark'] .wt-tab--active:hover {
   background: #202024;
   color: var(--wt-accent);
 }
@@ -5074,15 +5109,16 @@ body {
  * 窗口就没法用鼠标移动。行内没有可交互元素（文档名现在是静态文本），
  * 所以不需要再挑出 no-drag 的例外。
  *
- * 两边让位的位置不同：
- *  - macOS（`hiddenInset`）：红绿灯浮在网页上、落在这一行里，左侧要让出位置
- *    （三个灯 + 间距约 52px，从 x=14 起）。**只在左边让**——右边没有东西。
- *  - Windows（`hidden` + `titleBarOverlay`）：右上角那三个按钮由系统画在这一行上
- *    （约 138px，三枚 × 46px），而标题要**居中**，所以两侧**对称**留白：
- *    对称留白不破坏居中，且标题最长时也不会钻到按钮底下。
+ * 标题在两个平台都**居中**，区别只在要给系统让出多宽。既然要居中，留白就必须**两侧
+ * 对称**——只留一侧会把标题顶偏，而两侧都留不影响居中，只是可用宽度窄一点：
+ *  - macOS（`hiddenInset`）：红绿灯浮在网页上、落在这一行里。要让开的是 78px
+ *    （三个灯 + 间距约 52px，从 x=14 起）。
+ *  - Windows（`hidden` + `titleBarOverlay`）：右上角那三个按钮由系统画在这一行上，
+ *    约 138px（三枚 × 46px），两边各让 150px 留点余量。
  */
 [data-platform='darwin'] .wt-ribbon__title {
-  padding-left: 78px;
+  padding: 0 78px;
+  justify-content: center;
   -webkit-app-region: drag;
 }
 
@@ -5927,12 +5963,16 @@ export function Ribbon({
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
-        <span className="wt-ribbon__title-app">Word</span>
         {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
             它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
         <span className="wt-ribbon__title-doc" data-testid="doc-title">
           {docTitle}
         </span>
+        {/* 分隔符**单独成一个元素**，不并进上面那个 span：`doc-title` 的 textContent 必须
+            ***正好*** 是文档名（设置对话框与多条测试都按这个口径断言），并进去就变成
+            「文档1 - Word」了。顺序按 Windows 的惯例写成「文档名 - 应用名」。 */}
+        <span className="wt-ribbon__title-sep">-</span>
+        <span className="wt-ribbon__title-app">Word</span>
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (

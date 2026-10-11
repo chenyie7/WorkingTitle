@@ -238,12 +238,16 @@ export function Ribbon({
   return (
     <div className="wt-ribbon" data-testid="ribbon">
       <div className="wt-ribbon__title">
-        <span className="wt-ribbon__title-app">Word</span>
         {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
             它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
         <span className="wt-ribbon__title-doc" data-testid="doc-title">
           {docTitle}
         </span>
+        {/* 分隔符**单独成一个元素**，不并进上面那个 span：`doc-title` 的 textContent 必须
+            ***正好*** 是文档名（设置对话框与多条测试都按这个口径断言），并进去就变成
+            「文档1 - Word」了。顺序按 Windows 的惯例写成「文档名 - 应用名」。 */}
+        <span className="wt-ribbon__title-sep">-</span>
+        <span className="wt-ribbon__title-app">Word</span>
       </div>
       <div className="wt-tabs" role="tablist">
         {RIBBON_TABS.map((name) => (
