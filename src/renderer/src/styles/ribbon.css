@@ -221,8 +221,13 @@
  *
  * 【`:not(.wt-btn--active)` 不能省】这条规则的特异性是 (0,4,0)（三个 `:not()` 各自都算），
  * 压得过 `.wt-btn--active` 的 (0,1,0)。少了这个 `:not`，选中态的背景会被它整个吃掉——
- * 实测过：设置里「外观」那三个按钮的 aria-pressed 正确切换、而三个背景色一模一样。 */
-.wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
+ * 实测过：设置里「外观」那三个按钮的 aria-pressed 正确切换、而三个背景色一模一样。
+ *
+ * 【`:not(.wt-btn--primary)` 同理，这一条是踩过才补的】主按钮那条只有 (0,2,0)，压不过这条
+ * (0,4,0)。少了这个 `:not`，对话框里的「保存」会是**近白底 + 白字**（`color: #fff` 来自主按钮
+ * 规则，而这条例外只让开了背景）——等于一个字都看不见。一切「靠底色区分主次」的按钮变体都要
+ * 加进这份排除名单，否则它的背景会被这条吃掉。 */
+.wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
   border-color: var(--wt-chrome-border-strong);
   background: #fbfbfc;
   padding: 0 10px;
@@ -587,14 +592,20 @@
  * 上移的话底色会被上面那条吃掉。深色那侧另有一处同名排除，见下面 `:not(.wt-btn--primary)`。
  */
 .wt-modal__footer .wt-btn--primary {
-  background: var(--wt-blue);
-  border-color: var(--wt-blue);
+  background: var(--wt-primary);
+  border-color: var(--wt-primary);
   color: #fff;
 }
 
 .wt-modal__footer .wt-btn--primary:hover {
-  background: var(--wt-blue-dark);
-  border-color: var(--wt-blue-dark);
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
+}
+
+/* 按下态也要单独写：`.wt-btn:active` 是 (0,2,0) 且只管背景，不管的话按下去会闪成浅蓝底
+   （`.wt-btn:active` 的 #d3e3fa），配着蓝边框看起来像按钮坏了。 */
+.wt-modal__footer .wt-btn--primary:active {
+  background: var(--wt-primary-hover);
 }
 
 /* ================= 深色外观 =================
@@ -685,6 +696,15 @@
 [data-theme='dark'] .wt-modal__body .wt-btn:hover,
 [data-theme='dark'] .wt-modal__footer .wt-btn:hover {
   border-color: #3d4d66;
+}
+
+/* 主按钮的悬停 / 按下在深色下也要保住蓝底蓝边：上面那条与主按钮同特异度 (0,3,0)、
+   靠源码顺序压过去，而 `.wt-btn:active` 那一对同样是 (0,3,0)。不写这两条的话，
+   鼠标一划过或一按下，「保存」就变成灰边 / 暗蓝灰底。 */
+[data-theme='dark'] .wt-modal__footer .wt-btn--primary:hover,
+[data-theme='dark'] .wt-modal__footer .wt-btn--primary:active {
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
 }
 
 /* 复选框那行 */

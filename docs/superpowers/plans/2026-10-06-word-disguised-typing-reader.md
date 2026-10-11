@@ -5019,6 +5019,15 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
   --wt-accent: #185abd;
   --wt-titlebar: #185abd;
 
+  /* 实心主按钮（对话框里的「保存」）的底与悬停。
+     **刻意不复用 `--wt-blue`**：深色下那个被【提亮】成 #6cb0ff，那是给深底上的文字/图标用的
+     强调色，拿它当实心按钮的底就是白字压浅蓝（对比度约 2:1，基本读不出来），而且它的
+     「hover」在深色下更浅（`--wt-blue-dark` = #a5cfff），越划过越糊。
+     与 `--wt-titlebar` / `--wt-statusbar` 是同一个理由：**一个值要在两种主题下扮演两种角色，
+     就必须拆成两个变量**。 */
+  --wt-primary: #185abd;
+  --wt-primary-hover: #0f4a9e;
+
   /* 中性阶：现代 Word 的 chrome 是极浅的冷灰，不是纯白，也不是 2013 那个 #f3f3f3 */
   --wt-chrome: #f7f7f8;
   --wt-chrome-border: #e3e3e5;
@@ -5232,6 +5241,11 @@ body {
   --wt-blue-dark: #a5cfff;
   --wt-blue-light: #2b2b34;
   --wt-accent: #6cb0ff;
+
+  /* 主按钮**不跟着提亮**：它是「深底 + 白字」的实心块，要压得住面板（#26262c）而不是浮在上面。
+     取比浅色主题那一版稍亮一点的蓝，白字对比度约 5:1；悬停再亮一档（深色下悬停变亮才像话）。 */
+  --wt-primary: #2b6fc4;
+  --wt-primary-hover: #3a80d8;
 
   /* 标题条与状态条在真 Word 的深色模式里是深灰，不是品牌蓝——两者在浅色下同值，
      所以上面 :root 里拆成了两个变量。 */
@@ -5498,8 +5512,13 @@ body {
  *
  * 【`:not(.wt-btn--active)` 不能省】这条规则的特异性是 (0,4,0)（三个 `:not()` 各自都算），
  * 压得过 `.wt-btn--active` 的 (0,1,0)。少了这个 `:not`，选中态的背景会被它整个吃掉——
- * 实测过：设置里「外观」那三个按钮的 aria-pressed 正确切换、而三个背景色一模一样。 */
-.wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(:has(.wt-btn__icon)) {
+ * 实测过：设置里「外观」那三个按钮的 aria-pressed 正确切换、而三个背景色一模一样。
+ *
+ * 【`:not(.wt-btn--primary)` 同理，这一条是踩过才补的】主按钮那条只有 (0,2,0)，压不过这条
+ * (0,4,0)。少了这个 `:not`，对话框里的「保存」会是**近白底 + 白字**（`color: #fff` 来自主按钮
+ * 规则，而这条例外只让开了背景）——等于一个字都看不见。一切「靠底色区分主次」的按钮变体都要
+ * 加进这份排除名单，否则它的背景会被这条吃掉。 */
+.wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
   border-color: var(--wt-chrome-border-strong);
   background: #fbfbfc;
   padding: 0 10px;
@@ -5864,14 +5883,20 @@ body {
  * 上移的话底色会被上面那条吃掉。深色那侧另有一处同名排除，见下面 `:not(.wt-btn--primary)`。
  */
 .wt-modal__footer .wt-btn--primary {
-  background: var(--wt-blue);
-  border-color: var(--wt-blue);
+  background: var(--wt-primary);
+  border-color: var(--wt-primary);
   color: #fff;
 }
 
 .wt-modal__footer .wt-btn--primary:hover {
-  background: var(--wt-blue-dark);
-  border-color: var(--wt-blue-dark);
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
+}
+
+/* 按下态也要单独写：`.wt-btn:active` 是 (0,2,0) 且只管背景，不管的话按下去会闪成浅蓝底
+   （`.wt-btn:active` 的 #d3e3fa），配着蓝边框看起来像按钮坏了。 */
+.wt-modal__footer .wt-btn--primary:active {
+  background: var(--wt-primary-hover);
 }
 
 /* ================= 深色外观 =================
@@ -5962,6 +5987,15 @@ body {
 [data-theme='dark'] .wt-modal__body .wt-btn:hover,
 [data-theme='dark'] .wt-modal__footer .wt-btn:hover {
   border-color: #3d4d66;
+}
+
+/* 主按钮的悬停 / 按下在深色下也要保住蓝底蓝边：上面那条与主按钮同特异度 (0,3,0)、
+   靠源码顺序压过去，而 `.wt-btn:active` 那一对同样是 (0,3,0)。不写这两条的话，
+   鼠标一划过或一按下，「保存」就变成灰边 / 暗蓝灰底。 */
+[data-theme='dark'] .wt-modal__footer .wt-btn--primary:hover,
+[data-theme='dark'] .wt-modal__footer .wt-btn--primary:active {
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
 }
 
 /* 复选框那行 */
