@@ -10538,8 +10538,15 @@ export default function App() {
    * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
    *
    * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
-   * 「在设置里录一条新快捷键并保存」管后者。**后者的载荷断言必须排在按新键导入之前**——
-   * 那一步会动 `lastSourcePath`，把 memo 顺带重算一遍，漏依赖那件事就再也显不出来了。
+   * 「在设置里录一条新快捷键并保存」管后者。
+   *
+   * 【后者的载荷断言为什么必须排在按新键导入之前】那一步会动 `lastSourcePath`（memo 的另一个
+   * 依赖），memo 被带着重算——而**重算本身不给漏依赖这件事解围**：此刻落盘的仍是重算前那一次
+   * 排的防抖写。真正让它隐形的是**紧接着又落一次盘**：重算改了 `settings` 的身份，防抖再排一发，
+   * 600ms 后写下的那一份就是带上了新表的。所以断言一旦排到那两次写之后、读的又是最后一次调用，
+   * 它就永远看到正确的那一份。实测（变异＝值留住、只把 `shortcuts` 从依赖数组里删掉）：
+   * 断言排在导入之后且**不补推进**时这条仍红；**再补一次 `advanceTimersByTimeAsync(2000)`**
+   * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
    */
   const settings: AppSettings = useMemo(
     () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
@@ -10714,6 +10721,17 @@ export default function App() {
    * 【`actions` 每次渲染都是新对象，这是有意的】分发器把它挂在 ref 上（见那个模块里的
    * 说明），所以这里不需要 `useMemo` 去稳身份；真要稳的话，依赖里那几个回调每一个都得
    * 跟着稳，反而更容易漏。
+   *
+   * 【`platform` 这个实参传错，**单测查不出来，只有真机能判**】把它写死成某个值，整套 jsdom
+   * 用例照样全绿：测试里 `window.api.platform` 那个桩与这里传下去的值同源，表按哪个值补齐、
+   * 按键就按哪个值构造，两边一起错是自洽的。真机上的代价分两层：
+   *
+   * 1. `resolveShortcuts` 按错的那一套补齐默认值（macOS 上会把 ⌘ 显示成 Ctrl），而
+   *    `RESERVED` 的 darwin 清单也跟着失效；
+   * 2. 「一条快捷键只在一个地方执行」那条硬规则失效：分发器里「darwin 上 import 让给原生菜单」
+   *    的跳过是按这个值判的，一旦它不是 darwin 就不再跳过。此时只要表里 `import` 那一条是个
+   *    ⌘ 组合（用户在设置里录过一条就是），按下去菜单的 accelerator 与分发器会**各触发一次**。
+   *    计划末尾真机验收清单里那条「macOS 上 ⌘O 只导入一次（不是两次）」就是它的判据。
    */
   useShortcutDispatcher({
     platform,
@@ -11456,12 +11474,23 @@ describe('快捷键接线', () => {
     // 那时按下 Ctrl+O 会真的触发导入，用例会红在一个与本条主题无关的地方。
     await act(async () => {})
 
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
     fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
-    // 旧键不该再触发
+    // 【负向断言必须数**调用次数**，不能看界面上有没有正文（这一条原先就是那么写的，
+    // 而它是空转的）】导入要跨几个微任务才提交，而这里是一路同步走下来的——`page-text`
+    // 在那一瞬间必然还没出现，于是「旧键根本没触发」与「触发了但还没渲染完」在这条断言上
+    // 完全同形。实测：把表写成 `resolveShortcuts({}, kind)`（忽略用户表，**正是本条要防的
+    // 那件事**），只断言 `page-text` 为 null 时这一条照样绿——它下面那句
+    // `waitFor(page-text)` 是被刚才这次 Ctrl+O 的导入满足的。
+    // 数调用次数可靠：`handleImport` 在第一个 await 之前就调了 `api.importNovel()`。
+    expect(importNovel.mock.calls.length).toBe(before)
     expect(screen.queryByTestId('page-text')).toBeNull()
 
     fireEvent.keyDown(window, { code: 'KeyI', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+    // 正向那半也钉在计数上：新键触发的那一次必须是**唯一**的一次
+    expect(importNovel.mock.calls.length).toBe(before + 1)
   })
 
   /**
@@ -11485,6 +11514,35 @@ describe('快捷键接线', () => {
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  /**
+   * 【这条补的是**另一半**：鼠标那条路】
+   *
+   * 侧栏有两个入口——快捷键与那两个按钮。上面那条走的是快捷键（分发器 → action），
+   * 而按钮走的是受控回调（`ChapterList` 内部 `setCollapsed` → `onCollapsedChange`）。
+   * 少了这一条，「`App` 忘了传 `onCollapsedChange`」是**全绿**的（实测：删掉那一行，
+   * 全套用例一条都不红），而真机上表现为那两个按钮**点不动**——键盘还能用，
+   * 于是用户只会觉得「按钮坏了」。
+   *
+   * 这个形态正是 `ChapterList.tsx` 里那段注释点名的：**只给 `collapsed` 不给回调时，
+   * 受控是坏的**（`controlled` 为真、切换却落到一个 `undefined` 上）。
+   */
+  it('点章节栏那个按钮也真的收起、又展开', async () => {
+    installApi(null)
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    // 收起后那个按钮换成细缝里那一个——同样得能点回来（两条路都走 `onCollapsedChange`）
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('true')
   })

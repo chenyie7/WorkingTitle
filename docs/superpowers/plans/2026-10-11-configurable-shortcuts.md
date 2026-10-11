@@ -2496,41 +2496,75 @@ git commit -F /tmp/msg-task6.txt
 
 ```ts
 describe('快捷键接线', () => {
+  /**
+   * 【为什么平台显式设成 win32】默认桩（`installApi`）里没有 `platform` 这个字段，于是
+   * `App` 按 `'other'` 走——那与 win32 同属一类（`platformKind` 只分 darwin / other）。
+   * 显式写出来是为了让下面的期望键位有出处，而不是碰巧对上。
+   */
+  function setPlatformWin32(): void {
+    ;(window as unknown as { api: { platform: string } }).api.platform = 'win32'
+  }
+
   it('Windows 上 Ctrl+O 真的能导入——这条以前是死的', async () => {
     installApi(makeNovel())
-    ;(window as unknown as { api: { platform: string } }).api.platform = 'win32'
+    setPlatformWin32()
     render(<App />)
-    await waitFor(() => expect(screen.getByTestId('app-root')).toBeTruthy())
+    // 让启动那次设置读盘先落地。它不是这条用例的观测点，但晚一步落地会让界面在按键之后
+    // 才提交，把失败指向错误的层。
+    await act(async () => {})
     fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
   })
 
   it('设置里改过的键生效（读的是补过的表，不是默认表）', async () => {
-    const novel = makeNovel()
-    installApi(novel)
-    ;(window as unknown as { api: Record<string, unknown> }).api = {
-      ...(window as unknown as { api: Record<string, unknown> }).api,
-      platform: 'win32',
-      loadSettings: vi.fn(async () => ({
-        ...defaultSettings(),
-        shortcuts: { import: 'Ctrl+KeyI' }
-      }))
-    }
+    installApi(makeNovel())
+    setPlatformWin32()
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      shortcuts: { import: 'Ctrl+KeyI' }
+    }))
     render(<App />)
-    await waitFor(() => expect(screen.getByTestId('app-root')).toBeTruthy())
+    // 【这一句不能省】设置是异步读回来的，没落地时表里还是默认值（Ctrl+KeyO）——
+    // 那时按下 Ctrl+O 会真的触发导入，用例会红在一个与本条主题无关的地方。
+    await act(async () => {})
+
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
     fireEvent.keyDown(window, { code: 'KeyO', ctrlKey: true })
-    // 旧键不该再触发
+    // 【负向断言必须数**调用次数**，不能看界面上有没有正文（这一条原先就是那么写的，
+    // 而它是空转的）】导入要跨几个微任务才提交，而这里是一路同步走下来的——`page-text`
+    // 在那一瞬间必然还没出现，于是「旧键根本没触发」与「触发了但还没渲染完」在这条断言上
+    // 完全同形。实测：把表写成 `resolveShortcuts({}, kind)`（忽略用户表，**正是本条要防的
+    // 那件事**），只断言 `page-text` 为 null 时这一条照样绿——它下面那句
+    // `waitFor(page-text)` 是被刚才这次 Ctrl+O 的导入满足的。
+    // 数调用次数可靠：`handleImport` 在第一个 await 之前就调了 `api.importNovel()`。
+    expect(importNovel.mock.calls.length).toBe(before)
     expect(screen.queryByTestId('page-text')).toBeNull()
+
     fireEvent.keyDown(window, { code: 'KeyI', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+    // 正向那半也钉在计数上：新键触发的那一次必须是**唯一**的一次
+    expect(importNovel.mock.calls.length).toBe(before + 1)
   })
-})
 ```
+
+> **上面这段是交付版**（Step 1 初稿里第二条用例的负向断言是
+> `expect(screen.queryByTestId('page-text')).toBeNull()`，**它是空转的**，评审实测过：
+> 把表写成 `resolveShortcuts({}, kind)`——忽略用户表，正是这条用例自称要防的那件事——
+> 其余用例全红，只有它保持绿。导入要跨几个微任务才提交，而那一句是同步跑的，
+> `page-text` 必然还没出现，「没触发」与「触发了但没渲染完」同形；它下面那句
+> `waitFor(page-text)` 则被刚才那次 Ctrl+O 的导入满足了。改法是数 `importNovel` 的
+> **调用次数**——`handleImport` 在第一个 await 之前就调了它，所以同步数得到）。
+>
+> **交付版还多几条用例，不在这段片段里**，以 `tests/unit/app.test.tsx` 为准：
+> 点章节栏按钮（受控回调那半边，键盘那半边由上面的快捷键用例覆盖）、录制期间分发器静音、
+> 以及在设置里录一条新键并保存（同时钉住 `onShortcutsChange` 与 memo 依赖数组两处漏接）。
+> 不把它们抄进计划是有意的：多一份副本就多一处要同步的地方。
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `pnpm vitest run tests/unit/app.test.tsx -t '快捷键接线'`
-Expected: FAIL —— 按下 Ctrl+O 后正文不出现
+Expected: FAIL —— 按下 Ctrl+O 后 `importNovel` 一次都没被调用（分发器还没挂上）
 
 - [ ] **Step 3: 接线**
 
@@ -2585,6 +2619,12 @@ Expected: FAIL —— 按下 Ctrl+O 后正文不出现
     }
   })
 ```
+
+> **交付版在 `platform` 那个实参上多写了一段说明，片段里没有**：这个值传错**单测查不出来**
+> （测试里 `window.api.platform` 那个桩与它同源，表与按键按同一个值算，两边一起错是自洽的），
+> 只有真机能判——macOS 上它会同时让默认值补齐与 `RESERVED` 走错那一套，并让「darwin 上
+> import 让给原生菜单」那条跳过失效，于是表里 `import` 只要是条 ⌘ 组合，按下去菜单与分发器
+> 会各触发一次。见末尾真机验收清单。**别以为它被覆盖了。**
 
 > **注意**：`sidebarCollapsed` 现在住在 `ChapterList` 里（组件的 local state），而分发器在
 > `App` 上，所以要**把它提升到 `App`** 再作为受控 prop 传下去——改法与 `expanded` 那个状态
