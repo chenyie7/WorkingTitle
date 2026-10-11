@@ -135,11 +135,28 @@ export function SettingsDialog({
   /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
   const [recording, setRecording] = useState<ShortcutId | null>(null)
 
-  // 录制态一变就告诉外面（分发器据此静音）。卸载时也要说一声 false，否则关掉对话框
-  // 之后分发器会一直哑着——而用户完全看不出为什么快捷键失效了。
+  // 录制态一变就告诉外面（分发器据此静音）
   useEffect(() => {
     onRecordingChange(recording !== null)
   }, [recording, onRecordingChange])
+
+  /**
+   * 关掉对话框＝放弃这次录制。
+   *
+   * 【「关掉对话框」与「卸载」是两件事，别混】`open` 为假时这个组件只是 `return null`——
+   * **它并不卸载**。下面那条卸载时的上报管的是「整棵界面被销毁」（应用退出），管不到
+   * 「用户把对话框关了」。少了这一句，录制中关掉对话框之后录制态会一直挂着：分发器一直哑着
+   * （而用户完全看不出为什么快捷键失效了），下次打开时那个按钮还停在「请按下组合键…」上。
+   *
+   * 【也不能只靠录制框的 onBlur 兜底】那条要成立，得「点别处时浏览器把焦点从按钮上拿走」——
+   * 而点一个 `<button>` 在有些平台**根本不给它焦点**（macOS 上的 Safari 就是这样），
+   * blur 于是不会来。它是兜底，不是机制。
+   */
+  useEffect(() => {
+    if (!open) setRecording(null)
+  }, [open])
+
+  /** 整棵界面被销毁时（应用退出）也要说一声 false，别把分发器留在哑着的状态 */
   useEffect(() => () => onRecordingChange(false), [onRecordingChange])
 
   /**

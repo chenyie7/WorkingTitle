@@ -26,7 +26,12 @@ interface SetupOptions {
   docTitle?: string
   darkPaper?: boolean
   themeSource?: ThemeSource
-  /** 当前生效的快捷键（已按平台补齐）。不传＝用 Windows 的默认值。 */
+  /**
+   * 用户改过的那些快捷键——**稀疏表**（缺条目＝该平台的默认值，与 `AppSettings.shortcuts`
+   * 同一个形状）。不传＝一条都没改过（那张表是按 `platform` 补齐过的默认表）。
+   *
+   * 【别把它当「已按平台补齐的那份」】↺ 那条用例传的就是稀疏表 `{ import: 'Ctrl+KeyI' }`。
+   */
   shortcuts?: Record<string, string>
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
@@ -703,9 +708,14 @@ describe('设置里的快捷键录制', () => {
     expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
   })
 
-  it('按 Esc 取消录制，值不变', () => {
-    setup({})
+  it('按 Esc 取消录制：值是**原来那个**，不会被顺手写回默认值', () => {
+    // 【为什么先录成一个非默认值】草稿本来就等于默认值时，「什么都不做」与「写回平台默认值」
+    // 返回的是同一个串——这样的断言分不开这两种实现，用例是**空转**的（实测：让 Esc 分支去
+    // `setDraft(默认值)`，整组照样全绿）。先把它改成 Ctrl+I，两种实现才分得开。
+    setup({ shortcuts: { import: 'Ctrl+KeyI' } })
     openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+I')
+
     fireEvent.click(screen.getByTestId('shortcut-import-input'))
     // `key` 与 `code` 都给：真机上按 Esc 两个都有，而对话框自己的关闭键判的是 `key`
     // （少了它，用例连「Esc 会关对话框」这半边都验不到）
@@ -713,7 +723,35 @@ describe('设置里的快捷键录制', () => {
       key: 'Escape',
       code: 'Escape'
     })
-    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+
+    const shown = screen.getByTestId('shortcut-import-input').textContent
+    expect(shown).toContain('Ctrl+I')
+    expect(shown).not.toContain('Ctrl+O')
+  })
+
+  it('macOS 上录不了被系统菜单占用的组合：停在录制态、说明原因、草稿不动', () => {
+    // 【为什么必须显式给 darwin】`shortcutProblem` 只在 darwin 上会返回 'reserved'（other
+    // 平台没有保留清单），而壳默认是 win32——不换平台，这一整条分支**零覆盖**（实测：把那个
+    // `if` 删掉，整组照样全绿）。
+    setup({ platform: 'darwin', shortcuts: resolveShortcuts({}, 'darwin') })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    // ⌘Q 是 macOS 的「退出」，在 RESERVED 清单里
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      code: 'KeyQ',
+      metaKey: true
+    })
+
+    // 停在这一条上：既没记下来，也没退出录制态
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
+    expect(screen.getByTestId('toast').textContent).toContain('系统菜单')
+
+    // 草稿也没被动过：退出录制态（Esc）之后看，还是原来那个键
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      key: 'Escape',
+      code: 'Escape'
+    })
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('⌘O')
   })
 
   it('按 Esc 只是取消录制，不会顺手把整个对话框关掉（草稿全丢）', () => {
@@ -770,7 +808,24 @@ describe('设置里的快捷键录制', () => {
     expect(onImport).not.toHaveBeenCalled()
   })
 
-  it('录制态变化要报给外面，关掉/卸载时也要报一次 false——否则分发器会一直哑着', () => {
+  it('录制中关掉对话框：录制态要清掉（分发器解除静音，重开时不还停在录制态）', () => {
+    const onRecordingChange = vi.fn()
+    setup({ onRecordingChange })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    // 【「关掉对话框」不是「卸载」】`open` 为假时组件只是 `return null`，它本身还在树里——
+    // 所以「整树卸载时上报 false」那条 effect 管不到这里，得由 `open` 变假这一条来兜。
+    fireEvent.click(screen.getByTestId('settings-close'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+
+    // 重开时那个按钮不该还停在「请按下组合键…」
+    openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+  })
+
+  it('整棵界面被卸载时（应用退出）也要报一次 false——否则分发器会一直哑着', () => {
     const onRecordingChange = vi.fn()
     const { unmount } = setup({ onRecordingChange })
     openViaButton()
