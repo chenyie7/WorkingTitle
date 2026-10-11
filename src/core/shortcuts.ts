@@ -154,12 +154,16 @@ const RESERVED: Readonly<Record<PlatformKind, readonly string[]>> = {
     'Meta+KeyA',
     'Meta+KeyZ'
   ],
-  // Windows / Linux 不设保留清单：`menu.ts` 对非 darwin 直接 `setApplicationMenu(null)`，
-  // 那里一条菜单都没有，「抢了菜单 role」这件事不存在；⇧⌘Q / ⌘M 那类系统约定也没有对应物
-  // （关窗走 Alt+F4 与窗口按钮，归系统管）。Ctrl+C/V/X/A/Z 在这里**不是没有代价**——Chromium
-  // 是对可编辑元素自理的，而本应用有活的可编辑元素（`InputCapture` 的 `.wt-input`、设置里
-  // 那几个输入框）——但那是用户自己录进去、再录一次就拿得回来的选择；macOS 那条清单拦的是
-  // 「抢走 ⌘Q 之后应用给不回来」的能力，两者不是一回事。
+  // Windows / Linux 不设保留清单：`menu.ts` 对非 darwin 直接 `setApplicationMenu(null)`，那里
+  // 一条菜单都没有，「抢了菜单 role」这件事不存在；⇧⌘Q 那类系统约定也没有对应物（Windows 没有
+  // 「退出登录」键）。**⌘M 不能照此说**——`Win+M` 在 Windows 上就是「最小化所有窗口」，通常被
+  // 外壳先吃掉、应用收不到；而这一条**未在 Windows 上实测**（本机只有 macOS）。
+  //
+  // Ctrl+C/V/X/A/Z 在这里**不是没有代价**：分发器命中即 `preventDefault`，没有可编辑元素豁免
+  // （`InputCapture` 的 `TEXT_INPUT_SELECTOR` 是抢焦点那条路的，与分发器无关），所以用户录了
+  // `Ctrl+V` 之后，往设置里的文档名粘贴会失效、在阅读区粘贴则会变成抽字。仍然不设清单的理由是
+  // 代价可撤回：设置对话框还有第二条入口（工具栏那个「设置」按钮），把 `Ctrl+,` 录成别的也锁不
+  // 死自己，再录一次就拿得回来；macOS 那条清单拦的是「抢走 ⌘Q 之后应用给不回来」的能力。
   other: []
 }
 
