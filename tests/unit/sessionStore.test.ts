@@ -54,7 +54,7 @@ function sessionFile(dir: string, sourcePath: string): string {
   return join(dir, 'sessions', `${key}.json`)
 }
 
-// 这两个辅助函数放在模块级而不是第二个 describe 里：clearAll 那条用例也要用它们
+// 这两个辅助函数放在模块级而不是第二个 describe 里：clearReadingHistory 那条用例也要用它
 // （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
 function writeSource(content: string): string {
   const p = join(dir, 'src.txt')
@@ -237,42 +237,50 @@ describe('sessionStore 会话读写', () => {
     }
   })
 
-  it('clearAll 删除会话与缓存', () => {
+  it('clearReadingHistory 清掉所有书的进度与缓存，留下设置', () => {
     const store = createSessionStore(dir)
-    store.writeSession(makeSession())
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/B.txt' }))
     const src = writeSource('第一章 甲\n正文。\n')
     store.writeNovelCache(makeNovel(src))
-    // 前提：缓存确实落盘了。少了这两行，下面那两条 novel-cache 断言测的是「两个从未被创建
-    // 过的文件不存在」——无论 clearAll 做什么都会通过，§8 承诺的「删除 session.json 与缓存」
-    // 于是完全没有覆盖（实测：把 clearAll 的数组改成只含会话两个路径，全量 103 条仍全绿）。
-    //
-    // 【这条用例本身说明了这类缺陷怎么活过评审】它的注释一直把 .tmp 的理由解释得很仔细，
-    // 读者于是顺理成章地以为旁边那两条缓存断言同样刻意——**细致的注释替空洞的断言打了掩护**。
-    // 判据只能是「断言的操作数从哪来」，不是「注释写得多诚恳」。
+    store.writeSettings({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/A.txt'
+    })
+    // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
+    // 不存在」——无论 clearReadingHistory 做什么都会通过（实测：把删除列表写成空的，全量仍全绿）。
+    expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
-    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉。
-    // 路径仍是旧的单槽 session.json.tmp——现实现的 clearAll 删的正是它（Task 4 的用例里
-    // 这个路径也还在，只是角色换成「旧版残留」）。
-    writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
-    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
-    store.clearAll()
-    // 【为什么这里没有会话那半边的断言——这是刻意的缺口，别当漏写】
-    // 本任务只把进度挪到 sessions/<hash>.json，clearAll 本身【没动】（那是 Task 4 的事）：
-    // 它删的仍是旧的单槽 session.json / session.json.tmp 与两个缓存文件，sessions/ 目录
-    // 一个都不碰。所以此刻断言 `readSession(SRC)` 为 null 是一条【恒红】的用例（那份记录
-    // 还在 sessions/ 下好好躺着）；反过来断言 `.not.toBeNull()`（「确认它没被删」）则是把
-    // 这个缺陷固化成断言，比空缺更糟。缺口留到 Task 4——那时的 clearAll 才真的会碰
-    // sessions/，用例也才谈得上「清完之后读不到 A 书、也读不到 B 书」。
-    // 上面那句 store.writeSession(makeSession()) 留着，正是给它备好的现场。
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+    // 模拟崩溃留在磁盘上的临时文件：「清除阅读记录」应当把它一起清掉
+    writeFileSync(join(dir, 'session.json'), '{"novelTitle":"旧版残留', 'utf8')
+    expect(existsSync(join(dir, 'session.json'))).toBe(true)
+
+    store.clearReadingHistory()
+
+    // **两本书各一份**：清除要一次清干净，不是只清「最近那本」
+    expect(store.readSession('/tmp/A.txt')).toBeNull()
+    expect(store.readSession('/tmp/B.txt')).toBeNull()
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
-    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
+    expect(existsSync(join(dir, 'session.json'))).toBe(false)
+    // 设置不在此列：它是用户的偏好，与「读到哪」无关
+    expect(store.readSettings()).toEqual({
+      docTitle: '季度汇报',
+      themeSource: 'dark',
+      darkPaper: true,
+      lastSourcePath: '/tmp/A.txt'
+    })
   })
 
-  it('clearAll 在文件不存在时不抛异常', () => {
+  it('clearReadingHistory 在文件不存在时不抛异常', () => {
     const store = createSessionStore(dir)
-    expect(() => store.clearAll()).not.toThrow()
+    expect(() => store.clearReadingHistory()).not.toThrow()
   })
 })
 
