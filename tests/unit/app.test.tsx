@@ -206,6 +206,50 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('page-text').textContent).toContain(novel.flatText.slice(0, 15))
   })
 
+  /**
+   * 【这条钉的是「命令行给的路径打不开」时的回退】
+   *
+   * 旧的两段式启动天然有它：第一段的 catch 刻意不 return，于是落到第二段去开「上次那本」。
+   * Task 7 把两段合并成一次之后，光靠 `argv ?? lastSourcePath` 挑一个是不够的——用户手滑
+   * 指了个打不开的路径就会落到空状态，而磁盘上明明有上次读的那本书。
+   *
+   * 少了下面这段回退（把 catch 改成直接 return），本用例会红成 0 个字。
+   */
+  it('命令行给的路径打不开时，回退到上次打开的那本书', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 5,
+      mode: 'key',
+      cursor: 15,
+      revealStart: 0,
+      chapterPos: [15, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    ;(window.api as unknown as { initialNovelPath: unknown }).initialNovelPath = vi.fn(
+      async () => '/tmp/打不开.txt'
+    )
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel.sourcePath
+    }))
+    ;(window.api as unknown as { openNovelPath: unknown }).openNovelPath = vi.fn(
+      async (p: string) => {
+        if (p === '/tmp/打不开.txt') throw new Error('模拟：命令行指的文件打不开')
+        return novel
+      }
+    )
+
+    render(<App />)
+
+    // 第一个目标失败、第二个成功 —— 于是恢复到 15 字，而不是停在空状态
+    await waitFor(() => expect(revealedChars()).toBe(15))
+    expect(screen.queryByTestId('page-empty')).toBeNull()
+  })
+
   it('清除阅读记录后回到空状态', async () => {
     const novel = makeNovel()
     installApi(novel)
