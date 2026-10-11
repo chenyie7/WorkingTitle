@@ -82,8 +82,10 @@ describe('ChapterList', () => {
   //
   //  - **「按 ⌘⇧H 等效于点按钮」拆成了两半**。前半（按键 → `toggle-sidebar` 这个 action）由
   //    `tests/unit/shortcutDispatch.test.ts` 覆盖：它断言 darwin 上按 ⌘⇧H 会调到那个 action。
-  //    后半（action → 本组件这个 `collapsed`）要等 Task 7 把状态提到 `App` 上才接得上，
-  //    而**目前没有任何用例覆盖它**——Task 7 计划里只加了 import 的两条。
+  //    后半（action → `App` 里那个状态 → 侧栏真的切换）由 `tests/unit/app.test.tsx` 的
+  //    「按章节栏快捷键真的收起、又展开」与「点章节栏那个按钮也真的收起、又展开」一起覆盖
+  //    ——一条走分发器那条路，一条走受控回调那条路。**这两条要渲染整棵 `App`**，本文件是
+  //    直接渲染 `ChapterList` 的，树里没有分发器，接不上那两段。
   //  - **「少了 Shift 或修饰键时不触发」也在分发器里**：裸键由那句
   //    `if (!e.ctrlKey && !e.metaKey && !e.altKey) return` 提前放行，修饰键少一个则落在
   //    表查找不中。`shortcutDispatch.test.ts` 的「裸按键一律放行」与「没配上的组合不触发」
