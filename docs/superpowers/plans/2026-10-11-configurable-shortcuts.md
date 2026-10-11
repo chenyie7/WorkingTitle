@@ -1476,7 +1476,12 @@ interface SetupOptions {
   docTitle?: string
   darkPaper?: boolean
   themeSource?: ThemeSource
-  /** 当前生效的快捷键（已按平台补齐）。不传＝用 Windows 的默认值。 */
+  /**
+   * 用户改过的那些快捷键——**稀疏表**（缺条目＝该平台的默认值，与 `AppSettings.shortcuts`
+   * 同一个形状）。不传＝一条都没改过（那张表是按 `platform` 补齐过的默认表）。
+   *
+   * 【别把它当「已按平台补齐的那份」】↺ 那条用例传的就是稀疏表 `{ import: 'Ctrl+KeyI' }`。
+   */
   shortcuts?: Record<string, string>
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
@@ -1485,7 +1490,8 @@ interface SetupOptions {
 }
 ```
 
-`setup()` 整个换成下面这样（**它现在返回 `unmount`**，最后一条用例要用）：
+`setup()` 整个换成下面这样（**它现在返回 `unmount`**，最后一条用例要用）。下面是**当前**形状——
+Task 6 又给壳加了 `settingsOpen` 那一路，一并切进来，免得片段与文件脱节：
 
 ```tsx
 function setup(opts: SetupOptions = {}): {
@@ -1520,6 +1526,11 @@ function setup(opts: SetupOptions = {}): {
    */
   function Harness() {
     const [recording, setRecording] = useState(false)
+    /**
+     * 对话框开不开。`Ribbon` 从 Task 6 起是**受控**的（原先这个状态住在它里面），
+     * 所以壳得拿着它——「按 ⌘/Ctrl + , 打开设置」那几条用例现在只能走分发器那条路。
+     */
+    const [settingsOpen, setSettingsOpen] = useState(false)
     const reportRef = useRef(opts.onRecordingChange)
     reportRef.current = opts.onRecordingChange
     /**
@@ -1540,10 +1551,11 @@ function setup(opts: SetupOptions = {}): {
       actions: {
         // 与 `ToolbarProvider` 收到的是**同一个** spy：App 里两边也都指向同一个 handleImport
         import: dispatchImport,
-        // 这两条动作在 App 里是「提升上去的状态」，单测里没有那一层，占位即可
-        // （Ribbon 现在还自己监听 ⌘, 打开设置，所以打开设置的用例不经过分发器）
+        // 章节栏那条在 App 里是「提升上去的状态」（Task 7 才提），单测里没有那一层，占位即可
         'toggle-sidebar': () => {},
-        'open-settings': () => {}
+        // 【这一条必须真的打开对话框】Ribbon 不再自己监听 ⌘,，「按 ⌘/Ctrl + , 对话框出现」
+        // 那几条既有用例现在只剩分发器这一条路——占位空函数会让它们全红。
+        'open-settings': () => setSettingsOpen(true)
       }
     })
     return (
@@ -1556,6 +1568,8 @@ function setup(opts: SetupOptions = {}): {
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
           novelOpen={novelOpen}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
           onShortcutsChange={onShortcutsChange}
@@ -1600,6 +1614,14 @@ describe('设置里的快捷键录制', () => {
       'Ctrl+Shift+H'
     )
     expect(screen.getByTestId('shortcut-open-settings-input').textContent).toContain('Ctrl+,')
+  })
+
+  it('「导入小说」按钮的 title 跟着当前快捷键走（不是写死的 Ctrl+O）', () => {
+    // 用一个**默认值推不出来**的键：写死的 'Ctrl+O'、或「忽略 shortcuts 直接推默认值」的
+    // 实现都会显示 Ctrl+O，本条即红。
+    setup({ shortcuts: { import: 'Ctrl+KeyI' } })
+    openViaButton()
+    expect(screen.getByTestId('btn-import').getAttribute('title')).toContain('Ctrl+I')
   })
 
   it('点一下进录制态，显示提示', () => {
@@ -1665,9 +1687,14 @@ describe('设置里的快捷键录制', () => {
     expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
   })
 
-  it('按 Esc 取消录制，值不变', () => {
-    setup({})
+  it('按 Esc 取消录制：值是**原来那个**，不会被顺手写回默认值', () => {
+    // 【为什么先录成一个非默认值】草稿本来就等于默认值时，「什么都不做」与「写回平台默认值」
+    // 返回的是同一个串——这样的断言分不开这两种实现，用例是**空转**的（实测：让 Esc 分支去
+    // `setDraft(默认值)`，整组照样全绿）。先把它改成 Ctrl+I，两种实现才分得开。
+    setup({ shortcuts: { import: 'Ctrl+KeyI' } })
     openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+I')
+
     fireEvent.click(screen.getByTestId('shortcut-import-input'))
     // `key` 与 `code` 都给：真机上按 Esc 两个都有，而对话框自己的关闭键判的是 `key`
     // （少了它，用例连「Esc 会关对话框」这半边都验不到）
@@ -1675,7 +1702,35 @@ describe('设置里的快捷键录制', () => {
       key: 'Escape',
       code: 'Escape'
     })
-    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+
+    const shown = screen.getByTestId('shortcut-import-input').textContent
+    expect(shown).toContain('Ctrl+I')
+    expect(shown).not.toContain('Ctrl+O')
+  })
+
+  it('macOS 上录不了被系统菜单占用的组合：停在录制态、说明原因、草稿不动', () => {
+    // 【为什么必须显式给 darwin】`shortcutProblem` 只在 darwin 上会返回 'reserved'（other
+    // 平台没有保留清单），而壳默认是 win32——不换平台，这一整条分支**零覆盖**（实测：把那个
+    // `if` 删掉，整组照样全绿）。
+    setup({ platform: 'darwin', shortcuts: resolveShortcuts({}, 'darwin') })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    // ⌘Q 是 macOS 的「退出」，在 RESERVED 清单里
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      code: 'KeyQ',
+      metaKey: true
+    })
+
+    // 停在这一条上：既没记下来，也没退出录制态
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
+    expect(screen.getByTestId('toast').textContent).toContain('系统菜单')
+
+    // 草稿也没被动过：退出录制态（Esc）之后看，还是原来那个键
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      key: 'Escape',
+      code: 'Escape'
+    })
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('⌘O')
   })
 
   it('按 Esc 只是取消录制，不会顺手把整个对话框关掉（草稿全丢）', () => {
@@ -1732,7 +1787,24 @@ describe('设置里的快捷键录制', () => {
     expect(onImport).not.toHaveBeenCalled()
   })
 
-  it('录制态变化要报给外面，关掉/卸载时也要报一次 false——否则分发器会一直哑着', () => {
+  it('录制中关掉对话框：录制态要清掉（分发器解除静音，重开时不还停在录制态）', () => {
+    const onRecordingChange = vi.fn()
+    setup({ onRecordingChange })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    // 【「关掉对话框」不是「卸载」】`open` 为假时组件只是 `return null`，它本身还在树里——
+    // 所以「整树卸载时上报 false」那条 effect 管不到这里，得由 `open` 变假这一条来兜。
+    fireEvent.click(screen.getByTestId('settings-close'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+
+    // 重开时那个按钮不该还停在「请按下组合键…」
+    openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+  })
+
+  it('整棵界面被卸载时（应用退出）也要报一次 false——否则分发器会一直哑着', () => {
     const onRecordingChange = vi.fn()
     const { unmount } = setup({ onRecordingChange })
     openViaButton()
@@ -1851,18 +1923,51 @@ import {
 > `'string' index signatures are incompatible`）。宽一格之后，稀疏表与补齐过的表都收得下，
 > 而下面每一条的 `?? defaultShortcut(...)` 才是那个兜底真正该待的地方。
 
-组件内加状态与那两条效应（放在 `useToolbar()` 之后）：
+组件内这一段（`const kind` 到末尾那三条效应，放在 `useToolbar()` 之后）。中间那段
+「导入小说按钮 title」的文本**是 Task 6 加的**，一并切进来是为了让片段与文件不脱节：
 
 ```ts
   const kind = platformKind(platform)
+
+  /**
+   * 「导入小说」按钮 title 里那条快捷键的显示文本。
+   *
+   * 【为什么在这里算，而不是像 `Toolbar` 那样收一个成品 prop】本组件的定位就是「拿着稀疏表
+   * 与平台**自己**格式化」——下面那几个录制框（`formatShortcut(draft, kind)`）已经是这么做的。
+   * 写成收 prop 的话，调用方（`Ribbon`）就得为这**一处** tooltip 再算一遍。
+   *
+   * 【取的是已提交值，不是录制中的草稿】这个 title 说的是「现在按什么键能导入」；草稿还没保存。
+   * 录制框显示草稿是因为它要展示你正在录的那个键，两者不是一回事。
+   */
+  const importButtonShortcut = formatShortcut(
+    shortcuts.import ?? defaultShortcut('import', kind),
+    kind
+  )
   /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
   const [recording, setRecording] = useState<ShortcutId | null>(null)
 
-  // 录制态一变就告诉外面（分发器据此静音）。卸载时也要说一声 false，否则关掉对话框
-  // 之后分发器会一直哑着——而用户完全看不出为什么快捷键失效了。
+  // 录制态一变就告诉外面（分发器据此静音）
   useEffect(() => {
     onRecordingChange(recording !== null)
   }, [recording, onRecordingChange])
+
+  /**
+   * 关掉对话框＝放弃这次录制。
+   *
+   * 【「关掉对话框」与「卸载」是两件事，别混】`open` 为假时这个组件只是 `return null`——
+   * **它并不卸载**。下面那条卸载时的上报管的是「整棵界面被销毁」（应用退出），管不到
+   * 「用户把对话框关了」。少了这一句，录制中关掉对话框之后录制态会一直挂着：分发器一直哑着
+   * （而用户完全看不出为什么快捷键失效了），下次打开时那个按钮还停在「请按下组合键…」上。
+   *
+   * 【也不能只靠录制框的 onBlur 兜底】那条要成立，得「点别处时浏览器把焦点从按钮上拿走」——
+   * 而点一个 `<button>` 在有些平台**根本不给它焦点**（macOS 上的 Safari 就是这样），
+   * blur 于是不会来。它是兜底，不是机制。
+   */
+  useEffect(() => {
+    if (!open) setRecording(null)
+  }, [open])
+
+  /** 整棵界面被销毁时（应用退出）也要说一声 false，别把分发器留在哑着的状态 */
   useEffect(() => () => onRecordingChange(false), [onRecordingChange])
 ```
 
@@ -2059,7 +2164,8 @@ function hostPlatform(): string {
 }
 ```
 
-`Ribbon` 的签名加上它们：
+`Ribbon` 的签名加上它们（下面是**当前**形状：Task 6 后来又加了 `settingsOpen` /
+`onSettingsOpenChange` / `settingsShortcut` 三个，一并切进来以免片段与文件脱节）：
 
 ```tsx
 export function Ribbon({
@@ -2070,10 +2176,13 @@ export function Ribbon({
   themeSource,
   onThemeSourceChange,
   novelOpen,
+  settingsOpen,
+  onSettingsOpenChange,
   shortcuts = DEFAULT_SHORTCUTS,
   platform = hostPlatform(),
   onShortcutsChange = ignoreShortcutsChange,
-  onRecordingChange = ignoreRecordingChange
+  onRecordingChange = ignoreRecordingChange,
+  settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -2084,6 +2193,13 @@ export function Ribbon({
   /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
   novelOpen: boolean
   /**
+   * 设置对话框开不开。**从 Task 6 起由调用方持有**：原先这个状态住在本组件内部，而
+   * 「按 ⌘/Ctrl + , 打开设置」那条监听已经删掉了（它归全局分发器），分发器长在调用方
+   * 那一层、碰不到组件内部的状态——所以这个状态必须提上去。
+   */
+  settingsOpen: boolean
+  onSettingsOpenChange: (open: boolean) => void
+  /**
    * 下面这四个**暂时是可选**的：真值住在 `App` 里（稀疏表、平台原值、录制态），而 App 的
    * 接线还没做。给默认值是为了让还没接上这一层的调用方（`App` 与既有测试）不必为此改动，
    * 同时设置里的快捷键那一组仍然显示成该平台的默认值而不是一片空白。
@@ -2092,15 +2208,21 @@ export function Ribbon({
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   onRecordingChange?: (recording: boolean) => void
+  /**
+   * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
+   * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
+   * 调用方把那一份喂进来。默认值里引用的 `platform` 是本参数表**前面**那个形参，顺序别调。
+   */
+  settingsShortcut?: string
 }) {
 ```
 
-再原样透传给 `SettingsDialog`：
+再原样透传给 `SettingsDialog`（`open` / `onClose` 从 Task 6 起走受控的那一对）：
 
 ```tsx
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => onSettingsOpenChange(false)}
         docTitle={docTitle}
         onDocTitleChange={onDocTitleChange}
         darkPaper={darkPaper}
