@@ -450,18 +450,28 @@
   accent-color: var(--wt-accent);
 }
 
-/* ---- macOS 红绿灯 ---- 
+/* ---- 平台各自的标题条 ----
  *
- * 窗口用了 `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上、落在标题条这一行里，
- * 所以左边要让出位置（三个灯 + 间距约 52px，从 x=14 起）。
- * 只在 darwin 上让：Windows / Linux 没有红绿灯，留空反而是一个洞。
- *
- * `-webkit-app-region: drag` 是必需的——原生标题栏隐掉之后，标题条这一行就是唯一的
- * 拖拽区；不设的话窗口没法用鼠标移动。行内没有可交互元素（文档名现在是静态文本），
+ * 两个平台都把原生标题栏交给了网页画（见 `src/main/index.ts` 的 `titleBarOptions`），
+ * 所以这一条在两边都是窗口**唯一的拖拽区**——`-webkit-app-region: drag` 不设，
+ * 窗口就没法用鼠标移动。行内没有可交互元素（文档名现在是静态文本），
  * 所以不需要再挑出 no-drag 的例外。
+ *
+ * 两边让位的位置不同：
+ *  - macOS（`hiddenInset`）：红绿灯浮在网页上、落在这一行里，左侧要让出位置
+ *    （三个灯 + 间距约 52px，从 x=14 起）。**只在左边让**——右边没有东西。
+ *  - Windows（`hidden` + `titleBarOverlay`）：右上角那三个按钮由系统画在这一行上
+ *    （约 138px，三枚 × 46px），而标题要**居中**，所以两侧**对称**留白：
+ *    对称留白不破坏居中，且标题最长时也不会钻到按钮底下。
  */
 [data-platform='darwin'] .wt-ribbon__title {
   padding-left: 78px;
+  -webkit-app-region: drag;
+}
+
+[data-platform='win32'] .wt-ribbon__title {
+  padding: 0 150px;
+  justify-content: center;
   -webkit-app-region: drag;
 }
 
