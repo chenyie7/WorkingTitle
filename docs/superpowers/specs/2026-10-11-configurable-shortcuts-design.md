@@ -186,7 +186,7 @@ shortcuts: Partial<Record<ShortcutId, string>>
 | `src/main/menu.ts` | `buildAppMenu` 加「取快捷键表」入参，accelerator 从表里读 |
 | `src/main/ipc.ts` | `saveSettings` handler 写盘后重建菜单 |
 | `src/main/index.ts` | 给 `buildAppMenu` 传取值函数 |
-| `src/main/session.ts` | 给 `createSessionStore` 传 `process.platform` |
+| ~~`src/main/session.ts`~~ | **不动**——稀疏表之后 `createSessionStore` 的签名不需要平台参数（见 §5），平台只在消费端（菜单、分发器）由 `platformKind(process.platform)` 收敛 |
 | `src/renderer/src/state/shortcuts.ts` | **新增**：分发器 |
 | `src/renderer/src/components/SettingsDialog.tsx` | 新增「快捷键」一节 + 录制框 |
 | `src/renderer/src/components/Page.tsx` | 空状态文案改读注册表 |
