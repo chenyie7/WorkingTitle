@@ -1195,6 +1195,32 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ]
 }
 
+/**
+ * 四个可选 prop 的默认值。
+ *
+ * 【为什么放在模块顶层而不是写成内联箭头函数】`onRecordingChange` 的**身份必须稳定**：
+ * 对话框里那个 effect 拿它当依赖，每次渲染都换一个新函数的话，effect 会跟着每次渲染重跑
+ * ——「有没有在录制」这个状态就会被反复上报。空函数放在这里，一次创建、终身复用。
+ */
+const ignoreShortcutsChange = (): void => {}
+const ignoreRecordingChange = (): void => {}
+
+/**
+ * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
+ * 的就是那张稀疏表（缺条目＝用该平台的默认值），而补齐这一步在设置对话框里按当前平台做。
+ */
+const DEFAULT_SHORTCUTS: Record<string, string | undefined> = {}
+
+/**
+ * 宿主平台。**现取而不是在模块顶层缓存**：与 App.tsx 的 getApi 同一个理由——缓存等于把
+ * 「preload 一定在模块加载前注入」写死进加载顺序，一旦不成立就是永久错的。缺桥时按
+ * `'other'` 走：宁可显示成 Windows 的那一套，也不要因为一个读不到的值把界面炸掉。
+ */
+function hostPlatform(): string {
+  const host = (window as unknown as { api?: { platform?: string } }).api
+  return host?.platform ?? 'other'
+}
+
 export function Ribbon({
   docTitle,
   onDocTitleChange,
@@ -1202,7 +1228,11 @@ export function Ribbon({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
-  novelOpen
+  novelOpen,
+  shortcuts = DEFAULT_SHORTCUTS,
+  platform = hostPlatform(),
+  onShortcutsChange = ignoreShortcutsChange,
+  onRecordingChange = ignoreRecordingChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -1212,6 +1242,15 @@ export function Ribbon({
   onThemeSourceChange: (next: ThemeSource) => void
   /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
   novelOpen: boolean
+  /**
+   * 下面这四个**暂时是可选**的：真值住在 `App` 里（稀疏表、平台原值、录制态），而 App 的
+   * 接线还没做。给默认值是为了让还没接上这一层的调用方（`App` 与既有测试）不必为此改动，
+   * 同时设置里的快捷键那一组仍然显示成该平台的默认值而不是一片空白。
+   */
+  shortcuts?: Record<string, string | undefined>
+  platform?: string
+  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  onRecordingChange?: (recording: boolean) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1272,6 +1311,10 @@ export function Ribbon({
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
         novelOpen={novelOpen}
+        shortcuts={shortcuts}
+        platform={platform}
+        onShortcutsChange={onShortcutsChange}
+        onRecordingChange={onRecordingChange}
       />
     </div>
   )

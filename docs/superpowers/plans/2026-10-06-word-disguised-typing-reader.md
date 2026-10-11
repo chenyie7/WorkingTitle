@@ -6493,6 +6493,27 @@ body {
   /* 深色下强调色是浅蓝，配深字对比最强 */
   color: #10141a;
 }
+
+/* 快捷键录制框。做成 button 而不是 input：这个应用的焦点豁免名单里有 `input`，
+   而录制要自己接管 keydown——做成 input 的话那一下会同时被当作「在输入框里打字」。 */
+.wt-shortcut {
+  min-width: 148px;
+  padding: 4px 10px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--wt-text);
+  background: var(--wt-chrome);
+  border: 1px solid var(--wt-chrome-border);
+  border-radius: var(--wt-radius);
+  cursor: pointer;
+}
+
+.wt-shortcut--recording {
+  color: var(--wt-text-muted);
+  border-color: var(--wt-primary);
+  border-style: dashed;
+}
 ```
 
 - [ ] **Step 3: 写 `src/renderer/src/styles/page.css`**
@@ -8554,6 +8575,32 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ]
 }
 
+/**
+ * 四个可选 prop 的默认值。
+ *
+ * 【为什么放在模块顶层而不是写成内联箭头函数】`onRecordingChange` 的**身份必须稳定**：
+ * 对话框里那个 effect 拿它当依赖，每次渲染都换一个新函数的话，effect 会跟着每次渲染重跑
+ * ——「有没有在录制」这个状态就会被反复上报。空函数放在这里，一次创建、终身复用。
+ */
+const ignoreShortcutsChange = (): void => {}
+const ignoreRecordingChange = (): void => {}
+
+/**
+ * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
+ * 的就是那张稀疏表（缺条目＝用该平台的默认值），而补齐这一步在设置对话框里按当前平台做。
+ */
+const DEFAULT_SHORTCUTS: Record<string, string | undefined> = {}
+
+/**
+ * 宿主平台。**现取而不是在模块顶层缓存**：与 App.tsx 的 getApi 同一个理由——缓存等于把
+ * 「preload 一定在模块加载前注入」写死进加载顺序，一旦不成立就是永久错的。缺桥时按
+ * `'other'` 走：宁可显示成 Windows 的那一套，也不要因为一个读不到的值把界面炸掉。
+ */
+function hostPlatform(): string {
+  const host = (window as unknown as { api?: { platform?: string } }).api
+  return host?.platform ?? 'other'
+}
+
 export function Ribbon({
   docTitle,
   onDocTitleChange,
@@ -8561,7 +8608,11 @@ export function Ribbon({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
-  novelOpen
+  novelOpen,
+  shortcuts = DEFAULT_SHORTCUTS,
+  platform = hostPlatform(),
+  onShortcutsChange = ignoreShortcutsChange,
+  onRecordingChange = ignoreRecordingChange
 }: {
   docTitle: string
   onDocTitleChange: (next: string) => void
@@ -8571,6 +8622,15 @@ export function Ribbon({
   onThemeSourceChange: (next: ThemeSource) => void
   /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
   novelOpen: boolean
+  /**
+   * 下面这四个**暂时是可选**的：真值住在 `App` 里（稀疏表、平台原值、录制态），而 App 的
+   * 接线还没做。给默认值是为了让还没接上这一层的调用方（`App` 与既有测试）不必为此改动，
+   * 同时设置里的快捷键那一组仍然显示成该平台的默认值而不是一片空白。
+   */
+  shortcuts?: Record<string, string | undefined>
+  platform?: string
+  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  onRecordingChange?: (recording: boolean) => void
 }) {
   const [tab, setTab] = useState<RibbonTab>('开始')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -8631,6 +8691,10 @@ export function Ribbon({
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
         novelOpen={novelOpen}
+        shortcuts={shortcuts}
+        platform={platform}
+        onShortcutsChange={onShortcutsChange}
+        onRecordingChange={onRecordingChange}
       />
     </div>
   )
@@ -11662,9 +11726,31 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 
 **Step 1: 写 `src/renderer/src/components/SettingsDialog.tsx`**
 ```tsx
-import { useEffect, useMemo, type FocusEvent } from 'react'
+// `KeyboardEvent` 要**改名**导入：这个名字一进来就盖住了 DOM 那个（下面 Esc 关闭用的
+// `window.addEventListener('keydown', …)` 收的正是 DOM 事件），而两者不通用——React 的
+// `KeyboardEvent<Element>` 上多一个 `nativeEvent`、DOM 的则多十几个字段，互相都赋不过去，
+// 直接照抄会把那条既有代码判成类型错。
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import type { FluentIcon } from '@fluentui/react-icons'
+import {
+  SHORTCUTS,
+  defaultShortcut,
+  findConflict,
+  formatShortcut,
+  fromChord,
+  platformKind,
+  resolveShortcuts,
+  shortcutProblem,
+  type ShortcutId
+} from '../../../core/shortcuts'
 import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
 import type { ThemeSource } from '../types/global'
@@ -11698,6 +11784,29 @@ export interface SettingsDialogProps {
   onThemeSourceChange: (next: ThemeSource) => void
   /** 有没有打开小说：「当前书」的比例框据此禁用——没有书就没有「当前书」 */
   novelOpen: boolean
+  /**
+   * 用户改过的那些快捷键——**稀疏表**：缺条目就是「用该平台的默认值」。
+   *
+   * 【别把它当成补齐过的那张表】下面每一条都写着 `?? defaultShortcut(...)`，正是为这件事。
+   * 以为它恒满的话，那个兜底看起来就像多余的，删掉之后没改过的快捷键会变成 `undefined`。
+   * 补齐这一步按平台做，而平台是另一个 prop。
+   *
+   * 【值类型里那个 `| undefined` 是有意的】上游拿的是 `AppSettings.shortcuts`，它的类型是
+   * `Partial<Record<ShortcutId, string>>`——索引访问本来就可能取不到。写成
+   * `Record<string, string>` 的话调用方那一个 prop 直接编译不过（实测 TS2345：'string' index
+   * signatures are incompatible）。
+   */
+  shortcuts: Record<string, string | undefined>
+  /** 平台原值（`window.api.platform`），用来决定 ↺ 恢复成哪一套默认值。 */
+  platform: string
+  /** 快捷键改完的提交。与文档名一样，点了保存才生效。 */
+  onShortcutsChange: (next: Record<string, string | undefined>) => void
+  /**
+   * 录制态变化时通知外面。
+   * 【为什么必须通知】录制期间分发器必须静音——不然录 `⌘O` 会当场触发一次真导入，
+   * 用户在设置里按下组合键的那一刻文件选择框就弹出来了。
+   */
+  onRecordingChange: (recording: boolean) => void
 }
 
 const THEME_OPTIONS = [
@@ -11726,10 +11835,25 @@ export function SettingsDialog({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
-  novelOpen
+  novelOpen,
+  shortcuts,
+  platform,
+  onShortcutsChange,
+  onRecordingChange
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()
+
+  const kind = platformKind(platform)
+  /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
+  const [recording, setRecording] = useState<ShortcutId | null>(null)
+
+  // 录制态一变就告诉外面（分发器据此静音）。卸载时也要说一声 false，否则关掉对话框
+  // 之后分发器会一直哑着——而用户完全看不出为什么快捷键失效了。
+  useEffect(() => {
+    onRecordingChange(recording !== null)
+  }, [recording, onRecordingChange])
+  useEffect(() => () => onRecordingChange(false), [onRecordingChange])
 
   /**
    * 「手动保存」的那一组设置项——**加一项就是往这张表里加一行**。
@@ -11776,11 +11900,78 @@ export function SettingsDialog({
           return Number.isFinite(parsed) ? String(clampRatioInput(parsed)) : committed
         },
         commit: (value) => setGlobalRatio(Number(value))
-      }
+      },
+      // 快捷键：**每一条一行**，从 core 的注册表推出来（加一条快捷键不必来这里改代码）
+      ...SHORTCUTS.map((def): DeferredField => ({
+        id: `shortcut-${def.id}`,
+        committed: shortcuts[def.id] ?? defaultShortcut(def.id, kind),
+        // 草稿可能是「录制中」这个状态，此时不留任何东西；真出草稿时它一定已经是合法规范串
+        normalize: (raw, committed) => (raw === '' ? committed : raw),
+        commit: (value) => {
+          // 【与默认值相同时把这一条抹掉】稀疏表里「显式写回默认值」与「从未改过」对读取方
+          // 完全没有区别（`resolveShortcuts` 两者都落到同一个默认值），那就没有理由把表撑大。
+          // 点 ↺ 之后这一条消失，正是这个意思。
+          const next = { ...shortcuts }
+          if (value === defaultShortcut(def.id, kind)) delete next[def.id]
+          else next[def.id] = value
+          onShortcutsChange(next)
+        }
+      }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio]
+    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
+
+  /**
+   * 冲突检测要比的是**草稿**，不是已提交值。
+   *
+   * 少了这一层，用户在同一个对话框里把两条改成同一个键时，第二次会看不出冲突（因为已提交
+   * 值还没变），保存下去两条就都是它——而引擎里只会有一条生效。
+   */
+  const resolvedTable = useMemo(() => {
+    const raw: Partial<Record<ShortcutId, string>> = { ...shortcuts }
+    for (const def of SHORTCUTS) {
+      const draft = drafts[`shortcut-${def.id}`]
+      if (typeof draft === 'string' && draft !== '') raw[def.id] = draft
+    }
+    return resolveShortcuts(raw, kind)
+  }, [shortcuts, drafts, kind])
+
+  /** 录制键位。**不 preventDefault 掉所有键**——只有认出是组合键、或按 Esc 时才拦。 */
+  const handleRecordKey =
+    (id: ShortcutId) =>
+    (e: ReactKeyboardEvent<HTMLElement>): void => {
+      if (recording !== id) return
+      if (e.key === 'Escape') {
+        // Esc 只是取消录制，值不变。**它同时也是对话框自己的关闭键**——所以必须停在这一层，
+        // 否则用户想取消录制会把整个对话框关掉（那一瞬间的草稿全丢）。
+        e.preventDefault()
+        e.stopPropagation()
+        setRecording(null)
+        return
+      }
+      const chord = toChord(e.nativeEvent)
+      if (chord === null) return
+      const spec = fromChord(chord)
+      if (spec === null) {
+        notify('必须带一个修饰键（⌘/Ctrl/Alt），而且键位要在支持范围内')
+        return
+      }
+      const problem = shortcutProblem(spec, kind)
+      if (problem === 'reserved') {
+        notify('这个组合被 macOS 的系统菜单占用了（退出 / 关闭 / 复制粘贴等）')
+        return
+      }
+      const clash = findConflict(resolvedTable, spec, id)
+      if (clash !== null) {
+        const label = SHORTCUTS.find((d) => d.id === clash)?.label ?? clash
+        notify(`与「${label}」冲突`)
+        return
+      }
+      e.preventDefault()
+      setDraft(`shortcut-${id}`, spec)
+      setRecording(null)
+    }
 
   // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
   useEffect(() => {
@@ -12029,6 +12220,43 @@ export function SettingsDialog({
             </label>
           </div>
 
+          {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
+          {SHORTCUTS.map((def) => {
+            const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
+            const isRecording = recording === def.id
+            return (
+              <div className="wt-modal__row" key={def.id}>
+                <span className="wt-modal__label">{def.label}</span>
+                <button
+                  type="button"
+                  className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
+                  data-testid={`shortcut-${def.id}-input`}
+                  aria-label={`${def.label}的快捷键`}
+                  onKeyDown={handleRecordKey(def.id)}
+                  onBlur={() => {
+                    // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
+                    if (recording === def.id) setRecording(null)
+                  }}
+                  onClick={() => setRecording(def.id)}
+                >
+                  {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                </button>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid={`shortcut-${def.id}-reset`}
+                  aria-label={`把${def.label}恢复为默认`}
+                  onClick={() => {
+                    setRecording(null)
+                    setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
+                  }}
+                >
+                  ↺
+                </button>
+              </div>
+            )
+          })}
+
           <div className="wt-modal__row">
             <span className="wt-modal__label">
               <IconBook className="wt-modal__label-icon" />
@@ -12091,12 +12319,14 @@ export function SettingsDialog({
 **Step 2: 写 `tests/unit/settings.test.tsx`**
 ```tsx
 import { describe, it, expect, vi } from 'vitest'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
+import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
+import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
 
@@ -12116,12 +12346,19 @@ interface SetupOptions {
   docTitle?: string
   darkPaper?: boolean
   themeSource?: ThemeSource
+  /** 当前生效的快捷键（已按平台补齐）。不传＝用 Windows 的默认值。 */
+  shortcuts?: Record<string, string>
+  platform?: string
+  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
+  onRecordingChange?: (recording: boolean) => void
 }
 
 function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
   onThemeSourceChange: ReturnType<typeof vi.fn>
+  unmount: () => void
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
@@ -12132,24 +12369,76 @@ function setup(opts: SetupOptions = {}): {
     darkPaper = false,
     themeSource = 'system',
     novelOpen = true,
+    // 默认走 Windows 那一套：macOS 上 import 归原生菜单管，分发器会**跳过**它，
+    // 于是「录制期间静音」那条用例在 darwin 下根本走不到分发器。
+    shortcuts = resolveShortcuts({}, 'other'),
+    platform = 'win32',
+    onShortcutsChange = vi.fn(),
     ...provider
   } = opts
-  render(
+
+  /**
+   * 站在 `App` 的位置上：把 Ribbon 报出来的录制态接到全局分发器上（App 里就是 `enabled: !recording`）。
+   *
+   * 【为什么非要有这一层】少了它，「录制期间分发器必须静音」是一条**空转**用例：树里根本没有
+   * 分发器，无论录制态有没有报出去，`onImport` 都不会被调用——它在「通知在」与「通知不在」
+   * 两个世界里一样绿。jsdom 里没有真机行为可依赖，只能把 App 那两行接线在这里摆出来。
+   */
+  function Harness() {
+    const [recording, setRecording] = useState(false)
+    const reportRef = useRef(opts.onRecordingChange)
+    reportRef.current = opts.onRecordingChange
+    /**
+     * 上报录制态：既通知用例里的 spy，也把它接进分发器的 `enabled`。
+     *
+     * 【身份必须稳定】它是对话框里那个 effect 的依赖——每次渲染换一个新函数的话，effect 会
+     * 跟着每次渲染重跑，上报次数就变成「渲染了几次」而不是「录制态变了几次」。
+     */
+    const reportRecording = useCallback((value: boolean): void => {
+      reportRef.current?.(value)
+      setRecording(value)
+    }, [])
+    const dispatchImport = provider.onImport ?? ((): void => {})
+    useShortcutDispatcher({
+      platform,
+      table: resolveShortcuts(shortcuts, platformKind(platform)),
+      enabled: !recording,
+      actions: {
+        // 与 `ToolbarProvider` 收到的是**同一个** spy：App 里两边也都指向同一个 handleImport
+        import: dispatchImport,
+        // 这两条动作在 App 里是「提升上去的状态」，单测里没有那一层，占位即可
+        // （Ribbon 现在还自己监听 ⌘, 打开设置，所以打开设置的用例不经过分发器）
+        'toggle-sidebar': () => {},
+        'open-settings': () => {}
+      }
+    })
+    return (
+      <>
+        <Ribbon
+          docTitle={docTitle}
+          onDocTitleChange={onDocTitleChange}
+          darkPaper={darkPaper}
+          onDarkPaperChange={onDarkPaperChange}
+          themeSource={themeSource}
+          onThemeSourceChange={onThemeSourceChange}
+          novelOpen={novelOpen}
+          shortcuts={shortcuts}
+          platform={platform}
+          onShortcutsChange={onShortcutsChange}
+          onRecordingChange={reportRecording}
+        />
+        {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
+        <Toast />
+      </>
+    )
+  }
+
+  const { unmount } = render(
     <ToolbarProvider {...provider}>
-      <Ribbon
-        docTitle={docTitle}
-        onDocTitleChange={onDocTitleChange}
-        darkPaper={darkPaper}
-        onDarkPaperChange={onDarkPaperChange}
-        themeSource={themeSource}
-        onThemeSourceChange={onThemeSourceChange}
-        novelOpen={novelOpen}
-      />
-      {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
-      <Toast />
+      <Harness />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange }
+  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange, unmount }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -12613,6 +12902,168 @@ describe('对话框开着时，键盘焦点不会被抢回阅读区', () => {
 
     expect(screen.queryByTestId('settings')).toBeNull()
     expect(document.activeElement).toBe(capture)
+  })
+})
+
+/**
+ * 设置里的快捷键录制。
+ *
+ * 【录制框为什么是 button 而不是 input】这个应用的「抢焦点豁免名单」（InputCapture 的
+ * `TEXT_INPUT_SELECTOR`）里有 `input`，而录制要自己接管 keydown——做成 input 的话那一下
+ * 会同时被当作「在输入框里打字」。
+ */
+describe('设置里的快捷键录制', () => {
+  it('三行都在，显示的是当前键', () => {
+    setup({})
+    openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+    expect(screen.getByTestId('shortcut-toggle-sidebar-input').textContent).toContain(
+      'Ctrl+Shift+H'
+    )
+    expect(screen.getByTestId('shortcut-open-settings-input').textContent).toContain('Ctrl+,')
+  })
+
+  it('点一下进录制态，显示提示', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
+  })
+
+  it('按下合法组合就记下来，并退出录制态', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      code: 'KeyI',
+      ctrlKey: true
+    })
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+I')
+  })
+
+  it('录不了裸键，停在录制态并提示', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), { code: 'KeyI' })
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
+    expect(screen.getByTestId('toast').textContent).toContain('修饰键')
+  })
+
+  it('录不了和应用内另一条撞车的组合，提示里点名是哪一条', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      code: 'KeyH',
+      ctrlKey: true,
+      shiftKey: true
+    })
+    expect(screen.getByTestId('toast').textContent).toContain('显示/隐藏章节栏')
+  })
+
+  it('同一次对话框里把两条改成同一个键：第二次当场拦住（比的是草稿，不是已提交值）', () => {
+    setup({})
+    openViaButton()
+    // 先把「显示/隐藏章节栏」改成 Ctrl+I（只是草稿，还没保存）
+    fireEvent.click(screen.getByTestId('shortcut-toggle-sidebar-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-toggle-sidebar-input'), {
+      code: 'KeyI',
+      ctrlKey: true
+    })
+    expect(screen.getByTestId('shortcut-toggle-sidebar-input').textContent).toContain('Ctrl+I')
+
+    // 再把「导入小说」也改成 Ctrl+I。此刻**已提交值**里 import 仍是 Ctrl+O，拿已提交值比
+    // 是看不出撞车的——而这两条保存之后会同时生效，引擎里只会有一条真的能用。
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      code: 'KeyI',
+      ctrlKey: true
+    })
+
+    expect(screen.getByTestId('toast').textContent).toContain('显示/隐藏章节栏')
+    // 被拦住＝没记下来，还停在录制态
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('请按下组合键')
+  })
+
+  it('按 Esc 取消录制，值不变', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    // `key` 与 `code` 都给：真机上按 Esc 两个都有，而对话框自己的关闭键判的是 `key`
+    // （少了它，用例连「Esc 会关对话框」这半边都验不到）
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      key: 'Escape',
+      code: 'Escape'
+    })
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+  })
+
+  it('按 Esc 只是取消录制，不会顺手把整个对话框关掉（草稿全丢）', () => {
+    setup({})
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    // `key` 与 `code` 都给：真机上按 Esc 两个都有，而对话框自己的关闭键判的是 `key`
+    // （少了它，用例连「Esc 会关对话框」这半边都验不到）
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), {
+      key: 'Escape',
+      code: 'Escape'
+    })
+    // Esc 也是对话框自己的关闭键：录制那一下必须 stopPropagation，否则用户想取消录制
+    // 会把整个对话框关掉，那一瞬间的草稿（包括刚录的别的键）全丢
+    expect(screen.getByTestId('settings')).toBeTruthy()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+  })
+
+  it('改完要点保存才生效——并进「手动保存」那一组', () => {
+    const onShortcutsChange = vi.fn()
+    setup({ onShortcutsChange })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), { code: 'KeyI', ctrlKey: true })
+    expect(onShortcutsChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('settings-save'))
+    expect(onShortcutsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ import: 'Ctrl+KeyI' })
+    )
+  })
+
+  it('↺ 恢复该平台默认值，并且这一条从稀疏表里消失', () => {
+    const onShortcutsChange = vi.fn()
+    setup({ shortcuts: { import: 'Ctrl+KeyI' }, onShortcutsChange })
+    openViaButton()
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+I')
+
+    fireEvent.click(screen.getByTestId('shortcut-import-reset'))
+    // 恢复默认后 import 变回 Ctrl+O ……
+    expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    // ……而且「和默认一样」时不该写进稀疏表：`{}` ＝ 全默认。稀疏表里「显式写回默认值」
+    // 与「从未改过」对读取方完全没区别，没有理由把表撑大。
+    expect(onShortcutsChange).toHaveBeenCalledWith({})
+  })
+
+  it('录制期间分发器必须静音——否则录 ⌘O 会当场触发一次真导入', () => {
+    const onImport = vi.fn()
+    setup({ onImport })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), { code: 'KeyO', ctrlKey: true })
+    expect(onImport).not.toHaveBeenCalled()
+  })
+
+  it('录制态变化要报给外面，关掉/卸载时也要报一次 false——否则分发器会一直哑着', () => {
+    const onRecordingChange = vi.fn()
+    const { unmount } = setup({ onRecordingChange })
+    openViaButton()
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    unmount()
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
   })
 })
 ```
