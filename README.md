@@ -48,11 +48,12 @@ This app is **not code-signed** (certificates cost money), so:
 2. **Type** — any keypress in the document area reveals the next chunk of text. The default is
    10 characters per keystroke, configurable from 1 to 500.
 3. **Jump chapters** — click any chapter in the left sidebar. `⌘/Ctrl + Shift + H` collapses the
-   whole sidebar.
+   whole sidebar. Both shortcuts are rebindable — see [Shortcuts](#shortcuts).
 4. **Adjust the look** — Settings offers Follow system / Light / Dark. In dark mode the page stays
    white by default (just like real Word); enable "dark paper" if you'd rather it didn't.
 
-Reading progress is saved automatically and picked up again on the next launch.
+Settings persist across restarts, and **reading progress is kept per book** — importing a second
+novel doesn't lose your place in the first.
 
 ### Two input modes
 
@@ -60,6 +61,24 @@ Reading progress is saved automatically and picked up again on the next launch.
 |---|---|---|
 | **IME-friendly** (default) | Type pinyin with a Chinese IME; text is revealed as characters are committed. Nothing is revealed while a composition is in progress. | Everyday use |
 | **Raw keystrokes** | One keystroke, one reveal. Bypasses the IME entirely. | Touch typing |
+
+### Shortcuts
+
+Three shortcuts are rebindable, and each has its own default per platform:
+
+| Action | macOS | Windows / Linux |
+|---|---|---|
+| Import a novel | `⌘O` | `Ctrl+O` |
+| Show/hide the chapter sidebar | `⇧⌘H` | `Ctrl+Shift+H` |
+| Open Settings | `⌘,` | `Ctrl+,` |
+
+Open Settings → **Shortcuts**, click a field and press the combination you want. `Esc` cancels the
+recording without changing anything; `↺` restores that platform's default. The new binding takes
+effect when you press **Save**, and on macOS the matching menu-bar item updates to show it.
+
+Bindings must include at least one modifier — a bare key would be swallowed instead of reaching the
+page. On macOS a short list of combinations is refused because the system or the app's own menus
+already own them (`⌘Q`, `⌘W`, `⌘C`…).
 
 ## Build from source
 
@@ -95,8 +114,11 @@ artifacts under Actions.
   the Settings dialog.
 - **IME behaviour can only be verified on real hardware.** The candidate window is drawn by the
   system rather than by the page, so automation cannot observe its position.
-- **Settings do not persist across restarts** (document name, ratio, appearance, paper). Only
-  reading progress is saved.
+- **While you are recording a shortcut, macOS menu accelerators still fire.** The recording box
+  mutes the app's own shortcut handler, but not the native menu bar — pressing `⌘O` mid-recording
+  opens the file picker. Cancel it and record again.
+- **Document name and the two reading ratios only take effect when you press Save**, not as you
+  type them. Appearance, paper and input mode apply immediately.
 
 ## Tech stack
 
