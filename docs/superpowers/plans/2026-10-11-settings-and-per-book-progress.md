@@ -956,23 +956,38 @@ Expected: FAIL —— `store.migrateLegacySession is not a function`。
       //
       // 触发条件都很现实：磁盘满（写要空间、rm 不要）、sessions 被一个同名文件占住
       // （mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复。
-      const alreadyMigrated = readSessionFile(target, legacy.sourcePath) !== null
-      const migrated = alreadyMigrated || writeSessionFile(target, legacy)
-      const settings = readSettingsFile(settingsPath)
-      const lastSourcePathWritten =
-        settings.lastSourcePath !== null ||
-        writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+      // 【顺序不能反——初稿把这里写反了，实测会丢数据】会话那半必须排在设置那半**之前**：
+      // 反过来的话，「会话写失败而设置写成功」会让 lastSourcePath 指向一本进度还没搬过去的书，
+      // 下次启动按它自动打开那本书、600ms 自动保存把 cursor 0 落盘，再下次启动就满足
+      // 「已经迁过」+「lastSourcePath 非空」而把旧文件删掉——真进度没了，而且是应用自己干的。
+      if (readSessionFile(target, legacy.sourcePath) === null) writeSessionFile(target, legacy)
+      // 删之前**再读一次**，而不是信 writeSessionFile 的返回值：保证的是「这份记录确实在
+      // 新位置读得出来」，而不是「那次调用说自己成功了」。将来有人让它在没落盘时返回 true，
+      // 这道读仍然守得住（否则整条保证就只由一行注释保护着）。
+      if (readSessionFile(target, legacy.sourcePath) === null) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
 
-      if (!migrated || !lastSourcePathWritten) {
+      const settings = readSettingsFile(settingsPath)
+      if (
+        settings.lastSourcePath === null &&
+        !writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+      ) {
         console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
         return
       }
 
       try {
         rmSync(legacySessionPath, { force: true })
-        rmSync(`${legacySessionPath}.tmp`, { force: true })
       } catch (err) {
         console.warn('[wt] 删除旧版会话文件失败：', err)
+      }
+      // 各自一个 try：共用的话，删 session.json 一抛错，.tmp 就永远不被尝试
+      try {
+        rmSync(`${legacySessionPath}.tmp`, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除旧版临时会话文件失败：', err)
       }
     },
 ```
