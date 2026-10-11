@@ -6305,7 +6305,46 @@ import {
   IconSymbols,
   IconTextbox,
   IconVideo,
-  IconWrapText
+  IconWrapText,
+  /* 「引用 / 审阅 / 视图」三页补密度时新增的。 */
+  IconAccessibility,
+  IconAccept,
+  IconAddText,
+  IconBibliography,
+  IconCaption,
+  IconCitation,
+  IconCompare,
+  IconDeleteComment,
+  IconDraftView,
+  IconEndnote,
+  IconInsertIndex,
+  IconLanguage,
+  IconMacro,
+  IconMarkEntry,
+  IconMergeDocs,
+  IconMultiPage,
+  IconNewWindow,
+  IconNextItem,
+  IconOutlineView,
+  IconPageView,
+  IconPageWidth,
+  IconPrevItem,
+  IconReject,
+  IconRestrictEditing,
+  IconReviewPane,
+  IconShowComments,
+  IconSideBySide,
+  IconSources,
+  IconSplitWindow,
+  IconSwitchWindow,
+  IconSyncScroll,
+  IconThesaurus,
+  IconTrackChanges,
+  IconTranslate,
+  IconUpdateField,
+  IconUpdateTable,
+  IconWebLayout,
+  IconZoom
 } from './icons'
 
 export const RIBBON_TABS = ['文件', '开始', '插入', '布局', '引用', '审阅', '视图'] as const
@@ -6906,27 +6945,314 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
   ],
   引用: [
     {
-      label: '引用',
+      label: '目录',
       items: [
         { kind: 'placeholder', id: 'toc', label: '目录', title: '目录', icon: IconToc, large: true },
-        { kind: 'placeholder', id: 'footnote', label: '脚注', title: '插入脚注', icon: IconFootnote, large: true }
+        {
+          kind: 'placeholder',
+          id: 'add-text',
+          label: '添加文字',
+          title: '添加文字',
+          icon: IconAddText,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'update-toc',
+          label: '更新目录',
+          title: '更新目录',
+          icon: IconUpdateField,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '脚注',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'footnote',
+          label: '插入脚注',
+          title: '插入脚注',
+          icon: IconFootnote,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'endnote',
+          label: '插入尾注',
+          title: '插入尾注',
+          icon: IconEndnote,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'next-footnote',
+          label: '下一条脚注',
+          title: '下一条脚注',
+          icon: IconNextItem,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '引文与书目',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'citation',
+          label: '插入引文',
+          title: '插入引文',
+          icon: IconCitation,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'sources',
+          label: '管理源',
+          title: '管理源',
+          icon: IconSources,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'bibliography',
+          label: '书目',
+          title: '书目',
+          icon: IconBibliography,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '题注',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'caption',
+          label: '插入题注',
+          title: '插入题注',
+          icon: IconCaption,
+          large: true
+        },
+        {
+          // 与「插入」页那个交叉引用是同一个命令，共用 id。
+          kind: 'placeholder',
+          id: 'crossref',
+          label: '交叉引用',
+          title: '交叉引用',
+          icon: IconCrossRef,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'update-table',
+          label: '更新表',
+          title: '更新表',
+          icon: IconUpdateTable,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '索引',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'mark-entry',
+          label: '标记条目',
+          title: '标记条目',
+          icon: IconMarkEntry,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'insert-index',
+          label: '插入索引',
+          title: '插入索引',
+          icon: IconInsertIndex,
+          large: true
+        }
       ]
     }
   ],
   审阅: [
     {
-      label: '审阅',
+      label: '校对',
       items: [
-        { kind: 'placeholder', id: 'comment', label: '新建批注', title: '新建批注', icon: IconComment, large: true },
         {
           kind: 'placeholder',
           id: 'spellcheck',
-          label: '拼写检查',
-          title: '拼写检查',
+          label: '拼写和语法',
+          title: '拼写和语法',
           icon: IconSpellCheck,
           large: true
         },
-        { kind: 'placeholder', id: 'wordcount', label: '字数统计', title: '字数统计', icon: IconWordCount, large: true }
+        {
+          kind: 'placeholder',
+          id: 'thesaurus',
+          label: '同义词库',
+          title: '同义词库',
+          icon: IconThesaurus,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'wordcount',
+          label: '字数统计',
+          title: '字数统计',
+          icon: IconWordCount,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '辅助功能',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'accessibility',
+          label: '检查辅助功能',
+          title: '检查辅助功能',
+          icon: IconAccessibility,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '语言',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'translate',
+          label: '翻译',
+          title: '翻译',
+          icon: IconTranslate,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'language',
+          label: '语言',
+          title: '语言',
+          icon: IconLanguage,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '批注',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'comment',
+          label: '新建批注',
+          title: '新建批注',
+          icon: IconComment,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'delete-comment',
+          label: '删除',
+          title: '删除批注',
+          icon: IconDeleteComment,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'prev-comment',
+          label: '上一条',
+          title: '上一条批注',
+          icon: IconPrevItem,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'next-comment',
+          label: '下一条',
+          title: '下一条批注',
+          icon: IconNextItem,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'show-comments',
+          label: '显示批注',
+          title: '显示批注',
+          icon: IconShowComments,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '修订',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'track-changes',
+          label: '修订',
+          title: '修订',
+          icon: IconTrackChanges,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'markup',
+          label: '显示标记',
+          title: '显示标记',
+          icon: IconShowMarks,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'review-pane',
+          label: '审阅窗格',
+          title: '审阅窗格',
+          icon: IconReviewPane,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '更改',
+      items: [
+        { kind: 'placeholder', id: 'accept', label: '接受', title: '接受', icon: IconAccept, large: true },
+        { kind: 'placeholder', id: 'reject', label: '拒绝', title: '拒绝', icon: IconReject, large: true }
+      ]
+    },
+    {
+      label: '比较',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'compare',
+          label: '比较',
+          title: '比较',
+          icon: IconCompare,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'merge-docs',
+          label: '合并',
+          title: '合并',
+          icon: IconMergeDocs,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '保护',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'restrict',
+          label: '限制编辑',
+          title: '限制编辑',
+          icon: IconRestrictEditing,
+          large: true
+        }
       ]
     }
   ],
@@ -6942,8 +7268,135 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           icon: IconReadingView,
           large: true
         },
+        {
+          kind: 'placeholder',
+          id: 'page-view',
+          label: '页面视图',
+          title: '页面视图',
+          icon: IconPageView,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'web-view',
+          label: 'Web 版式视图',
+          title: 'Web 版式视图',
+          icon: IconWebLayout,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'outline-view',
+          label: '大纲视图',
+          title: '大纲视图',
+          icon: IconOutlineView,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'draft-view',
+          label: '草稿视图',
+          title: '草稿视图',
+          icon: IconDraftView,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '显示',
+      items: [
         { kind: 'placeholder', id: 'ruler', label: '标尺', title: '标尺', icon: IconRuler, large: true },
-        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线', icon: IconGrid, large: true }
+        { kind: 'placeholder', id: 'gridlines', label: '网格线', title: '网格线', icon: IconGrid, large: true },
+        {
+          // 与「布局」页那个选择窗格是同一类东西，共用图标出口。
+          kind: 'placeholder',
+          id: 'nav-pane',
+          label: '导航窗格',
+          title: '导航窗格',
+          icon: IconSelectionPane,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '显示比例',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'one-page',
+          label: '单页',
+          title: '单页',
+          icon: IconPageView,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'multi-page',
+          label: '多页',
+          title: '多页',
+          icon: IconMultiPage,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'page-width',
+          label: '页宽',
+          title: '页宽',
+          icon: IconPageWidth,
+          large: true
+        },
+        { kind: 'placeholder', id: 'zoom', label: '缩放', title: '缩放', icon: IconZoom, large: true }
+      ]
+    },
+    {
+      label: '窗口',
+      items: [
+        {
+          kind: 'placeholder',
+          id: 'new-window',
+          label: '新建窗口',
+          title: '新建窗口',
+          icon: IconNewWindow,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'split',
+          label: '拆分',
+          title: '拆分',
+          icon: IconSplitWindow,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'side-by-side',
+          label: '并排查看',
+          title: '并排查看',
+          icon: IconSideBySide,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'sync-scroll',
+          label: '同步滚动',
+          title: '同步滚动',
+          icon: IconSyncScroll,
+          large: true
+        },
+        {
+          kind: 'placeholder',
+          id: 'switch-window',
+          label: '切换窗口',
+          title: '切换窗口',
+          icon: IconSwitchWindow,
+          large: true
+        }
+      ]
+    },
+    {
+      label: '宏',
+      items: [
+        { kind: 'placeholder', id: 'macro', label: '宏', title: '宏', icon: IconMacro, large: true }
       ]
     }
   ]
@@ -10642,7 +11095,81 @@ import {
   SendFilled,
   SendRegular,
   TextProofingToolsFilled,
-  TextProofingToolsRegular
+  TextProofingToolsRegular,
+  TextAddFilled,
+  TextAddRegular,
+  ArrowClockwiseFilled,
+  ArrowClockwiseRegular,
+  DocumentEndnoteFilled,
+  DocumentEndnoteRegular,
+  TextQuoteFilled,
+  TextQuoteRegular,
+  DatabaseFilled,
+  DatabaseRegular,
+  LibraryFilled,
+  LibraryRegular,
+  ClosedCaptionFilled,
+  ClosedCaptionRegular,
+  TableSimpleFilled,
+  TableSimpleRegular,
+  TagFilled,
+  TagRegular,
+  DocumentTextFilled,
+  DocumentTextRegular,
+  ArrowNextFilled,
+  ArrowNextRegular,
+  ArrowPreviousFilled,
+  ArrowPreviousRegular,
+  BookQuestionMarkFilled,
+  BookQuestionMarkRegular,
+  AccessibilityFilled,
+  AccessibilityRegular,
+  TranslateFilled,
+  TranslateRegular,
+  LocalLanguageFilled,
+  LocalLanguageRegular,
+  CommentDismissFilled,
+  CommentDismissRegular,
+  CommentMultipleFilled,
+  CommentMultipleRegular,
+  DocumentEditFilled,
+  DocumentEditRegular,
+  PanelRightFilled,
+  PanelRightRegular,
+  CheckmarkCircleFilled,
+  CheckmarkCircleRegular,
+  DismissCircleFilled,
+  DismissCircleRegular,
+  ItemCompareFilled,
+  ItemCompareRegular,
+  MergeFilled,
+  MergeRegular,
+  LockClosedFilled,
+  LockClosedRegular,
+  DocumentGlobeFilled,
+  DocumentGlobeRegular,
+  DocumentBulletListFilled,
+  DocumentBulletListRegular,
+  DraftsFilled,
+  DraftsRegular,
+  DocumentOnePageMultipleFilled,
+  DocumentOnePageMultipleRegular,
+  ArrowAutofitWidthFilled,
+  ArrowAutofitWidthRegular,
+  ZoomInFilled,
+  ZoomInRegular,
+  WindowNewFilled,
+  WindowNewRegular,
+  BoardSplitFilled,
+  BoardSplitRegular,
+  DualScreenFilled,
+  DualScreenRegular,
+  ArrowSyncFilled,
+  ArrowSyncRegular,
+  WindowMultipleFilled,
+  WindowMultipleRegular,
+  CodeFilled,
+  CodeRegular
 } from '@fluentui/react-icons'
 
 /**
@@ -10779,6 +11306,59 @@ export const IconRotate = bundleIcon(ArrowRotateClockwiseFilled, ArrowRotateCloc
 /* 「文件」页补充的几个。 */
 export const IconSaveAs = bundleIcon(SaveCopyFilled, SaveCopyRegular)
 export const IconShare = bundleIcon(SendFilled, SendRegular)
+
+/* 「引用」页用到的一组。查不到 `Endnote`（尾注用 `DocumentEndnote`）、
+   查不到 `Index`（插入索引用 `DocumentText`）。 */
+export const IconAddText = bundleIcon(TextAddFilled, TextAddRegular)
+export const IconUpdateField = bundleIcon(ArrowClockwiseFilled, ArrowClockwiseRegular)
+export const IconEndnote = bundleIcon(DocumentEndnoteFilled, DocumentEndnoteRegular)
+export const IconCitation = bundleIcon(TextQuoteFilled, TextQuoteRegular)
+export const IconSources = bundleIcon(DatabaseFilled, DatabaseRegular)
+export const IconBibliography = bundleIcon(LibraryFilled, LibraryRegular)
+export const IconCaption = bundleIcon(ClosedCaptionFilled, ClosedCaptionRegular)
+export const IconUpdateTable = bundleIcon(TableSimpleFilled, TableSimpleRegular)
+export const IconMarkEntry = bundleIcon(TagFilled, TagRegular)
+export const IconInsertIndex = bundleIcon(DocumentTextFilled, DocumentTextRegular)
+
+/* 「审阅」页用到的一组。查不到 `CommentDelete` / `CommentPrevious` / `CommentNext`
+   / `DocumentCompare`，分别用 `CommentDismiss` / `ArrowPrevious` / `ArrowNext`
+   / `ItemCompare` 顶上。 */
+export const IconThesaurus = bundleIcon(BookQuestionMarkFilled, BookQuestionMarkRegular)
+export const IconAccessibility = bundleIcon(AccessibilityFilled, AccessibilityRegular)
+export const IconTranslate = bundleIcon(TranslateFilled, TranslateRegular)
+export const IconLanguage = bundleIcon(LocalLanguageFilled, LocalLanguageRegular)
+export const IconDeleteComment = bundleIcon(CommentDismissFilled, CommentDismissRegular)
+export const IconShowComments = bundleIcon(CommentMultipleFilled, CommentMultipleRegular)
+export const IconTrackChanges = bundleIcon(DocumentEditFilled, DocumentEditRegular)
+export const IconReviewPane = bundleIcon(PanelRightFilled, PanelRightRegular)
+export const IconAccept = bundleIcon(CheckmarkCircleFilled, CheckmarkCircleRegular)
+export const IconReject = bundleIcon(DismissCircleFilled, DismissCircleRegular)
+export const IconCompare = bundleIcon(ItemCompareFilled, ItemCompareRegular)
+export const IconMergeDocs = bundleIcon(MergeFilled, MergeRegular)
+export const IconRestrictEditing = bundleIcon(LockClosedFilled, LockClosedRegular)
+export const IconPrevItem = bundleIcon(ArrowPreviousFilled, ArrowPreviousRegular)
+export const IconNextItem = bundleIcon(ArrowNextFilled, ArrowNextRegular)
+
+/* 「视图」页用到的一组。
+   `IconPageView` 与 `IconCoverPage` 用的是同一个字形（`DocumentOnePage`）：
+   真 Word 里「页面视图」与「单页」本来就是同一个意思，这里照搬，不硬造区别。
+   两处都用到它，所以导出两个名字。 */
+export const IconPageView = bundleIcon(DocumentOnePageFilled, DocumentOnePageRegular)
+export const IconWebLayout = bundleIcon(DocumentGlobeFilled, DocumentGlobeRegular)
+export const IconOutlineView = bundleIcon(DocumentBulletListFilled, DocumentBulletListRegular)
+export const IconDraftView = bundleIcon(DraftsFilled, DraftsRegular)
+export const IconMultiPage = bundleIcon(
+  DocumentOnePageMultipleFilled,
+  DocumentOnePageMultipleRegular
+)
+export const IconPageWidth = bundleIcon(ArrowAutofitWidthFilled, ArrowAutofitWidthRegular)
+export const IconZoom = bundleIcon(ZoomInFilled, ZoomInRegular)
+export const IconNewWindow = bundleIcon(WindowNewFilled, WindowNewRegular)
+export const IconSplitWindow = bundleIcon(BoardSplitFilled, BoardSplitRegular)
+export const IconSideBySide = bundleIcon(DualScreenFilled, DualScreenRegular)
+export const IconSyncScroll = bundleIcon(ArrowSyncFilled, ArrowSyncRegular)
+export const IconSwitchWindow = bundleIcon(WindowMultipleFilled, WindowMultipleRegular)
+export const IconMacro = bundleIcon(CodeFilled, CodeRegular)
 
 /* 设置对话框用的一组 */
 export const IconRename = bundleIcon(RenameFilled, RenameRegular)
