@@ -301,9 +301,12 @@ export function createSessionStore(baseDir: string): SessionStore {
       // 【为什么要闸】sourcePath 不是字符串时，sessionFileName 会在 createHash 里抛
       // ERR_INVALID_ARG_TYPE，而那是**在 readSessionFile 的 try 之外**（参数先求值）——
       // 异常会一路冒到 ipcMain.handle，把渲染层那次 invoke 打成 rejection。
-      // 仓库内当前不可达（toSession 恒给字符串、ipc.ts 那条 guard 还在），但这条通道
-      // 收的是渲染层未经校验的载荷，而「读回来的东西一律校验」是本文件的既有姿态——
+      // 这条通道收的是渲染层未经校验的载荷，而「读回来的东西一律校验」是本文件的既有姿态——
       // 这属于同一类，只是站在 IPC 那一侧。问不到就按无记录，与别处一致。
+      //
+      // 【这不是「不可达的防御」】渲染层传 sourcePath 要等 Task 7，在那之前每次启动都会
+      // 走到这里并且**必须**返回 null（而不是抛）——所以它是眼下唯一兜住这条路的东西，
+      // 不是给未来留的保险。
       if (typeof sourcePath !== 'string') return null
       return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
