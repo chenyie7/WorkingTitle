@@ -18,6 +18,7 @@ export interface SessionStore {
   readSession(sourcePath: string): PersistedSession | null
   writeSession(s: PersistedSession): void
   clearReadingHistory(): void
+  migrateLegacySession(): void
   writeNovelCache(novel: Novel): void
   readNovelCache(filePath: string): Novel | null
 }
@@ -180,15 +181,18 @@ function readSettingsFile(path: string): AppSettings {
   }
 }
 
-function writeSettingsFile(path: string, s: AppSettings): void {
+/** 返回「这一次是否确实落地了」——迁移那条路要拿它当「能不能删旧文件」的判据。 */
+function writeSettingsFile(path: string, s: AppSettings): boolean {
   try {
     mkdirSync(dirname(path), { recursive: true })
     // 与 session 同样的 temp+rename。文档名是用户敲进去的、不可再生，
     // 截断的 settings.json 读回来只会是默认值。
     writeFileSync(`${path}.tmp`, JSON.stringify(s), 'utf8')
     renameSync(`${path}.tmp`, path)
+    return true
   } catch (err) {
     console.warn('[wt] 保存设置失败，本次改动未落盘：', err)
+    return false
   }
 }
 
@@ -208,6 +212,12 @@ function sessionFilePath(sessionsDir: string, sourcePath: string): string {
   return join(sessionsDir, sessionFileName(sourcePath))
 }
 
+/**
+ * 【两个参数必须互相一致的不变量】`file` 得是 `sessionFile(sourcePath)` 的结果——下面那道
+ * 「文件里的 sourcePath 与请求的不是同一本」的检查，前提正是「文件名由这个路径算出」。
+ * 目前只靠唯一调用点保证（`readSession` 里就地算出来传进来），签名上没有任何东西拦着
+ * 把一对不相干的参数传进来。
+ */
 function readSessionFile(file: string, sourcePath: string): PersistedSession | null {
   try {
     if (!existsSync(file)) return null
@@ -225,7 +235,16 @@ function readSessionFile(file: string, sourcePath: string): PersistedSession | n
     // 或哈希撞车。放行的话会把 B 书的进度套到 A 书上——章节目录与光标全部错位，而
     // fromSession 对错位的 chapterPos 不抛错，只会表现为「进度莫名其妙不对」。
     if (parsed.sourcePath !== sourcePath) {
-      console.warn('[wt] 会话文件与请求的书不是同一本，按无记录处理：', file)
+      // 两个路径都打出来：文件名是 32 位 hex，只给文件名的话，读日志的人既不知道这份记的是
+      // 哪本书、也不知道请求的是哪本——而「哪两本对不上」正是要查的东西。
+      console.warn(
+        '[wt] 会话文件与请求的书不是同一本，按无记录处理：文件里记的是',
+        parsed.sourcePath,
+        '，请求的是',
+        sourcePath,
+        '，文件：',
+        file
+      )
       return null
     }
     return parsed
@@ -237,19 +256,22 @@ function readSessionFile(file: string, sourcePath: string): PersistedSession | n
   }
 }
 
-function writeSessionFile(file: string, s: PersistedSession): void {
+/** 返回「这一次是否确实落地了」——迁移那条路要拿它当「能不能删旧文件」的判据。 */
+function writeSessionFile(file: string, s: PersistedSession): boolean {
   try {
     mkdirSync(dirname(file), { recursive: true })
     // 先写临时文件再改名（同一个目录内，rename 是原子的）：读取方要么看到旧的完整文件、
-    // 要么看到新的完整文件，不会看到「写了一半的 session.json」。直接写目标路径的话，
+    // 要么看到新的完整文件，不会看到「写了一半的会话文件」。直接写目标路径的话，
     // 进程在写完之前死掉，留下的是截断甚至空的文件，readSession 只能返回 null——
     // 游标、chapterPos、activeChapter、ratio、mode、startedAt 全部静默丢失。
     // 实测这种残留的表现：截断成 20 字节与空文件都读回 null。
     // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
     writeFileSync(`${file}.tmp`, JSON.stringify(s), 'utf8')
     renameSync(`${file}.tmp`, file)
+    return true
   } catch (err) {
     console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
+    return false
   }
 }
 
@@ -276,10 +298,21 @@ export function createSessionStore(baseDir: string): SessionStore {
     },
 
     readSession(sourcePath: string): PersistedSession | null {
+      // 【为什么要闸】sourcePath 不是字符串时，sessionFileName 会在 createHash 里抛
+      // ERR_INVALID_ARG_TYPE，而那是**在 readSessionFile 的 try 之外**（参数先求值）——
+      // 异常会一路冒到 ipcMain.handle，把渲染层那次 invoke 打成 rejection。
+      // 仓库内当前不可达（toSession 恒给字符串、ipc.ts 那条 guard 还在），但这条通道
+      // 收的是渲染层未经校验的载荷，而「读回来的东西一律校验」是本文件的既有姿态——
+      // 这属于同一类，只是站在 IPC 那一侧。问不到就按无记录，与别处一致。
+      if (typeof sourcePath !== 'string') return null
       return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
 
     writeSession(s: PersistedSession): void {
+      if (typeof s?.sourcePath !== 'string') {
+        console.warn('[wt] 保存会话失败：sourcePath 不是字符串，本次进度未落盘')
+        return
+      }
       writeSessionFile(sessionFile(s.sourcePath), s)
     },
 
@@ -303,6 +336,64 @@ export function createSessionStore(baseDir: string): SessionStore {
         rmSync(sessionsDir, { recursive: true, force: true })
       } catch (err) {
         console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
+      }
+    },
+
+    migrateLegacySession(): void {
+      // 旧版只有一个 session.json 槽位，新版按书分文件。升级后第一次取 store 时把它搬过去，
+      // 否则用户的进度还躺在磁盘上、却永远不会再被读到了。
+      let legacy: PersistedSession
+      try {
+        if (!existsSync(legacySessionPath)) return
+        const raw: unknown = JSON.parse(readFileSync(legacySessionPath, 'utf8'))
+        if (!isPersistedSession(raw)) {
+          // **刻意不删**：删除是不可逆的，而留着最多每次启动多一条警告。这份文件已经不是
+          // 本应用能读懂的东西了（手改过、或来自更早的版本），交给看日志的人自行处置。
+          console.warn(
+            `[wt] 旧版会话文件结构不合法（${sessionProblem(raw) ?? '未知'}），未迁移：`,
+            legacySessionPath
+          )
+          return
+        }
+        legacy = raw
+      } catch (err) {
+        console.warn('[wt] 读取旧版会话失败，未迁移：', err)
+        return
+      }
+
+      const target = sessionFile(legacy.sourcePath)
+      // 【本任务唯一会毁数据的地方，判据要强】下面删掉的是用户进度唯一的副本，所以
+      // 「能不能删」必须两条同时成立，任何一条不成立就原样留着、下次启动重试：
+      //
+      // 1. 新位置确实有一份**读得出来**的记录。判据用 `readSessionFile(...) !== null` 而不是
+      //    `existsSync`：后者只回答「有个东西在那儿」，一个空的或截断的 target 会让这次迁移
+      //    跳过写、然后把旧文件删掉——用一个读不出来的残留压掉一份完好的旧记录。
+      //    （target 本来就有一份**能读**的记录时短路掉写：那一份是更新的，旧文件只是上一代
+      //    格式的残留，不该倒回去。）
+      // 2. 「上次打开的是哪本」也落盘了。它在旧版只写在会话文件里；这一条写不进去，迁移好的
+      //    记录就没有任何人去读它——用户手动导入那本书时会被 cursor 0 覆盖掉。
+      //    （Task 7 把导入路径改成「先读会话」之后，这一条的后果降级成「不会自动打开」，
+      //    但闸留着仍然对：能确认的事就确认。）
+      //
+      // 触发条件都很现实：磁盘满（写要空间、rm 不要）、sessions 被一个同名文件占住
+      // （mkdir 抛、rm 照旧成功）。删掉的后果是进度不可恢复。
+      const alreadyMigrated = readSessionFile(target, legacy.sourcePath) !== null
+      const migrated = alreadyMigrated || writeSessionFile(target, legacy)
+      const settings = readSettingsFile(settingsPath)
+      const lastSourcePathWritten =
+        settings.lastSourcePath !== null ||
+        writeSettingsFile(settingsPath, { ...settings, lastSourcePath: legacy.sourcePath })
+
+      if (!migrated || !lastSourcePathWritten) {
+        console.warn('[wt] 旧版会话迁移未能落地，保留原文件、下次启动重试：', legacySessionPath)
+        return
+      }
+
+      try {
+        rmSync(legacySessionPath, { force: true })
+        rmSync(`${legacySessionPath}.tmp`, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除旧版会话文件失败：', err)
       }
     },
 
