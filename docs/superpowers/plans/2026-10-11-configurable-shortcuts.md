@@ -947,6 +947,11 @@ export function buildAppMenu(
 
 > 非 darwin 的那句 `Menu.setApplicationMenu(null)` 与整段注释**一个字都不要改**——
 > 那是伪装的一部分（见 CLAUDE.md 的「原生菜单」一节）。
+>
+> **【别在菜单这一侧"顺手也拦一下"保留键】** 本次分层的价值就在于保留键**穿过** `sessionStore`
+> 一路到 core，由 `resolveShortcuts` 按平台逐条退回默认值。菜单侧若自作主张再校验一次，
+> core 那条逐条校验就退回纸面路径了。规格评审的真机探针已经证明现在这条路径是通的（往
+> `settings.json` 写一条 `Meta+KeyQ`，应用照常起、0 条 warn、文档名保留）。
 
 - [ ] **Step 2: 改 `ipc.ts` 的 `saveSettings`**
 
@@ -1604,6 +1609,14 @@ git commit -F /tmp/msg-task5.txt
 
 ### Task 6: 文案统一 —— 四处硬编码改成读注册表
 
+> **【不要再引入平台判断】** `formatShortcut(spec, kind)` 是显示文本的**唯一出口**。这四处
+> 原先各写各的「⌘/Ctrl」，本次要做的就是把这个判断收进 core 一处。改的时候如果发现某处
+> 「看起来需要」自己判一下平台（比如想给 macOS 显示 ⌘、给 Windows 显示 Ctrl），那是
+> `formatShortcut` 已经在做的事——把 spec 和 kind 传进去就行。
+>
+> Task 2 之后，四处拿到的都应该是**已经按平台补齐的表**（`resolveShortcuts` 的结果），
+> 所以组件收到的那个字符串就是可以直接显示的成品。
+
 **Files:**
 - Modify: `src/renderer/src/components/Page.tsx:26`
 - Modify: `src/renderer/src/components/ChapterList.tsx:53-74,95,112`
@@ -1876,6 +1889,22 @@ Expected: FAIL —— 按下 Ctrl+O 后正文不出现
               importShortcut={formatShortcut(shortcutTable.import, platformKind(platform))}
             >
 ```
+
+- [ ] **Step 3.5: 补一条载荷断言（规格评审指定的挂点，别跳过）**
+
+评审核实了一个**静默**风险：Task 2 给那个 memo 补的是 `shortcuts: {}`，而 `settingsLoaded` 翻 true 时防抖 effect 必然重跑一次——于是手改过 `settings.json` 的人启动一次，非空表会在 600ms 后**被无声冲成空**（评审实测拍到 `{"import":"Ctrl+KeyI"}` → `{}`，全程没人碰键盘）。
+
+本步把 memo 接上真实状态之后这条就没了，**但没有任何现有测试会因此变红**——所以必须显式钉一条，否则将来有人把这里改回写死，谁也不会发现。
+
+挂点用现成的：`tests/unit/app.test.tsx` 里那条「读回设置之前不写盘（否则会用自己的默认值覆盖磁盘）」。它已经断言了载荷的另外几个字段，而且第二段是**前提自检**（放行之后必须写），正好可以扩。在它第二段补一行：
+
+```ts
+  expect((saveSettings.mock.calls[0][0] as AppSettings).shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+```
+
+并把该用例里 `release(...)` 的入参从 `shortcuts: {}` 换成 `shortcuts: { import: 'Ctrl+KeyI' }`。
+
+**验证方式**：把 memo 里的 `shortcuts` 换回写死的 `{}`，这条必须红。
 
 - [ ] **Step 4: 跑全量门禁**
 
