@@ -51,7 +51,7 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 **Electron 三进程**，`electron-vite` 构建：
 
-- `src/main/` — 文件 IO、编码检测、会话与缓存落盘、原生菜单、IPC handler
+- `src/main/` — 文件 IO、编码检测、会话与缓存落盘、原生菜单（**只有 macOS 建**，见「原生菜单」一节）、IPC handler
 - `src/preload/` — 唯一的桥；`contextIsolation: true` / `nodeIntegration: false` / `sandbox: true` 不可放宽
 - `src/renderer/` — React 19；持有一份**只读** `Novel` 并驱动引擎
 - `src/core/` — 被 main 与 renderer **共享**的纯逻辑
@@ -106,20 +106,104 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 `:root` 写 `light`、`[data-theme='dark']` 写 `dark`。深色下滚动条没跟着变、复选框是一块白，
 都是漏了这条。
 
-**macOS 上隐掉了原生标题栏**（`titleBarStyle: 'hiddenInset'`），红绿灯浮在网页上、落在标题条那一行。
-于是标题条左侧要留 78px，而且**只在 `darwin` 上留**——平台由 preload 的 `process.platform` 经
-`<html data-platform>` 带过来。标题条还需要 `-webkit-app-region: drag`，否则窗口拖不动。
+**标题栏也是网页画的，两个平台都是。** `src/main/index.ts` 的 `titleBarOptions(dark)`：
+macOS 用 `hiddenInset`（红绿灯浮在网页上），Windows 用 `hidden` + `titleBarOverlay`（系统仍画
+右上角那三个按钮、按 `titleBarOverlay.color` 上色，但**不画标题文字**）。Linux 返回空对象、保留
+系统标题栏。
+
+为什么非要交出去：默认标题栏的底色跟随系统外观与强调色，**应用改不了**——而网页里的标题条用的是
+自己的颜色，两者对不上。交出去之后那一块归我们上色，也顺带没有了「原生标题条 + 网页里再画一条」
+的两条标题条。
+
+三个必须知道的连带后果：
+
+- **标题条是窗口唯一的拖动区**（`ribbon.css` 里 `[data-platform]` 那两条的 `-webkit-app-region: drag`），
+  不设窗口就拖不动。平台由 preload 的 `process.platform` 经 `<html data-platform>` 带过来。
+- **标题居中**，所以两侧**对称**留白：macOS 各 78px（让开三个红绿灯 + 间距约 52px，从 x=14 起）、
+  Windows 各 150px（让开约 138px 的按钮区）。只留一侧会把标题顶偏。
+- **`TITLEBAR_LIGHT` / `TITLEBAR_DARK`（主进程）与 `--wt-titlebar` / `--wt-titlebar-text`（CSS）
+  是两处独立副本**，因为 `titleBarOverlay` 吃的是 JS 字面量、读不到 CSS 变量。改一处必须同步另一处，
+  否则按钮那一小块底色会和蓝条差一档。`WINDOW_BG_*` 早就是同样的成对关系。
+
+翻主题时 `nativeTheme.on('updated')` 里要显式 `setTitleBarOverlay`——那三个按钮是**系统**画的，
+不会自己跟着变。**`--wt-titlebar` 同时是功能区标签条的底色**（两条合成一整块蓝，真 Word「彩色」
+主题的样子），但**深色下标签条不跟它**（固定 `#191919`）：选中页签的底色与功能区同为 `#202024`，
+标签条若只差一档，「选中页签连成一片」就看不出来了。
+
+### 功能区（Ribbon）
+
+七个选项卡（文件/开始/插入/布局/引用/审阅/视图）的内容都在
+`src/renderer/src/components/Ribbon.tsx` 的 `TABS` 表里，分组与顺序对着真 Word 排。
+**全部是占位**——本应用的真实功能只有设置对话框里那几项，功能区的作用是让人一眼看去像 Word。
+
+`ToolbarItem` 有六种 kind（见 `Toolbar.tsx`）：`toggle` / `placeholder` / `settings` 是最初三种；
+补密度时加了 `combo`（字体名、字号、行距）、`gallery`（样式库，`AaBbCc` 预览）、`split`
+（主按钮 + 展开箭头，下划线 / 项目符号 / 编号）。
+
+**三条不能踩的：**
+
+1. **绝不能用原生 `<select>` 做下拉。** 全应用的按键挂在 `InputCapture` 那个 textarea 的
+   `onKeyDown` 上（**不是 window**），而 `focusIfNotTextInput` 的豁免名单里**有 `select`**——
+   那是给设置对话框用的。原生 `<select>` 一点下去焦点就留在它身上，之后敲键盘**既不打字也不抽字**，
+   应用等于废了。所以 `combo` 是 `<button>` + 一列 `<button>`：按钮类不在豁免名单里，`mousedown`
+   时焦点会被自动抢回 textarea。**推论：任何新增的可交互控件，先问它在不在 `TEXT_INPUT_SELECTOR` 里。**
+2. **下拉面板必须 portal 到 body。** `.wt-toolbar` 有 `overflow-x: auto`（窄窗口横向滚动）；
+   按 CSS 规则，一个轴不是 `visible` 时另一个轴也会变成 `auto`，绝对定位的面板会被**裁掉**。
+3. **组内是「两行按列填充」，所以数组顺序必须按对写。** `.wt-group__body` 是
+   `grid-auto-flow: column` + `grid-template-rows: repeat(2, auto)`，大按钮 / combo / gallery
+   加 `grid-row: span 2` 占满整列。于是**相邻两项自然成上下两格**——顺序按「重要性」乱排会排出
+   「清除格式压在加粗上面」这种没道理的配对（第一版就是这么翻车的）。两组的注释里都写了别重排。
+
+### 原生菜单
+
+`buildAppMenu` **只在 macOS 真的建菜单**，非 darwin 直接 `Menu.setApplicationMenu(null)`。
+Windows / Linux 的原生菜单栏渲染在**窗口内部**、标题栏正下方那一行，而真 Word 那个位置是功能区——
+一条「文件 编辑 视图 帮助」横着就把伪装拆了。macOS 的菜单在**屏幕顶部**，每个 Mac 应用都有，
+不构成破绽，而且 ⌘Q / ⌘H / ⌘C 这些系统级快捷键靠它。
+
+没用 `setMenuBarVisibility(false)`：那是「菜单还在、只是藏起来」，藏得干不干净取决于平台行为
+（`autoHideMenuBar` 与 Alt 键的交互）。`setApplicationMenu(null)` 是确定没有菜单。
+
+代价（仅 Windows / Linux）：失去 `Ctrl+O`（导入改从设置对话框进）与撤销/重做等 `role`；
+**但可编辑元素里的 Ctrl+C/V/X/A/Z 由 Chromium 自己处理，与菜单无关**。
 
 ### 图标
 
 用 **`@fluentui/react-icons`**（微软官方图标集，MIT）——它就是 Office / Microsoft 365 在用的那套，
-所以「像 Word」和「现代」在这里不冲突。两条规矩：
+所以「像 Word」和「现代」在这里不冲突。`src/renderer/src/components/icons.tsx` 是唯一的出口，
+现在导出约 200 个。三条规矩：
 
-1. **名字必须带 `Regular` / `Filled` 后缀**（`TextBold` 不存在，只有 `TextBoldRegular` /
-   `TextBoldFilled`）。写名字之前**先从包里枚举核对**，别凭记忆——`TextLineSpacing`、
-   `TextGrammarCheckmark`、`DocumentMargins`（复数）这些都不是想当然的名字。
-2. 每个图标用 `bundleIcon(Filled, Regular)` 包一层，那正是 Word 切换按钮的语义：
-   **未按下画线框、按下画实心**。`src/renderer/src/components/icons.tsx` 是唯一的出口。
+1. **每个图标用 `bundleIcon(Filled, Regular)` 包一层**，那正是 Word 切换按钮的语义：
+   **未按下画线框、按下画实心**。
+2. **名字必须带 `Regular` / `Filled` 后缀**（`TextBold` 不存在，只有 `TextBoldRegular` /
+   `TextBoldFilled`）。
+3. **写名字之前先从包里枚举核对，别凭记忆。** 这个包的取名很不直观，两个方向的意外都有：
+
+   - 看着该有、**确实有**：`TextColor`、`TextLineSpacing`、`TextGrammarCheckmark`、
+     `DocumentMargins`（复数）、`PositionToFront` / `PositionToBack`、`BoardSplit`
+   - 看着更顺、**偏偏没有**：`FontColor`、`Shading`、`MultilevelList`、`CoverPage`、`BlankPage`、
+     `Object`、`Endnote`、`Index`、`Hyphen`、`Breaks`、`BringToFront`、`SelectionPane`、
+     `CommentDelete`、`CommentPrevious` / `CommentNext`、`DocumentCompare`
+
+   第二类各自换了替代（`DocumentOnePage` / `DocumentOnePageAdd` / `SelectObject` /
+   `DocumentEndnote` / `ItemCompare` 等），换的时候都在 `icons.tsx` 里写了注释。
+
+枚举的办法——包有 CJS 构建，在**仓库根目录**下直接 `require` 即可（放进 `/tmp` 会解析不到包）：
+
+```bash
+node -e '
+const m = require("@fluentui/react-icons");
+const all = Object.keys(m).filter(n => n.endsWith("Regular") && !/\d+Regular$/.test(n) && !n.includes("Color"));
+for (const k of process.argv.slice(1)) console.log(k, "→", all.filter(n => n.toLowerCase().includes(k.toLowerCase())).slice(0,8).map(s=>s.replace(/Regular$/,"")).join("  "));
+' Indent LineSpacing Margins
+```
+
+两个过滤条件**各有一个坑，都实测踩过**：
+
+- 滤数字尺寸变体必须写 `!/\d+Regular$/`，**不能写 `!/\d+$/`**——名字是以 `Regular` 结尾的，
+  数字在中间，所以 `/\d+$/` 永远匹配不到，`TextLineSpacing16Regular` 之类会全漏出来。
+- `!n.includes("Color")` 会把 **`TextColor` 一起滤掉**（`FontColor` 不存在、`TextColor` 存在，
+  偏偏后者被滤掉）。搜颜色相关的词时把这个条件去掉。
 
 ## 本仓库的硬约定
 
@@ -149,6 +233,23 @@ md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；�
 做变异验证时改源码 + 跑 `pnpm build`（或 `pnpm test:e2e`，它自带构建）会把变异编进 `out/`；之后还原了**源码**、`git status` 干净、单测全绿，而 `out/` 里仍是变异产物。此时手动 `_electron.launch({args:['.']})` 量到的是**变异后的代码**，能得出完全错误的结论（本项目栽过一次，差点把「防抖是死代码」当成 bug 报出去）。
 
 **规矩：手动跑 `_electron` 之前先 `pnpm build`；拿到负结果时先怀疑产物陈旧、重建再测。**
+
+### 4. 合并方式与分支卫生
+
+合并 PR 用 **squash** 或 **merge commit**；用 **rebase merge** 就必须**合完立刻删分支**。
+
+rebase merge 会把分支的提交**重放**到 main 上、SHA 全变，于是分支上原来那批提交不再是 main 的祖先。
+**但 main 本身没有被改写**（新提交是在旧提交之上累加的，旧的那个 tip 仍是祖先）——所以别的机器
+`git pull` 一律正常。需要"对齐"的是**分支**，不是 main，别去 reset main。
+
+真正的坑是**「合完还留在原分支上继续提交」**：那样新旧两批提交真的岔开，再开 PR 时 GitHub 按
+merge-base 算 diff，**整个项目都会显示成新增**（PR 页面没法看）。本项目已经栽过三次，每次都是这一步。
+
+**规矩：从 main 切新分支，不要在已合并的分支上继续。**
+
+清陈旧分支：`git push origin --delete <b1> <b2>` + `git branch -D <b1> <b2> <b3>`。
+判据与 `out/` 那类一样是**正向**的——先确认「分支有、main 没有的文件」为空
+（`git diff --diff-filter=D --name-only origin/<branch> origin/main`），再删。
 
 ## 测试
 
