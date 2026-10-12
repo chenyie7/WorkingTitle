@@ -29,21 +29,21 @@ changelog:
     labels:
       - skip-changelog
   categories:
-    - title: 新功能
+    - title: fate
       labels:
         - feat
-    - title: 修复
+    - title: bug
       labels:
         - fix
-    - title: 文档
+    - title: docs
       labels:
         - docs
-    - title: 内部改动
+    - title: chore
       labels:
         # 对用户不可见，但值得留个记录，免得看发布说明时以为漏了什么
         - chore
         - style
         - refactor
-    - title: 其它改动
+    - title: other
       labels:
         - '*'
