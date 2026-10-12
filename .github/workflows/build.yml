@@ -74,7 +74,13 @@ jobs:
     permissions:
       # 【必须显式声明】本仓库的 Actions 默认权限是 read，不写这一行，创建 release 会 403。
       contents: write
+      # 底下那个生成说明的脚本要 `gh pr list`（读 PR）。**这个块里写了的才给，
+      # 没写的一律是 none** —— 所以上面那行 contents 不能省。
+      pull-requests: read
     steps:
+      # 【为什么这里要 checkout】本作业别的步骤都不碰仓库里的文件，而生成发布说明的
+      # 脚本正是仓库里的一个文件。少了这一步，下一步会报「脚本不存在」。
+      - uses: actions/checkout@v4
       # 把两个平台各自上传的 artifact 合并到一个目录。merge-multiple 是 v4 的关键参数，
       # 不加的话会下成 dist/macos-latest-build/… 和 dist/windows-latest-build/… 两层。
       - uses: actions/download-artifact@v4
@@ -83,9 +89,19 @@ jobs:
           merge-multiple: true
       - name: 列出将要发布的文件
         run: find dist -type f | sort
+      # 【为什么自己生成、不用 generate_release_notes】GitHub 那个的格式写死了三样
+      # （`## What's Changed` / `by @用户 in <链接>` / `Full Changelog`），而
+      # `.github/release.yml` 只配得了分类标题与标签映射，没有任何格式化开关。
+      # 脚本产出的是「只要分类 + 标题 + 编号」，口径见 scripts/release-notes.sh 开头。
+      - name: 生成发布说明
+        env:
+          # 【必须显式喂】`gh` 在 Actions 里不会自动带上凭据，少了这行它会说未登录。
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > /tmp/notes.md
       # 按标签找 release：已经存在（你手动建的那个）就往里追加文件，不存在就新建一个。
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/**/*
-          generate_release_notes: true
+          # 正文取上面那个脚本产出的文件，不再走 GitHub 的自动生成。
+          body_path: /tmp/notes.md
           draft: false
