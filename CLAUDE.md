@@ -78,7 +78,9 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 **Electron 三进程**，`electron-vite` 构建：
 
-- `src/main/` — 文件 IO、编码检测、会话与缓存落盘、原生菜单（**只有 macOS 建**，见「原生菜单」一节）、IPC handler
+- `src/main/` — 文件 IO、编码检测、设置与会话与缓存落盘、原生菜单（**只有 macOS 建**，见「原生菜单」一节）、IPC handler。
+  三个小文件各有分工：`channels.ts` 是**通道名与菜单命令名的唯一出口**（`CH` / `MENU_COMMANDS`），
+  `startup.ts` 是**不 import electron 的纯逻辑**（所以能直接单测），`sessionStore.ts` 是全部落盘逻辑
 - `src/preload/` — 唯一的桥；`contextIsolation: true` / `nodeIntegration: false` / `sandbox: true` 不可放宽
 - `src/renderer/` — React 19；持有一份**只读** `Novel` 并驱动引擎
 - `src/core/` — 被 main 与 renderer **共享**的纯逻辑
@@ -91,7 +93,7 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 | 模块 | 依赖 | 谁能用 |
 |---|---|---|
-| `types.ts` / `chapters.ts` / `engine.ts` | 只 import 相对路径 | main **和** renderer |
+| `types.ts` / `chapters.ts` / `engine.ts` / `shortcuts.ts` | 只 import 相对路径（`shortcuts.ts` 连 import 都没有） | main **和** renderer |
 | `decode.ts` | `node:util`、`iconv-lite`、`jschardet` | **只有 main** —— 渲染进程引它会拉进 node 依赖 |
 
 ### 核心不变量
@@ -112,9 +114,44 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 2. 点击目标在 `[role="dialog"]` 里；
 3. **当前焦点已经在 `[role="dialog"]` 里**——这条挡的是「点按钮打开对话框那一下」：React 的事件层在 `#root`、监听在 `window`，冒泡到 window 时对话框已挂载、焦点已进输入框，而 `e.target` 还是那个工具栏按钮。少了它，`autoFocus` 会被抢走。
 
+### 快捷键（三条，可改）
+
+`src/core/shortcuts.ts` 是**唯一的事实来源**：一张 `SHORTCUTS` 表，每条带 macOS 与其它平台两个默认值，
+设置界面、window 上的分发器、各处文案全从它推出来——**加一条快捷键是加一行**。
+
+- **core 里不能碰 DOM、也不能读 `process`**（纯净性门禁，见上）。所以校验吃的是 `KeyChord` 这个**裸字段结构**，
+  真实事件 → chord 的适配（`toChord`）放在 `renderer/src/state/shortcuts.ts`。
+- **可录制的键位是白名单**（`KEY_CODES`），于是 `toAccelerator` 永不失败、「哪条快捷键由谁执行」是一张
+  **静态**表。判「在不在白名单里」**必须用 `Object.hasOwn`**：`in` 会走原型链，手改过的 `settings.json`
+  能塞进 `toString`、`__proto__` 这类 Electron 解析不了的键（而菜单对非法 accelerator 是**静默接受**的）。
+- **macOS 有一份保留清单**（⌘Q/⇧⌘Q/⌘W/⌘M/⌘H/⌘X/⌘C/⌘V/⌘A/⌘Z）：录制端与**读盘端都要过**
+  （`resolveShortcuts` 逐条校验）——只在录制端拦等于没拦。Windows / Linux 是空清单，取舍写在 `RESERVED` 上。
+- **一条快捷键只在一个地方执行。** macOS 的「导入」归原生菜单的 accelerator，分发器**显式跳过**它，
+  否则选一次文件会**导入两次**；Windows / Linux 没有菜单，这一条就整个由分发器负责。
+- 分发器挂在 `window` 上（`InputCapture` 对带修饰键的组合是放行的），且**只认带修饰键的组合**——
+  裸按键要去做抽字。设置对话框录制期间把 `enabled` 置 false，否则录 ⌘O 会当场触发一次真导入；
+  **但原生菜单的 accelerator 拦不住**，用户会看到文件选择框弹出来（README 的「已知限制」记了这条）。
+- **`e.isComposing` 只在「监听原生事件」这个前提下成立。** 分发器收的是真 DOM 事件，所以读得到；
+  谁把它挪进 React 的 `onKeyDown`，这个过滤会**静默失效**（合成事件不暴露该字段，jsdom 也测不出来）。
+
 ### 持久化
 
-`userData`（可用 `WT_USER_DATA` 环境变量重定向，E2E 与便携模式用）下有 `session.json` 与 `novel-cache.*`。缓存分两个文件，靠 `NovelCacheMeta.textBytes` 当**提交点**自我校验——没有它，进程在两次写之间崩溃会读出「A 书的目录配 B 书的正文」。
+`userData`（可用 `WT_USER_DATA` 环境变量重定向，E2E 与便携模式用）下的几类文件，**每一个的校验方式与
+「为什么这么写」都在 `sessionStore.ts` 里**（`sessionProblem` / `cacheMetaProblem` / `settingsProblem`
+是一套姿势：**逐字段问、返回不合格的那个字段名**，而不是 true/false——静默回退会让「进度莫名其妙没了」
+无从查起）：
+
+| 文件 | 是什么 | 关键点 |
+|---|---|---|
+| `settings.json` | 文档名 / 外观 / 纸张 / **全局**的阅读替换 `ratio`（新导入的书拿它当起点；**当前书**那份在 `sessions/` 里）/ `lastSourcePath` / `shortcuts`（**稀疏表**，`{}` 即全默认） | 一个字段不合格就**整份退回默认值**；旧版缺字段先按 `FILLED_DEFAULTS` 补齐再校验（判据是**键不存在**，不是值是 undefined），否则升级一次就把用户改过的设置一起抹掉 |
+| `sessions/<sha256 前 32 hex>.json` | **每本书一份**的进度 | 文件名是 `sourcePath` 的哈希（定长、只含 hex），所以文件**内容**里也带着 `sourcePath`，读回来要**比对是不是同一本**——放过的话会把 B 书的进度套到 A 书上 |
+| `novel-cache.json` + `novel-cache.txt` | 解码后的目录与正文 | 靠 `NovelCacheMeta.textBytes` 当**提交点**自我校验——没有它，进程在两次写之间崩溃会读出「A 书的目录配 B 书的正文」。它只管字节数，两段**等长**的文本仍会被放行（边界写在函数注释里） |
+| `session.json` | **旧版**的单槽会话 | 只在升级时被 `migrateLegacySession()` 搬进 `sessions/`。这是**唯一会毁数据的路径**：先确认新位置**读得出来**、再删旧文件，且 `lastSourcePath` 必须排在两条会话写入**之后**（顺序反了会把进度永久锁死） |
+
+- 三份写盘（settings / session / cache meta）全部走 **temp + rename**：直接写目标路径的话，进程死在写完之前，
+  留下的是截断甚至空文件，游标、chapterPos、ratio、mode 全部**静默丢失**。
+- 「清除阅读记录」= 删 `sessions/` 整目录 + 小说缓存 + 旧版单槽会话，**刻意不碰 `settings.json`**——
+  偏好与「读到哪」是两件事。
 
 ### 外观与主题
 
@@ -191,14 +228,16 @@ Windows / Linux 的原生菜单栏渲染在**窗口内部**、标题栏正下方
 没用 `setMenuBarVisibility(false)`：那是「菜单还在、只是藏起来」，藏得干不干净取决于平台行为
 （`autoHideMenuBar` 与 Alt 键的交互）。`setApplicationMenu(null)` 是确定没有菜单。
 
-代价（仅 Windows / Linux）：失去 `Ctrl+O`（导入改从设置对话框进）与撤销/重做等 `role`；
-**但可编辑元素里的 Ctrl+C/V/X/A/Z 由 Chromium 自己处理，与菜单无关**。
+代价（仅 Windows / Linux）：菜单 `role` 那套（撤销/重做、缩放、全屏…）连同它们的快捷键一起没了；
+**但可编辑元素里的 Ctrl+C/V/X/A/Z 由 Chromium 自己处理，与菜单无关**。**`Ctrl+O` 不在此列**——
+它由渲染层分发器提供（见「快捷键」一节），三个平台上都能用；早期版本还没有分发器，
+「或按 Ctrl+O」在 Windows 上是一句**做不到的指引**。
 
 ### 图标
 
 用 **`@fluentui/react-icons`**（微软官方图标集，MIT）——它就是 Office / Microsoft 365 在用的那套，
 所以「像 Word」和「现代」在这里不冲突。`src/renderer/src/components/icons.tsx` 是唯一的出口，
-现在导出约 200 个。三条规矩：
+现在导出约 150 个。三条规矩：
 
 1. **每个图标用 `bundleIcon(Filled, Regular)` 包一层**，那正是 Word 切换按钮的语义：
    **未按下画线框、按下画实心**。
@@ -236,7 +275,8 @@ for (const k of process.argv.slice(1)) console.log(k, "→", all.filter(n => n.t
 
 ### 1. 实现计划里的代码围栏 = 源码的逐字节副本
 
-`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md`（9600+ 行，18 个 Task）里的 ` ```ts ` 围栏**不是示意，是源文件的副本**。口径：
+`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md`（**一万四千多行**，Task 编号排到 20
+——行数会随围栏同步继续涨，**别写死它**）里的 ` ```ts ` 围栏**不是示意，是源文件的副本**。口径：
 
 ```
 md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；不要 rstrip
@@ -246,7 +286,38 @@ md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；�
 
 注意两个坑：
 - 同一份代码在计划里可能出现多次，且**有些块是历史版本**（注定与当前文件不符）。判据是**正向**的：遍历全部源/测试文件，报告「没有任何围栏与它逐字节相等」的集合——那个集合必须是空的。
-- 用锚点行定位围栏前**先确认它在计划里唯一命中**（`import type { Novel, PersistedSession }` 这类行会命中多次）。另外别把 `difflib.unified_diff` 喂给两个大字符串，会在 8000 行的计划上跑到超时——先落临时文件再 `diff`。
+- 用锚点行定位围栏前**先确认它在计划里唯一命中**（`import type { Novel, PersistedSession }` 这类行会命中多次）。另外别把 `difflib.unified_diff` 喂给两个大字符串，会在**上万行**的计划上跑到超时——先落临时文件再 `diff`。
+
+**三份计划里哪份是正本：`2026-10-06-…`。** 实测（脚本见下）：56 个源/测试文件里它覆盖 **52** 个，包括后来
+三次功能改动**回写进它**的那些（`sessionStore.ts` / `types.ts` / `ipc.ts` / `menu.ts` / `SettingsDialog.tsx` /
+`App.tsx` / `statusBar.tsx` …）。另两份 10-11 的计划里**只有它们新建的文件**是逐字节的：`configurable-shortcuts`
+覆盖 `core/shortcuts.ts`、`renderer/state/shortcuts.ts` 与它那两个测试文件（4 个）；`settings-and-per-book-progress`
+**一个都没有**（它那 40 个 `ts` / `tsx` 围栏全是过程中间版本）。落到操作上是一句话：**新建的文件写进它自己那份计划，
+改动已有文件的写进 06 那份**——别去追那两份里注定对不上的旧块。
+
+交付前复核（口径含末尾换行，**别 rstrip**）：
+
+```bash
+python3 - <<'PY'
+import pathlib, os
+blocks = set()
+for p in pathlib.Path('docs/superpowers/plans').glob('*.md'):
+    L = p.read_text(encoding='utf-8').split('\n'); i = 0
+    while i < len(L):
+        if L[i].startswith('```'):
+            j = i + 1; b = []
+            while j < len(L) and not L[j].startswith('```'):
+                b.append(L[j]); j += 1
+            blocks.add('\n'.join(b) + '\n')
+            i = j + 1
+        else:
+            i += 1
+miss = [os.path.join(r, f) for root in ('src', 'tests') for r, _, fs in os.walk(root)
+        for f in fs if f.endswith(('.ts', '.tsx', '.css', '.json'))
+        and pathlib.Path(os.path.join(r, f)).read_text(encoding='utf-8') not in blocks]
+print('\n'.join(miss) if miss else 'OK：每个源/测试文件都命中至少一个围栏')
+PY
+```
 
 `docs/superpowers/specs/` 是面向人的设计文档，改行为时一并更新它。
 
@@ -265,7 +336,7 @@ git tag v0.2.0 && git push origin v0.2.0
 `.github/workflows/build.yml` 会：校验标签与 `package.json` 的 version 一致 → 在 macOS 与
 Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂到该标签的 Release 上。
 
-三件必须知道的：
+几件必须知道的（**不写死条数**——这里加过条目）：
 
 - **版本号对不上会直接失败。** 产物名是 `WorkingTitle-v${version}-…`，取自 `package.json`；
   release 名取自标签。不一致就会发出一个叫 `v0.2.0`、文件却叫 `WorkingTitle-v0.1.0-…` 的
@@ -287,23 +358,39 @@ Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂
 没有配自动更新（`electron-builder.yml` 里没有 `publish` 段），所以 Release 只是给人下载用的；
 打包时 Electron 那边生成的那个 `latest-mac.yml` 用不上，也没被传上去。
 
-#### 发布说明怎么分组 —— 这步要人做
+#### 发布说明怎么分组 —— 这步仍然要人做
 
-`generate_release_notes: true` 生成的那段文字由 `.github/release.yml` 按 **PR 的标签**分组。
-按标签分组是 GitHub 的功能限制（它读不到提交信息的 `feat:` / `fix:` 前缀），**所以绕不过去**：
+正文**已经不用** `generate_release_notes` 了：它写死了三样格式（`## What's Changed` /
+`by @用户 in <链接>` / `Full Changelog`），而 `.github/release.yml` 只配得了分类标题与标签映射，
+**没有任何格式化开关**。现在由 **`scripts/release-notes.sh`** 生成「分类标题 + PR 标题 + 编号」，
+经 `body_path` 交给 softprops。
 
-**开 PR 时打上标签**，否则该 PR 会全部落进「其它改动」那一类。
+- **分类映射住在脚本的 `CATEGORIES` 数组里，不在 `.github/release.yml`**——那个文件**当前不生效**
+  （它顶上已注明，只留作「万一改回自动生成」时用）。改分类要去改脚本，别只改那儿。
+- 分组依据仍然是 **PR 的标签**（GitHub 读不到提交信息的 `feat:` / `fix:` 前缀，**绕不过去**），
+  所以**开 PR 时打上标签**，否则该 PR 会落进「其它改动」那一类：
 
 | 标签 | 归到哪一类 |
 |---|---|
 | `feat` | 新功能 |
-| `fix` | 修复 |
+| `bug` | 修复 |
 | `docs` | 文档 |
 | `chore` / `style` / `refactor` | 内部改动 |
 | `skip-changelog` | **不进发布说明**（纯内部改动、依赖升级用） |
 
-这几个标签**已经建好了**（`gh label list` 可查）；漏建的话配置不报错，只是空转。
-标签名刻意与提交前缀一一对应，打标签时照着提交开头抄一下即可。
+这几个标签**已经建好了**（`gh label list` 可查）；漏建的话脚本不报错，只是那一类会空掉。
+标签名大体照提交前缀抄，**但「修复」那一类挂的是 `bug`，不是 `fix`**——仓库里**没有**名为 `fix`
+的标签，照 `fix:` 前缀去建会得到一个永远没人打的标签，于是这一类再也进不了正文
+（`.github/release.yml` 与 `scripts/release-notes.sh` 都按 `bug` 找）。另外**构建 / CI 类的修复
+算 `chore` 不算修复**（`chore(ci):` / `chore(build):` 那两条就是这么归的），「修复」留给真正的缺陷。
+
+那个脚本还挂着几件环境上的事，动工作流时别丢：
+
+- `release` 作业要 **`permissions: pull-requests: read`**（它要跑 `gh pr list`）——那个块里**没写的权限一律是
+  `none`**，所以 `contents: write` 那行也不能省。
+- 那个作业**必须先 `actions/checkout`**：脚本本身是仓库里的一个文件，少了这步会报「脚本不存在」。
+- 它刻意避开了 macOS 自带 bash 3.2 的一个坑（**带引号模式**的 `case` 写在 `$( )` 里会 syntax error），
+  理由写在脚本开头——别为了「简化」把 `case` 挪回命令替换里。
 
 嫌这一步烦的话，出路是换 release-please 那类**读提交前缀、不需要标签**的工具——但那是另一套
 机制（它还会自动开"发布 PR"），换之前先想清楚。
@@ -320,6 +407,8 @@ Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂
 做变异验证时改源码 + 跑 `pnpm build`（或 `pnpm test:e2e`，它自带构建）会把变异编进 `out/`；之后还原了**源码**、`git status` 干净、单测全绿，而 `out/` 里仍是变异产物。此时手动 `_electron.launch({args:['.']})` 量到的是**变异后的代码**，能得出完全错误的结论（本项目栽过一次，差点把「防抖是死代码」当成 bug 报出去）。
 
 **规矩：手动跑 `_electron` 之前先 `pnpm build`；拿到负结果时先怀疑产物陈旧、重建再测。**
+`release/`（打包产物，同样在 `.gitignore` 里）是同一个坑的另一处：`pnpm dist:mac` 出来的 dmg
+不会因为你还原了源码而消失。
 
 ### 5. 合并方式与分支卫生
 
@@ -354,6 +443,10 @@ Active，或 `gh api -X PUT repos/chenyie7/WorkingTitle/rulesets/<id> -f enforce
 
 - **vitest + jsdom，且没有装 `@testing-library/jest-dom`** —— 没有 `toBeInTheDocument()`，用 `toBeTruthy()` / `toBeNull()` / `getAttribute()` / `textContent`。
 - `tests/setup.ts` 装了 `window.api` 替身（jsdom 里 preload 不跑）与 `ResizeObserver`（jsdom 不实现）。`tests/unit/guardA.test.ts` 是 `@vitest-environment node`，那里没有 `window`。
+- **`guardA` / `guardB` 是一对，钉的不是同一件事。** guardA（`@vitest-environment node`）用 `vi.mock('node:fs')`
+  把 `writeFileSync` 换成「写一半就抛」，钉**性质**：进程死在写入中途也不该读到半截记录。guardB 比对
+  `renameSync` 换 inode 与 `writeFileSync` 原地截断的差别，钉**机制**——文件**内容**看不出这个差别，
+  所以原子性没有任何内容级断言覆盖得住它。改 `sessionStore.ts` 的写入方式时两条都要看。
 - **jsdom 没有布局**（`clientHeight`/`offsetLeft` 恒为 0），也**没有真实的焦点/命中测试语义**（testing-library 把 React 的 flush 推到事件派发之后，真机上的时序在 jsdom 里根本不存在）。
 - **Playwright 的 Chromium 没有下载**，所以 `chromium.launch()` 用不了（报 browser not found）。
   本项目所有真机验证都走 `_electron` —— 它用仓库自带的 Electron，不受影响。需要把 HTML / SVG

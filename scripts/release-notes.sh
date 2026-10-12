@@ -35,7 +35,9 @@ TAG="${1:-${GITHUB_REF_NAME:-}}"
 # 【顺序有意义】一条 PR 只归入**第一个**命中的分类，与 GitHub 的匹配方式一致。
 CATEGORIES=(
   "新功能|feat"
-  "修复|fix"
+  # 「修复」挂的是 `bug`——仓库里**没有**名为 `fix` 的标签（照 `fix:` 前缀去建会得到一个
+  # 永远没人打的标签，这一类就再也进不了正文）。构建 / CI 类的修复归 chore。
+  "修复|bug"
   "文档|docs"
   "内部改动|chore style refactor"
 )
