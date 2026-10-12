@@ -1,3 +1,7 @@
+# ⚠️ **本文件当前不生效。** release 的正文由 `scripts/release-notes.sh` 生成，
+# 已经不用 `generate_release_notes` 了（见 build.yml 的 release 作业）。
+# 留着它是为了「万一改回自动生成」时有东西可用 —— **分类映射现在住在脚本里**，
+# 改分类要去改脚本，不要只改这儿。
 # GitHub 生成「发布说明」时的分类规则。
 #
 # 【先说清楚它不是干什么的】创建 Release 的不是这个文件——是
