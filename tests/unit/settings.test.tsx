@@ -864,7 +864,7 @@ describe('ToolbarProvider 的 toast 可以受控', () => {
     expect(notify).toHaveBeenCalledWith('来自里面')
   })
 
-  it('toast 传 null 时不会被内部状态顶掉', () => {
+  it('受控 toast 跟着 prop 走（含传 null）', () => {
     const { rerender } = render(
       <ToolbarProvider toast="有提示" notify={() => {}}>
         <Probe />
