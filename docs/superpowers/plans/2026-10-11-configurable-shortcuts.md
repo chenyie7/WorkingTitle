@@ -310,7 +310,13 @@ export function platformKind(raw: string): PlatformKind {
   return raw === 'darwin' ? 'darwin' : 'other'
 }
 
-export type ShortcutId = 'import' | 'toggle-sidebar' | 'open-settings'
+export type ShortcutId =
+  | 'import'
+  | 'toggle-sidebar'
+  | 'open-settings'
+  | 'boss-key'
+  | 'boss-fill-up'
+  | 'boss-fill-down'
 
 export interface ShortcutDef {
   id: ShortcutId
@@ -339,6 +345,23 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: 'open-settings',
     label: '打开设置',
     defaults: { darwin: 'Meta+Comma', other: 'Ctrl+Comma' }
+  },
+  {
+    id: 'boss-key',
+    label: '老板键',
+    // 三条都刻意不进 RESERVED 清单：那张清单拦的是 macOS 原生菜单 role 与系统约定占掉的键
+    // （⌘Q / ⌘W / ⌘C…），这三条不是。KeyB / ArrowUp / ArrowDown 都在 KEY_CODES 白名单里。
+    defaults: { darwin: 'Meta+Shift+KeyB', other: 'Ctrl+Shift+KeyB' }
+  },
+  {
+    id: 'boss-fill-up',
+    label: '老板键铺满 +',
+    defaults: { darwin: 'Meta+Shift+ArrowUp', other: 'Ctrl+Shift+ArrowUp' }
+  },
+  {
+    id: 'boss-fill-down',
+    label: '老板键铺满 −',
+    defaults: { darwin: 'Meta+Shift+ArrowDown', other: 'Ctrl+Shift+ArrowDown' }
   }
 ]
 
@@ -1181,7 +1204,11 @@ function actions(): ShortcutActions {
   return {
     import: vi.fn(),
     'toggle-sidebar': vi.fn(),
-    'open-settings': vi.fn()
+    'open-settings': vi.fn(),
+    // 老板键那三条：本文件只测「按键 → action」这一段，动作本身在 app.test.tsx 里测
+    'boss-key': vi.fn(),
+    'boss-fill-up': vi.fn(),
+    'boss-fill-down': vi.fn()
   }
 }
 
@@ -1386,7 +1413,7 @@ export function useShortcutDispatcher({
   enabled
 }: UseShortcutDispatcherOptions): void {
   // 表与动作都挂在 ref 上，让监听器的身份保持稳定：依赖一变就要解绑重绑，而重绑之间那
-  // 一瞬间的按键会漏掉。渲染期写 ref 是本仓库既有的写法（见 App.tsx 的 engineRef）。
+  // 一瞬间的按键会漏掉。渲染期写 ref 是本仓库既有的写法（见 App.tsx 的 novelEngineRef）。
   const stateRef = useRef({ platform, table, actions, enabled })
   stateRef.current = { platform, table, actions, enabled }
 
