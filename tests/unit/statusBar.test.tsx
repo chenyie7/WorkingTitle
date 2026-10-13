@@ -80,4 +80,17 @@ describe('StatusBar 老板模式', () => {
     expect(screen.getByTestId('status-encoding')).toBeTruthy()
     expect(screen.getByTestId('status-mode')).toBeTruthy()
   })
+
+  it('spacer 仍夹在两个可见组之间（别把它一起包进条件里）', () => {
+    // jsdom 没有布局，量不了「那块空隙有多大」；能钉的是 **DOM 次序**：它必须在左侧组
+    // 之后、右侧组之前。把整块包进 `!bossMode && (…)` 会破坏这个次序——而那是本组件里
+    // 唯一一处「靠位置表达布局」的地方，出错了也不会有别的东西报错。
+    render(
+      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" bossMode />
+    )
+    const spacer = document.querySelector('.wt-statusbar__spacer')
+    expect(spacer).toBeTruthy()
+    expect(spacer!.previousElementSibling?.getAttribute('data-testid')).toBe('status-chapter')
+    expect(spacer!.nextElementSibling?.getAttribute('data-testid')).toBe('status-percent')
+  })
 })
