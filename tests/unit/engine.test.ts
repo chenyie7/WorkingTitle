@@ -525,6 +525,17 @@ describe('revealTo', () => {
     expect(e.visibleText).toBe(e.novel.flatText)
   })
 
+  it('下界是 revealStart 而不是 0：跳章后不许把窗口起点甩在游标后面', () => {
+    const e = new TypingEngine(makeNovel())
+    e.jumpToChapter(1)                     // revealStart = chapters[1].start
+    const start = e.getSnapshot().revealStart
+    e.revealTo(0)
+    const s = e.getSnapshot()
+    expect(s.cursor).toBe(start)
+    expect(s.revealStart).toBeLessThanOrEqual(s.cursor)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(s.revealStart, s.cursor))
+  })
+
   it('非有限值是无操作，不会把游标写成 NaN', () => {
     // 【这条是承重的】Math.min(NaN, total) 与 Math.max(revealStart, NaN) 都返回 NaN，
     // 一路传到 commit 之后游标就成了 NaN——visibleText 变成空串、
@@ -532,8 +543,11 @@ describe('revealTo', () => {
     const e = new TypingEngine(makeNovel())
     e.revealTo(5)
     e.revealTo(Number.NaN)
-    e.revealTo(Number.POSITIVE_INFINITY)
     expect(e.getSnapshot().cursor).toBe(5)
+    // 【这一条才是「再也恢复不了」的判据】NaN 若真的写进了游标，后面每一次 pump 都在 NaN 上算，
+    // 游标永远回不到 5。前面那条 toBe(5) 只说明「这一次没写进去」，不足以说明「之后也回不来」。
+    e.pump(1)
+    expect(e.getSnapshot().cursor).toBe(15)
     expect(Number.isFinite(e.getSnapshot().cursor)).toBe(true)
   })
 
