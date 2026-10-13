@@ -12,12 +12,11 @@ import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
-import { ToolbarProvider } from './state/ToolbarContext'
+import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
 const SAVE_DEBOUNCE_MS = 600
-const TOAST_MS = 1800
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
 const CARET_MARGIN = 24
 
@@ -191,7 +190,7 @@ export default function App() {
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
 
-  /** 弹一条 1.8 秒后自动消失的提示。与 ToolbarContext 里原先那个实现逐字一致。 */
+  /** 弹一条自动消失的提示。时长共用 `TOAST_MS`（与 provider 内部那份同一个常量）。 */
   const notify = useCallback((message: string): void => {
     setToast(message)
     window.setTimeout(() => {

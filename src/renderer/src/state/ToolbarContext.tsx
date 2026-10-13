@@ -32,6 +32,12 @@ export interface ToolbarValue {
 
 const ToolbarContext = createContext<ToolbarValue | null>(null)
 
+/**
+ * toast 自动消失的时间。**两处共用这一个常量**：provider 未受控时的内部实现用它，
+ * `App` 里那份也用——两边各写一个数的话，改了一边不会有任何东西报错。
+ */
+export const TOAST_MS = 1800
+
 export function clampRatioInput(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_RATIO
   return Math.max(MIN_RATIO, Math.min(MAX_RATIO, Math.round(n)))
@@ -94,13 +100,22 @@ export function ToolbarProvider({
     setInnerToast(message)
     window.setTimeout(() => {
       setInnerToast((current) => (current === message ? null : current))
-    }, 1800)
+    }, TOAST_MS)
   }, [])
 
   /**
    * 【`??` 在这里是错的，必须按 `!== undefined` 判】`toast` 的**有效值包含 `null`**
-   * （＝当前没有提示）。用 `toastProp ?? innerToast` 的话，App 一清空 toast，这里会把它
-   * 当成「没传」而回落到内部状态——界面上那条提示永远不消失，而且下一次 notify 也改不动它。
+   * （＝当前没有提示），用 `??` 会把它当成「没传」而回落到内部状态——于是**内部那条旧提示
+   * 会在 prop 传 `null` 时再冒出来**。
+   *
+   * 【症状要说准，别写成「永远不消失」】那两条（「永远不消失」「下一次 notify 也改不动」）
+   * 都**不是**这个变异会产生的结果，而且它们描述的 App 那条路根本不可达——`innerToast` 只被
+   * `innerNotify` 写，而 `innerNotify` 只在 `notifyProp === undefined` 时用得上，shipped 的
+   * `App` 恒传 `notify`。唯一的判别症状就是上面那句，钉它的用例是第三条（先不受控写一次、
+   * 再切受控传 `null`）。
+   *
+   * 【这两项要传就一起传】类型允许只传 `toast` 不传 `notify`，那种组合下 `notify` 落回
+   * `innerNotify`，内部定时器会往 `innerToast` 里写——正好就是上面那个残留场景。
    *
    * 【这两行为什么排在 `innerNotify` 之后、而不是与上面 `ratio` 那三行并排】`notifyProp ?? innerNotify`
    * 在 `notifyProp` 为 `undefined` 时会真的去读 `innerNotify`，而 `const` 声明之前是 TDZ：
