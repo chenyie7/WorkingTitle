@@ -1131,6 +1131,56 @@ describe('老板键', () => {
     expect((screen.getByTestId('ratio-input') as HTMLInputElement).disabled).toBe(false)
     expect(screen.queryByText('未打开文档')).toBeNull()
   })
+
+  /**
+   * 【老板模式下两条折叠入口都失效，却仍会**写**偏好】
+   *
+   * `collapsed={sidebarCollapsed || bossActive}` 只是把「收起」强制覆盖掉，它拦不住
+   * `onCollapsedChange` 与 `toggle-sidebar` 那两条写入路径。症状是**退出老板模式那一刻**
+   * 侧栏反着用户的意展开——而两条路径在老板模式下屏幕上都没有任何反馈，所以没有任何
+   * 界面迹象能提示「刚才那一下记下来了」。
+   *
+   * 两条都要挡：只挡一条的话，两个入口会变成「一个写、一个不写」——那是比全写更难查的形态。
+   */
+  it('老板模式下两条折叠路径都不写偏好，退出后侧栏仍是收起的', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+
+    const enterBoss = async (): Promise<void> => {
+      await act(async () => {
+        pressBossKey()
+      })
+      await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+    }
+    const exitBoss = async (): Promise<void> => {
+      await act(async () => {
+        pressBossKey()
+      })
+      await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('文档1'))
+    }
+
+    // 前提自检：正常模式下这个按钮真的能把侧栏收起来。少了它，下面两段在「侧栏压根收
+    // 不起来」的世界里照样绿（那时 chapter-list 本来就一直是 null）。
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+
+    // 路径一：⌘⇧H。老板模式下 `collapsed` 是强制覆盖的，这个动作屏幕上没有反馈。
+    await enterBoss()
+    fireEvent.keyDown(window, { code: 'KeyH', key: 'H', metaKey: true, shiftKey: true })
+    await exitBoss()
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+
+    // 路径二：细缝里那个 rail 按钮——老板模式下 `sidebar-toggle` 正是它
+    // （`ChapterList` 收起时渲染的是 rail，不是 aside 里那个）。
+    await enterBoss()
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    await exitBoss()
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+  })
 })
 
 describe('设置里的工作文档', () => {

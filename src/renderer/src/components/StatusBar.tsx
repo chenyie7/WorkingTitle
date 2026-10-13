@@ -7,13 +7,18 @@ export interface StatusBarProps {
   ratio: number
   mode: InputMode
   /**
-   * 老板模式。为真时不渲染「比例 / 编码 / 输入模式」三格。
+   * 为真时不渲染「比例 / 编码 / 输入模式」三格。
    *
-   * 【为什么这三格要藏】真 Word 的状态栏没有它们中的任何一个：「比例 1:10」直接暴露了
-   * 「打 1 个字吐 N 个字」这套机制，「编码 UTF-8」和「输入模式 输入法」则是这个应用独有的
-   * 控件。老板模式下它们对用户也没有任何用处。默认 false，既有调用方不必改动。
+   * 【名字刻意不叫 `bossMode`】`App` 里有一个**同名变量**，而 Task 8 之后两者会真的分叉：
+   * 移除工作文档时 `workNovel` 置空、`bossMode` 仍为真，那时 `bossActive` 是假而 `bossMode`
+   * 是真。这个名字读起来像「老板模式开着吗」，而它实际说的是「藏掉那三格吗」。
+   *
+   * 【为什么这三格要藏】「编码 UTF-8」与「输入模式 输入法」真 Word 的状态栏里根本没有。
+   * 真 Word 确实有一个「显示比例」，但它是**缩放百分比**（`100%`），而这一格写的是 `1:10`
+   * ——把「打 1 个字吐 N 个字」这套机制直接摆在了明面上。老板模式下它们对用户也没有任何用处。
+   * 默认 false，既有调用方不必改动。
    */
-  bossMode?: boolean
+  hideReadingCells?: boolean
 }
 
 /**
@@ -37,7 +42,7 @@ export function StatusBar({
   activeChapter,
   ratio,
   mode,
-  bossMode = false
+  hideReadingCells = false
 }: StatusBarProps) {
   const totalChars = novel?.flatText.length ?? 0
   const totalChapters = novel?.chapters.length ?? 0
@@ -48,7 +53,7 @@ export function StatusBar({
       <span className="wt-statusbar__dim" data-testid="status-chapter">
         {novel ? `${activeChapter + 1} / ${totalChapters}` : '—'}
       </span>
-      {!bossMode && (
+      {!hideReadingCells && (
         <>
           <span data-testid="status-ratio">比例 1:{ratio}</span>
           <span data-testid="status-encoding">编码 {novel?.encoding ?? '—'}</span>

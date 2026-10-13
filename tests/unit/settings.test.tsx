@@ -550,6 +550,14 @@ describe('手动保存', () => {
     expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).disabled).toBe(false)
   })
 
+  it('「当前书」比例框在没打开文档时给出的提示是文档中性的', () => {
+    // 【为什么单独钉】那句话是用户可见文案，而且它描述的对象已经从「小说」变成了
+    // 「当前显示的那一份」。实测：把它改回「未打开小说」，整套用例照样绿。
+    setup({ novelOpen: false })
+    openViaButton()
+    expect(screen.getByText('未打开文档')).toBeTruthy()
+  })
+
   it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()

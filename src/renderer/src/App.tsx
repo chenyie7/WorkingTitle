@@ -557,7 +557,12 @@ export default function App() {
     enabled: !recording,
     actions: {
       import: () => void handleImport(),
-      'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
+      // 【老板模式下不写】收起在那边是**强制覆盖**的（见下面 ChapterList 的 `collapsed`），
+      // 于是这一下屏幕上没有任何反馈；可它会把偏好写进去，退出老板模式那一刻突然生效
+      // ——侧栏反着用户的意展开。没有反馈的写是最难查的一类。
+      'toggle-sidebar': () => {
+        if (!bossActive) setSidebarCollapsed((v) => !v)
+      },
       'open-settings': () => setSettingsOpen(true),
       'boss-key': toggleBoss,
       // 这两行只是闭包，它们自己**不读 ref**——读 `bossFillPercentRef` 的是 `adjustBossFill`
@@ -724,7 +729,13 @@ export default function App() {
             chapterPos={state?.chapterPos ?? []}
             onJump={(i) => shownEngine?.jumpToChapter(i)}
             collapsed={sidebarCollapsed || bossActive}
-            onCollapsedChange={setSidebarCollapsed}
+            // 【老板模式下不写】`collapsed` 那边是强制覆盖的，所以 rail 按钮在老板模式下
+            // 按下去屏幕上不会有任何变化——而（没有这道闸时）它会把偏好改掉，退出老板模式
+            // 那一刻突然生效。与上面 `toggle-sidebar` 那条**必须同时挡**：只挡一条会留下
+            // 「同样的操作，一个写一个不写」的更糟形态。
+            onCollapsedChange={(v) => {
+              if (!bossActive) setSidebarCollapsed(v)
+            }}
             sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
           />
 
@@ -749,7 +760,10 @@ export default function App() {
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
-          bossMode={bossActive}
+          // 【传的是 `bossActive` 而不是 `bossMode`——两者不是一回事】它管的是「藏掉那三格」，
+          // 而 `bossActive` 才是「屏幕上摊着的确实是工作文档」。用 `bossMode` 的话，移除工作
+          // 文档那一刻（`workNovel` 已空、`bossMode` 仍真）三格会凭空消失而页面回到小说。
+          hideReadingCells={bossActive}
         />
 
         <Toast />
