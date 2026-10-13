@@ -100,7 +100,11 @@ function setup(opts: SetupOptions = {}): {
         'toggle-sidebar': () => {},
         // 【这一条必须真的打开对话框】Ribbon 不再自己监听 ⌘,，「按 ⌘/Ctrl + , 对话框出现」
         // 那几条既有用例现在只剩分发器这一条路——占位空函数会让它们全红。
-        'open-settings': () => setSettingsOpen(true)
+        'open-settings': () => setSettingsOpen(true),
+        // 老板键那三条不属于本文件的范围（这个壳没有小说/工作文档那两对状态），占位即可
+        'boss-key': () => {},
+        'boss-fill-up': () => {},
+        'boss-fill-down': () => {}
       }
     })
     return (

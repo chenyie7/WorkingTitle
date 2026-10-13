@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BOSS_FILL_MAX, clampBossFillPercent } from '../../core/bossKey'
+import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
@@ -38,6 +38,19 @@ function getApi(): WtApi | null {
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
   const [engine, setEngine] = useState<TypingEngine | null>(null)
+  /**
+   * **工作文档**：第二本 Novel，与小说并行存在。
+   *
+   * 【为什么是第二本 Novel 而不是另一个概念】引擎本来就是「一份内容 + 一个游标」，所以
+   * 「老板模式下打字照样抽字」「两份进度互不干扰」全部是免费的——不需要为它们写任何逻辑。
+   * 代价是它进不了 docx 的保真版式（表格图片塞不进 flatText），那个取舍见设计文档第 3 节。
+   */
+  const [workNovel, setWorkNovel] = useState<Novel | null>(null)
+  const [workEngine, setWorkEngine] = useState<TypingEngine | null>(null)
+  /** 显示哪一份。**纯内存、不落盘**——启动永远显示小说，崩了重启不该自动进老板模式。 */
+  const [bossMode, setBossMode] = useState(false)
+  /** 配了路径、但读不出来（文件被移走/删掉/读不出）。设置里据此标红。 */
+  const [workDocBroken, setWorkDocBroken] = useState(false)
   const [expanded, setExpanded] = useState(false)
   /**
    * 整条左栏（书名信息 + 章节列表）是否收起。
@@ -118,9 +131,17 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  const engineRef = useRef<TypingEngine | null>(null)
+  /**
+   * **持久化专用**的引擎引用：永远指向小说那一本。
+   *
+   * 【为什么必须与「当前显示的那份」拆开】进老板模式之后屏幕上是工作文档，而工作文档
+   * **不落盘**。若 `flushSession` 读的是「当前显示的那一份」，关窗那一下就会把工作文档的
+   * 进度写进 `sessions/<工作文档的 hash>.json`——恰好是设计里说好不做的那件事，而且是在
+   * 关窗那一下**静默**发生的。
+   */
+  const novelEngineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
-  engineRef.current = engine
+  novelEngineRef.current = engine
   /**
    * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
    *
@@ -130,10 +151,20 @@ export default function App() {
    *
    * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
    * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
-   * 渲染期写 ref 是本文件既有的写法（见上面的 `engineRef.current = engine`）。
+   * 渲染期写 ref 是本文件既有的写法（见上面的 `novelEngineRef.current = engine`）。
    */
   const globalRatioRef = useRef(DEFAULT_RATIO)
   globalRatioRef.current = globalRatio
+  /**
+   * 最新的铺满量，挂在 ref 上给上面两个动作读。
+   *
+   * 【为什么不用闭包里的 `bossFillPercent`】那两个动作每次渲染都是新函数（它们要进分发器的
+   * actions 对象），直接把 `bossFillPercent` 放进依赖也行——但 `toggleBoss` 同时依赖
+   * `workNovel` / `workEngine` / `bossMode`，每改一次铺满量就换一次身份。挂 ref 与
+   * `globalRatioRef` 是同一套写法，也同一套理由。
+   */
+  const bossFillPercentRef = useRef(BOSS_FILL_MAX)
+  bossFillPercentRef.current = bossFillPercent
 
   const settingsRef = useRef<AppSettings | null>(null)
   /**
@@ -198,12 +229,23 @@ export default function App() {
     }, TOAST_MS)
   }, [])
 
-  const state = useTypingEngine(engine)
+  /**
+   * 当前**显示**的那一份。渲染树只认这两个变量，其余地方一律不直接读 `novel` / `engine`。
+   *
+   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】工作文档可能读不出来（文件被移走）
+   * 或还没导入。那时 `bossMode` 若为真而工作文档是 null，页面会变成一片空白——用 `bossActive`
+   * 把「想切过去」和「切得过去」分开，这一整类情形就自愈了。
+   */
+  const bossActive = bossMode && workNovel !== null && workEngine !== null
+  const shownNovel = bossActive ? workNovel : novel
+  const shownEngine = bossActive ? workEngine : engine
+
+  const state = useTypingEngine(shownEngine)
 
   /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
   const flushSession = useCallback((): void => {
     const api = getApi()
-    const current = engineRef.current
+    const current = novelEngineRef.current
     if (api && current) void api.saveSession(current.toSession())
   }, [])
 
@@ -228,9 +270,11 @@ export default function App() {
       //
       // 【放在提交点之前、而不是函数开头】开头到这里隔着一个 await：那期间落在旧引擎上的击键
       // 会重排防抖定时器、随后被 cleanup 清掉，开头那次 flush 并没有覆盖到它。放在这里，
-      // `engineRef.current` 仍是上一本（还没人 setEngine），上面这句话才是字面为真的。
+      // `novelEngineRef.current` 仍是上一本（还没人 setEngine），上面这句话才是字面为真的。
       flushSession()
 
+      // 「打开一本小说」就是「你要看小说」——老板模式下按 ⌘O 也照此办理
+      setBossMode(false)
       setNovel(next)
       // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
       // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
@@ -270,6 +314,56 @@ export default function App() {
     await api.clearSession()
   }, [])
 
+  /**
+   * 老板键：切到工作文档 / 切回小说。
+   *
+   * 【进入时为什么必须重铺】工作文档不持久化进度（设计文档第 5 节）。持久化的话，老板在你
+   * 旁边站久了会把它抽到末尾，**下次一进来打字就不出字**——比什么都不做更露馅；而且
+   * 「铺满量」那个旋钮会被进度盖住，调了没反应。
+   */
+  const toggleBoss = useCallback((): void => {
+    if (!workNovel || !workEngine) {
+      notify(
+        workDocPath
+          ? '工作文档读不出来了，请在设置里重新导入'
+          : '还没导入工作文档（文件 → 设置 → 导入工作文档）'
+      )
+      return
+    }
+    const next = !bossMode
+    if (next) workEngine.revealTo(fillCharsFor(bossFillPercentRef.current))
+    // 「展开前文」是阅读区那一边的窗口状态，带过去会让工作文档一进来就是一张长纸
+    setExpanded(false)
+    setBossMode(next)
+  }, [workNovel, workEngine, bossMode, workDocPath, notify])
+
+  /** 老板键铺满 +/-：改设置；正在老板模式时**立刻重铺**，让用户当场看到效果。 */
+  const adjustBossFill = useCallback(
+    (dir: 1 | -1): void => {
+      const next = stepBossFill(bossFillPercentRef.current, dir)
+      if (next === bossFillPercentRef.current) {
+        notify(`铺满已是 ${next}%`)
+        return
+      }
+      setBossFillPercent(next)
+      // 这一处会**刻意**往回退（按 − 就是要少显示一点）。
+      //
+      // 【但「会往回退」不是这一处独有的】`toggleBoss` 那条路也会：在**非**老板模式下把铺满量
+      // 调小（那时 bossActive 为假、只改设置不重铺），再按老板键切进去，光标就是从上次那个
+      // 位置退到新值。别在别处依赖「它只会往前」。
+      //
+      // 【但它退不过 revealStart】`revealTo` 的下界是 `revealStart` 而不是 0（见 Task 2 的
+      // 注释与用例）。工作文档这一路 `revealStart` 恒为 0——它的引擎由 `new TypingEngine`
+      // 建出来、从不走 `fromSession`；唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
+      // 章节栏上，而老板模式下章节栏是收起的。**唯一的例外**是用户点开那条 12px 的细缝
+      // 手动展开章节栏、再点一个章节——那时这条「按 −」会静默停在那儿不再往下走。
+      // 危害很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
+      if (bossActive) workEngine?.revealTo(fillCharsFor(next))
+      notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+    },
+    [bossActive, workEngine, notify]
+  )
+
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
   useEffect(() => {
     const api = getApi()
@@ -296,6 +390,22 @@ export default function App() {
       setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
       setWorkDocPath(settings.workDocPath)
       setSettingsLoaded(true)
+
+      // 工作文档：**启动时就读进来常驻内存**。老板键要的是零延迟——等按下去了才读盘，
+      // 老板已经站在旁边了。读不出来时不弹打扰提示（那会在你早忘了这回事的时候吓你一下），
+      // 只在设置里标红，以及按老板键时给一句说明。
+      if (settings.workDocPath) {
+        const doc = await api.loadWorkDoc(settings.workDocPath)
+        if (cancelled) return
+        if (doc) {
+          setWorkNovel(doc)
+          // 与「新导入一本书」同一条路：拿全局比例当初值
+          setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+        } else {
+          // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
+          setWorkDocBroken(true)
+        }
+      }
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
       // 这个回退原先是由两段式启动天然给的（第一段的 catch 刻意不 return，落到第二段），
@@ -397,7 +507,12 @@ export default function App() {
     actions: {
       import: () => void handleImport(),
       'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
-      'open-settings': () => setSettingsOpen(true)
+      'open-settings': () => setSettingsOpen(true),
+      'boss-key': toggleBoss,
+      // 【为什么读 ref 而不是闭包里的值】actions 每次渲染都是新对象、分发器把它挂在 ref 上，
+      // 所以身份不稳也没关系；这里用 ref 只是与 toggleBoss 保持同一种写法。
+      'boss-fill-up': () => adjustBossFill(1),
+      'boss-fill-down': () => adjustBossFill(-1)
     }
   })
 
@@ -436,7 +551,7 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', flush)
   }, [flushSession])
 
-  const visibleText = engine?.visibleText ?? ''
+  const visibleText = shownEngine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
 
   /**
@@ -498,9 +613,9 @@ export default function App() {
       ratio: state?.ratio,
       mode: state?.mode,
       globalRatio,
-      onRatioChange: (n: number) => engineRef.current?.setRatio(n),
+      onRatioChange: (n: number) => shownEngine?.setRatio(n),
       onGlobalRatioChange: setGlobalRatio,
-      onModeChange: (m: InputMode) => engineRef.current?.setMode(m),
+      onModeChange: (m: InputMode) => shownEngine?.setMode(m),
       onImport: () => void handleImport(),
       onClearSession: () => void handleClearSession(),
       toast,
@@ -531,10 +646,10 @@ export default function App() {
 
         <div className="wt-body">
           <ChapterList
-            novel={novel}
+            novel={shownNovel}
             activeChapter={state?.activeChapter ?? 0}
             chapterPos={state?.chapterPos ?? []}
-            onJump={(i) => engineRef.current?.jumpToChapter(i)}
+            onJump={(i) => shownEngine?.jumpToChapter(i)}
             collapsed={sidebarCollapsed}
             onCollapsedChange={setSidebarCollapsed}
             sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
@@ -545,18 +660,18 @@ export default function App() {
               visibleText={visibleText}
               expanded={expanded}
               onToggleExpand={() => setExpanded(true)}
-              empty={!novel}
+              empty={!shownNovel}
               importShortcut={formatShortcut(shortcutTable.import, kind)}
             >
-              {engine && state && (
-                <InputCapture engine={engine} mode={state.mode} />
+              {shownEngine && state && (
+                <InputCapture engine={shownEngine} mode={state.mode} />
               )}
             </Page>
           </main>
         </div>
 
         <StatusBar
-          novel={novel}
+          novel={shownNovel}
           revealedChars={revealedChars}
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}

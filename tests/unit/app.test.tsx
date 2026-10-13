@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { Mock } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
+import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
+import type { WtApi } from '../../src/renderer/src/types/global'
+
+/** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
+const FILL_CHARS = fillCharsFor(100)
 
 function makeNovel(): Novel {
   const text = '第一章 甲\nAAAAAAAAAA\n第二章 乙\nBBBBBBBBBB\n'
@@ -29,10 +35,40 @@ let saved: PersistedSession | null = null
 /** 最近一次 `loadSession` 是【按哪本书的路径】去取的。null = 从没按路径取过。 */
 let sessionAskedFor: string | null = null
 
-function installApi(novel: Novel | null, session: PersistedSession | null = null): void {
+/**
+ * `loadWorkDoc` 的桩。`waitForWorkDocLoaded` 要靠它判断「启动把文档读进来了没有」。
+ *
+ * 【类型为什么写成 `Mock<签名>` 而不是 `ReturnType<typeof vi.fn>`】后者在本仓库这份 vitest
+ * 里是 `Mock<Procedure | Constructable>`，**赋给 `WtApi['loadWorkDoc']` 会当场 TS2322**
+ * ——而按计划原文写就是那样，实测 `pnpm typecheck` exit 2。带上真实签名之后，下面那个对象
+ * 字面量的 `WtApi` 目标类型才继续对它有效（少写 / 写错签名都会报）。
+ */
+let loadWorkDocMock: Mock<(path: string) => Promise<Novel | null>>
+
+function installApi(
+  novel: Novel | null,
+  session: PersistedSession | null = null,
+  settings: AppSettings = defaultSettings(),
+  workDoc: Novel | null = null
+): void {
   saved = null
   sessionAskedFor = null
-  ;(window as unknown as { api: unknown }).api = {
+  loadWorkDocMock = vi.fn(async (_path: string) => workDoc)
+  // 【目标类型写成 WtApi，不要写 unknown】写成 unknown 的话，这个字面量**两个方向都不查**：
+  // 多写一个成员（TS2353）与少写一个（TS2739）都不报。而这个替身正是「替身漏一个方法」最
+  // 容易发生的地方。实测：把这里改成 WtApi，`pnpm typecheck` 会当场报
+  // `TS2739: … is missing the following properties from type 'WtApi': platform, importWorkDoc, loadWorkDoc`
+  // ——下面那三个成员就是为此补的。
+  //
+  // 【别改成 `{ ...benignApi, … }`】那样虽然能少写几行，却把「忘了某个方法」从**响亮的
+  // undefined TypeError** 变成**静默的错误值**（例如漏了 loadSettings 会悄悄拿到
+  // benignApi 的 `defaultSettings()`，而不是本用例传进来的那份）——正是 tests/setup.ts
+  // 里那段注释要防的「用的是别人的数据、于是静默通过」。
+  ;(window as unknown as { api: WtApi }).api = {
+    // platform 是 TS2739 点名的三个缺失成员之一（另两个是这个对象里本来就有的
+    // importWorkDoc / loadWorkDoc）。**只补它**——那两个已经在下头，再写一遍就是对象字面量
+    // 重复键（TS1117）。
+    platform: 'darwin',
     importNovel: vi.fn(async () => novel),
     openNovelPath: vi.fn(async () => novel as Novel),
     initialNovelPath: vi.fn(async () => null),
@@ -53,12 +89,16 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
      *
      * 需要「设置指路 → 启动恢复」那一条路径的用例（目前只有一条）在自己的体内显式覆盖它。
      */
-    loadSettings: vi.fn(async () => defaultSettings()),
+    loadSettings: vi.fn(async () => settings),
     saveSettings: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
     setThemeSource: vi.fn(async () => {}),
-    onThemeChange: vi.fn(() => () => {})
+    onThemeChange: vi.fn(() => () => {}),
+    // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
+    // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
+    importWorkDoc: vi.fn(async () => workDoc),
+    loadWorkDoc: loadWorkDocMock
   }
 }
 
@@ -746,5 +786,123 @@ describe('快捷键接线', () => {
     // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
     fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+})
+
+function makeWorkDoc(): Novel {
+  // 【正文刻意长过 CHARS_PER_SHEET（1330）】短于它的话，「铺满 100%」会被 revealTo 夹到
+  // 全文长度——「铺满了一页」这句话在夹具上退化成「恰好一篇」，下面那些
+  // FILL_CHARS / FILL_CHARS + 10 的断言就全都测不出东西了。
+  const body = Array.from(
+    { length: 60 },
+    (_, i) => `${i + 1}. 本季度把导入管线与老板键做完了，细节见周报附件。`
+  ).join('\n')
+  const { flatText, chapters } = splitChapters(`季度汇报\n${body}\n`, '季度汇报')
+  return {
+    title: '季度汇报',
+    sourcePath: '/tmp/季度汇报.txt',
+    encoding: 'UTF-8',
+    hadBom: false,
+    flatText,
+    chapters
+  }
+}
+
+/** 按一次老板键（macOS 默认是 ⌘⇧B） */
+function pressBossKey(): void {
+  fireEvent.keyDown(window, { code: 'KeyB', key: 'B', metaKey: true, shiftKey: true })
+}
+
+/**
+ * 等启动流程把工作文档读进来。
+ *
+ * 【为什么不能只等 `page-empty`】那个元素在 boot 的**第二个** await（`loadWorkDoc`）之前
+ * 就已经渲染出来了，等它等于没等——紧接着按老板键会撞上「工作文档还没进内存」，用例收到的
+ * 是一条 toast 而不是切换。这个竞态在真机上不存在（人不会在启动那一瞬间按键）。
+ */
+async function waitForWorkDocLoaded(): Promise<void> {
+  await waitFor(() => expect(loadWorkDocMock).toHaveBeenCalled())
+  await act(async () => {})
+}
+
+describe('老板键', () => {
+  it('没导入工作文档时只提示，不切换', async () => {
+    installApi(makeNovel())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('还没导入工作文档'))
+    // 阅读区照旧是小说
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+
+  it('没导入小说也能按老板键——它只要求工作文档在', async () => {
+    const doc = makeWorkDoc()
+    installApi(null, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+
+    const shown = screen.getByTestId('page-text').textContent ?? ''
+    expect(shown.length).toBe(FILL_CHARS)
+    expect(doc.flatText.startsWith(shown)).toBe(true)
+  })
+
+  it('再按一次切回小说，且小说的进度原封不动', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 在小说里打 1 个字 → 默认比例 10 → 10 字
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    await act(async () => {
+      pressBossKey()
+    })
+    // 【这一条是「两份进度互不干扰」的判据】切回来必须还是那 10 个字——
+    // 不是 0，也不是被工作文档的铺满量污染过的值
+    await waitFor(() => expect(revealedChars()).toBe(10))
+  })
+
+  it('老板模式下打字抽的是工作文档', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 10))
+
+    // 抽出来的一定是工作文档的正文，不是小说的
+    const shown = screen.getByTestId('page-text').textContent ?? ''
+    expect(doc.flatText.startsWith(shown)).toBe(true)
   })
 })
