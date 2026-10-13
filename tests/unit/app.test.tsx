@@ -1062,4 +1062,55 @@ describe('老板键', () => {
       expect(screen.getByTestId('toast').textContent).toContain('工作文档读不出来了')
     )
   })
+
+  it('老板模式下：标题条换成工作文档名、章节栏收起、状态栏少三格', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+
+    // 章节栏收起：`ChapterList` 收起时渲染的是那条 rail 按钮，不是 aside
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    // 状态栏三格消失
+    expect(screen.queryByTestId('status-ratio')).toBeNull()
+    expect(screen.queryByTestId('status-encoding')).toBeNull()
+    expect(screen.queryByTestId('status-mode')).toBeNull()
+
+    // 切回来全部复原
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('文档1'))
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+    expect(screen.getByTestId('status-ratio')).toBeTruthy()
+  })
+
+  it('设置里的文档名字段不被老板模式带偏', async () => {
+    // Ribbon 现在把同一个 docTitle 既用于标题条又转手给 SettingsDialog，
+    // 只覆盖前者的话，设置里那个输入框会跟着变成工作文档名
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+
+    openSettings()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+  })
 })

@@ -358,9 +358,14 @@ export default function App() {
       // 【但它退不过 revealStart】`revealTo` 的下界是 `revealStart` 而不是 0（见 Task 2 的
       // 注释与用例）。工作文档这一路 `revealStart` 恒为 0——它的引擎由 `new TypingEngine`
       // 建出来、从不走 `fromSession`；而**唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
-      // 章节栏上**——老板模式下章节栏能不能点到，是「界面跟随」那一步的口径；一旦它可达，
-      // 这条「按 −」就会静默停在那儿不再往下走。
-      // 危害很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
+      // 章节栏上**。
+      //
+      // 【上一版里这条是可达的，是界面跟随把它关上的】Task 6 只做到「老板模式换引擎」，章节栏
+      // 在老板模式下照旧展开、照旧点得到（传给它的 `novel` 就是工作文档，列表里是它的章）。
+      // 那时在老板模式里跳一次章，`revealStart` 就抬起来了，这条「按 −」会静默停在那儿不再
+      // 往下走。本任务用 `ChapterList` 的 `collapsed={sidebarCollapsed || bossActive}` 把它
+      // 按住——老板模式下强制收起，`jumpToChapter` 在界面上再没有入口。
+      // 危害本来也很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
       if (bossActive) workEngine?.revealTo(fillCharsFor(next))
       notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
     },
@@ -661,12 +666,13 @@ export default function App() {
       <div className="wt-app" data-testid="app-root">
         <Ribbon
           docTitle={docTitle}
+          displayTitle={bossActive && workNovel ? workNovel.title : docTitle}
           onDocTitleChange={setDocTitle}
           darkPaper={darkPaper}
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
-          novelOpen={novel !== null}
+          novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
@@ -682,7 +688,7 @@ export default function App() {
             activeChapter={state?.activeChapter ?? 0}
             chapterPos={state?.chapterPos ?? []}
             onJump={(i) => shownEngine?.jumpToChapter(i)}
-            collapsed={sidebarCollapsed}
+            collapsed={sidebarCollapsed || bossActive}
             onCollapsedChange={setSidebarCollapsed}
             sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
           />
@@ -708,6 +714,7 @@ export default function App() {
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
+          bossMode={bossActive}
         />
 
         <Toast />

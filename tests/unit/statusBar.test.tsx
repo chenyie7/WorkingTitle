@@ -58,3 +58,26 @@ describe('StatusBar', () => {
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 })
+
+describe('StatusBar 老板模式', () => {
+  it('老板模式下不渲染比例 / 编码 / 输入模式三格', () => {
+    // 这三样真 Word 的状态栏都没有——「比例 1:10」「编码 UTF-8」「输入模式 输入法」
+    // 每一个都在说「这不是 Word，是个读小说的东西」。
+    render(
+      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" bossMode />
+    )
+    expect(screen.queryByTestId('status-ratio')).toBeNull()
+    expect(screen.queryByTestId('status-encoding')).toBeNull()
+    expect(screen.queryByTestId('status-mode')).toBeNull()
+    // 页码形状与百分比留着——真 Word 也有
+    expect(screen.getByTestId('status-chapter').textContent).toBe('2 / 2')
+    expect(screen.getByTestId('status-percent').textContent).toBe('25%')
+  })
+
+  it('不传 bossMode 时三格照旧（向后兼容）', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    expect(screen.getByTestId('status-ratio')).toBeTruthy()
+    expect(screen.getByTestId('status-encoding')).toBeTruthy()
+    expect(screen.getByTestId('status-mode')).toBeTruthy()
+  })
+})

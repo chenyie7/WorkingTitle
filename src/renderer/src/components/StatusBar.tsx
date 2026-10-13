@@ -6,6 +6,14 @@ export interface StatusBarProps {
   activeChapter: number
   ratio: number
   mode: InputMode
+  /**
+   * 老板模式。为真时不渲染「比例 / 编码 / 输入模式」三格。
+   *
+   * 【为什么这三格要藏】真 Word 的状态栏没有它们中的任何一个：「比例 1:10」直接暴露了
+   * 「打 1 个字吐 N 个字」这套机制，「编码 UTF-8」和「输入模式 输入法」则是这个应用独有的
+   * 控件。老板模式下它们对用户也没有任何用处。默认 false，既有调用方不必改动。
+   */
+  bossMode?: boolean
 }
 
 /**
@@ -23,7 +31,14 @@ export interface StatusBarProps {
  * 或简写成 `1 / 3`。写成 `2 / 1382` 反而**比中文全称更像 Word**，同时把「章」这个字
  * （小说阅读器最直接的标志）去掉了。配色再压低一档，不让它抢眼。
  */
-export function StatusBar({ novel, revealedChars, activeChapter, ratio, mode }: StatusBarProps) {
+export function StatusBar({
+  novel,
+  revealedChars,
+  activeChapter,
+  ratio,
+  mode,
+  bossMode = false
+}: StatusBarProps) {
   const totalChars = novel?.flatText.length ?? 0
   const totalChapters = novel?.chapters.length ?? 0
   const percent = totalChars === 0 ? 0 : Math.floor((revealedChars / totalChars) * 100)
@@ -33,9 +48,13 @@ export function StatusBar({ novel, revealedChars, activeChapter, ratio, mode }: 
       <span className="wt-statusbar__dim" data-testid="status-chapter">
         {novel ? `${activeChapter + 1} / ${totalChapters}` : '—'}
       </span>
-      <span data-testid="status-ratio">比例 1:{ratio}</span>
-      <span data-testid="status-encoding">编码 {novel?.encoding ?? '—'}</span>
-      <span data-testid="status-mode">输入模式 {mode === 'ime' ? '输入法' : '纯按键'}</span>
+      {!bossMode && (
+        <>
+          <span data-testid="status-ratio">比例 1:{ratio}</span>
+          <span data-testid="status-encoding">编码 {novel?.encoding ?? '—'}</span>
+          <span data-testid="status-mode">输入模式 {mode === 'ime' ? '输入法' : '纯按键'}</span>
+        </>
+      )}
       <span className="wt-statusbar__spacer" />
       <span data-testid="status-percent">{percent}%</span>
       <span>中文(中国)</span>

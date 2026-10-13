@@ -1224,6 +1224,7 @@ function hostPlatform(): string {
 
 export function Ribbon({
   docTitle,
+  displayTitle,
   onDocTitleChange,
   darkPaper,
   onDarkPaperChange,
@@ -1239,6 +1240,14 @@ export function Ribbon({
   settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
+  /**
+   * 标题条上显示的文档名。**不传时等于 `docTitle`**。
+   *
+   * 【为什么要与 `docTitle` 拆开】本组件把 `docTitle` 既用于标题条、又原样转手给
+   * `SettingsDialog` 的「文档名」输入框。老板模式下只覆盖前者——两者共用一个 prop 的话，
+   * 设置里那个输入框会跟着变成工作文档的文件名，而用户存的其实是「文档1」。
+   */
+  displayTitle?: string
   onDocTitleChange: (next: string) => void
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
@@ -1281,7 +1290,7 @@ export function Ribbon({
         {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
             它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
         <span className="wt-ribbon__title-doc" data-testid="doc-title">
-          {docTitle}
+          {displayTitle ?? docTitle}
         </span>
         {/* 分隔符**单独成一个元素**，不并进上面那个 span：`doc-title` 的 textContent 必须
             ***正好*** 是文档名（设置对话框与多条测试都按这个口径断言），并进去就变成
