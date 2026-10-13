@@ -127,7 +127,7 @@ export function fillCharsFor(percent: number): number               // → 给 r
 ### 5.4 `+` / `−` 的行为
 
 - 改设置：`stepBossFill(current, ±1)`，步进 10，**两端夹住**（到 0 或 100 就停，不循环）。
-- **若此刻正在老板模式**，立刻把当前画面重铺一次——即 `revealTo(fillCharsFor(新百分比))`，让用户直接看到效果（这也是唯一一处 `revealTo` 能**往回退**的调用点）。
+- **若此刻正在老板模式**，立刻把当前画面重铺一次——即 `revealTo(fillCharsFor(新百分比))`，让用户直接看到效果（这条与下面的「进入老板模式」都会让光标往回退——`revealTo` 不是只能前进）。
 - 无论哪种情况都弹一条 toast 报当前档位：「铺满 40% ≈ 532 字」。
 - 非老板模式下按只改设置、不动画面。
 
