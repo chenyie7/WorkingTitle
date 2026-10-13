@@ -18,7 +18,7 @@ describe('clampBossFillPercent', () => {
     expect(clampBossFillPercent(1000)).toBe(BOSS_FILL_MAX)
   })
 
-  it('非有限值落到满屏，而不是 0', () => {
+  it('非有限值落到满页，而不是 0', () => {
     // 【为什么是 100 而不是 0】NaN 来自「设置文件被改坏 / 字段缺失」。
     // 落到 0 的话老板键切过去是一片空白——那正是这个功能要避免的画面。
     expect(clampBossFillPercent(Number.NaN)).toBe(BOSS_FILL_MAX)
@@ -55,7 +55,7 @@ describe('stepBossFill', () => {
 })
 
 describe('fillCharsFor', () => {
-  it('100% 是一屏，50% 是一半', () => {
+  it('100% 是一页，50% 是半页', () => {
     expect(fillCharsFor(100)).toBe(CHARS_PER_SHEET)
     expect(fillCharsFor(50)).toBe(Math.round(CHARS_PER_SHEET / 2))
   })
