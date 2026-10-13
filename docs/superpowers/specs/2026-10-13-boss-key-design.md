@@ -196,7 +196,9 @@ const shownEngine  = bossActive ? workEngine : engine
 两条实现上的注意：
 
 - **标题条与设置里的「文档名」要拆成两个 prop。** `Ribbon` 现在把同一个 `docTitle` 既用于标题条（`Ribbon.tsx:1284`）又转手给 `SettingsDialog`（`Ribbon.tsx:1315`）。老板模式下若只覆盖前者，设置对话框里的文档名字段就会串味。所以加一个 `displayTitle`：**标题条读它，`docTitle` 保持原义**。
-- **章节栏用显示层覆盖，不动用户偏好。** 传 `collapsed={sidebarCollapsed || bossMode}`——`sidebarCollapsed` 本身不变，切回小说原样恢复。`⌘⇧H` 在老板模式下仍然改偏好，但当前显示不跟着变（老板站在旁边时按这条键的概率极低，不值得为它加一套「按键为什么没反应」的提示）。
+- **章节栏用显示层覆盖，而且两条控件在老板模式下都不写偏好。** 传 `collapsed={sidebarCollapsed || bossActive}`——`sidebarCollapsed` 本身不变，切回小说原样恢复。**`⌘⇧H` 与那条 rail 按钮在老板模式下都不改 `sidebarCollapsed`。**
+
+  【为什么两条都要挡——这一条是质量评审逼出来的，原来的写法只挡了 rail】只挡一条会留下更糟的形态：同一条规则下，一条写偏好、一条不写，而**两条路在老板模式下都没有任何可见反馈**（收起是强制覆盖的），于是那条写偏好的会在用户退出老板模式时**突然**把侧栏展开——「没有反馈的写」是最难查的一种。两条都不动才是一句能说清的话，也正好把「显示层覆盖、偏好不动」变成字面为真。`⌘⇧H` 丢掉的「快捷键语义」在这里没有可作用的对象，死掉是诚实的。
 
 **既有的不一致，本次不扩大也不顺手修**：原生窗口标题（`main/index.ts` 里写死的 `文档1 - Word`）**从来没跟着 `docTitle` 走过**，Mission Control 与窗口菜单里一直是它。
 
