@@ -86,6 +86,14 @@ export interface SettingsDialogProps {
   onRecordingChange: (recording: boolean) => void
   /** 工作文档的文件名（去扩展名）。`null` = 没导入。 */
   workDocTitle: string | null
+  /**
+   * 工作文档的完整路径，只用于那行的 `title` 悬停提示（设计 §8）。
+   *
+   * 【为什么另给一个字段而不是从 `workDocTitle` 推】那是 `Novel.title`（去扩展名的文件名），
+   * 路径推不出来。两个值来源不同、生命周期也不同：坏掉那一路 `workDocTitle` 恒为 null，
+   * 而路径仍在（刻意保留，文件可能只是临时不在）。
+   */
+  workDocPath: string | null
   /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）。设置里据此标红。 */
   workDocBroken: boolean
   /** 立即动作，与 onImport / onClearSession 同类——**不走「草稿 + 保存」那一套**。 */
@@ -125,6 +133,7 @@ export function SettingsDialog({
   onShortcutsChange,
   onRecordingChange,
   workDocTitle,
+  workDocPath,
   workDocBroken,
   onImportWorkDoc,
   onRemoveWorkDoc
@@ -621,6 +630,9 @@ export function SettingsDialog({
             <span
               className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
               data-testid="work-doc-status"
+              // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
+              // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
+              title={workDocPath ?? undefined}
             >
               {workDocBroken
                 ? workDocTitle === null

@@ -1240,6 +1240,7 @@ export function Ribbon({
   onShortcutsChange = ignoreShortcutsChange,
   onRecordingChange = ignoreRecordingChange,
   workDocTitle = null,
+  workDocPath = null,
   workDocBroken = false,
   onImportWorkDoc = ignoreAction,
   onRemoveWorkDoc = ignoreAction,
@@ -1287,6 +1288,8 @@ export function Ribbon({
    * 而既有测试不必为了这一组改动。不传＝「没导入、也没坏、点了没反应」。
    */
   workDocTitle?: string | null
+  /** 只用于那行的悬停提示（设计 §8）。与 `workDocTitle` 分开：坏掉那一路只有路径还在。 */
+  workDocPath?: string | null
   workDocBroken?: boolean
   onImportWorkDoc?: () => void
   onRemoveWorkDoc?: () => void
@@ -1352,6 +1355,7 @@ export function Ribbon({
         onShortcutsChange={onShortcutsChange}
         onRecordingChange={onRecordingChange}
         workDocTitle={workDocTitle}
+        workDocPath={workDocPath}
         workDocBroken={workDocBroken}
         onImportWorkDoc={onImportWorkDoc}
         onRemoveWorkDoc={onRemoveWorkDoc}

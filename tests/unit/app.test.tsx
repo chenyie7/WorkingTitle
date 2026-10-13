@@ -1245,4 +1245,48 @@ describe('设置里的工作文档', () => {
     })
     await waitFor(() => expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBeNull())
   })
+
+  /**
+   * 【设计 §9 承诺过「导入空文件 → 当场拒绝 + toast，设置不变」】
+   *
+   * 修之前这条规则**零覆盖**，而且做不到「出声」：`main` 侧那句 `flatText.length === 0 ? null`
+   * 让「空文件被拒」与「对话框取消」在渲染层是同一个 `null`，`if (!doc) return` 只能沉默——
+   * 用户选了个空 txt，屏幕上什么都不发生。
+   */
+  it('导入一个空文件：给一条 toast 并且什么都不改（不建引擎、不写路径）', async () => {
+    // 空文本的 Novel：`importWorkDoc` 桩返回它，其余一切照常
+    const empty: Novel = {
+      title: '空的',
+      sourcePath: '/tmp/空的.txt',
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText: '',
+      chapters: []
+    }
+    installApi(makeNovel(), null, defaultSettings(), empty)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: [AppSettings][] }
+    }
+
+    openSettings()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    })
+
+    // 出声了
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('空的'))
+    // 【「设置不变」这一半】路径没被写进去。读最后一次载荷——早先那几发是启动读盘/导入
+    // 小说触发的，拿它们断言等于什么都没测。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath ?? null).toBeNull()
+    // 而且没有建出那一份：状态行仍是「未导入」，也就没有「移除」按钮
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
+    expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
+  })
 })

@@ -335,7 +335,22 @@ export default function App() {
     const api = getApi()
     if (!api) return
     const doc = await api.importWorkDoc()
+    // null ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
     if (!doc) return
+    /**
+     * **空文件在这里出声并拒绝**（设计 §9：「当场拒绝 + toast，设置不变」）。
+     *
+     * 【为什么判断在渲染层、而不是让 IPC 返回 null】`main` 侧那条 `loadWorkDoc` **刻意不判空**
+     * ——它要是判了，这里拿到的 null 与「取消」就是同一个值，只能沉默，用户选了个空 txt
+     * 屏幕上什么都不会发生（这正是修之前的行为）。
+     *
+     * 【与 main 侧那处判空不是重复】boot 那条路（`wt:load-work-doc`）**判**：启动时读到空文档
+     * 当「读不出来」，标红、按老板键给说明。两条路的策略不同是有意的，别顺手合并掉一处。
+     */
+    if (doc.flatText.length === 0) {
+      notify('这个文件是空的，换一个')
+      return
+    }
     setWorkNovel(doc)
     setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
     // 路径就在 Novel 里，不必让 IPC 多返回一个值
@@ -372,7 +387,19 @@ export default function App() {
     }
     const next = !bossMode
     if (next) workEngine.revealTo(fillCharsFor(bossFillPercentRef.current))
-    // 「展开前文」是阅读区那一边的窗口状态，带过去会让工作文档一进来就是一张长纸
+    /**
+     * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
+     *
+     * 【进入时】不清的话工作文档一进来就是一张长纸（小说那边点开的「展开前文」被带了过来）。
+     * 【出去时】同理：`expanded` 是一个共享值，而老板模式下它基本不会被改动——那条折叠条要
+     * `visibleText` 超过 `RENDER_WINDOW_LIMIT`（30000 字）才渲染，而铺满 100% 也才
+     * `CHARS_PER_SHEET`（1330）字；要在老板模式里把它顶到 30000 得再敲约三千下。所以退出时
+     * 它多半还停在**进老板模式之前**那个值上，带着它回去等于把用户刚离开的阅读位置又翻出来
+     * 一次，方向反了。
+     *
+     * 两个方向共用这一句是刻意的：谁都不该继承对面那一侧的展开态。所以它写在 `if (next)`
+     * 之外——**别把它挪进去**。
+     */
     setExpanded(false)
     setBossMode(next)
   }, [workNovel, workEngine, bossMode, workDocPath, notify])
@@ -723,6 +750,7 @@ export default function App() {
           onShortcutsChange={setShortcuts}
           onRecordingChange={setRecording}
           workDocTitle={workNovel?.title ?? null}
+          workDocPath={workDocPath}
           workDocBroken={workDocBroken}
           onImportWorkDoc={() => void handleImportWorkDoc()}
           onRemoveWorkDoc={handleRemoveWorkDoc}

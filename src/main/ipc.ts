@@ -20,9 +20,9 @@ export function openNovel(filePath: string): Novel {
 }
 
 /**
- * 读一份**工作文档**。
+ * 读一份**工作文档**。**只管读，不判空**。
  *
- * 【与 `openNovel` 的三处不同，每一处都是有意的】
+ * 【与 `openNovel` 的两处不同，每一处都是有意的】
  *
  * 1. **不写小说缓存**。缓存是单槽的（`novel-cache.json` + `novel-cache.txt` 共用一份），
  *    工作文档占了它，小说每次启动都要重解码一遍（9MB 那本是秒级）。工作文档是小文本，
@@ -31,13 +31,17 @@ export function openNovel(filePath: string): Novel {
  *    渲染层据此在设置里标红并给一句提示，而不是把那次 `invoke` 打成 rejection。
  *    （「解不出编码」今天传不到这里：`decodeBuffer` 是全域的，自带 catch、空缓冲也短路；
  *    留在 catch 里只是兜底。）
- * 3. **空文本判为不可用**。一份空文档放进来的话，老板键切过去是一片空白，等于没有。
+ *
+ * 【空文本这一条为什么从这里挪走了】它原先也在这里判，于是「对话框取消」与「选了个空文件」
+ * 在渲染层是**同一个 null**，`if (!doc) return` 只能沉默——用户选了个空 txt，屏幕上什么都
+ * 不发生，而设计 §9 承诺的是「当场拒绝 + toast」。两者必须分得开，判空因此各归各路：
+ * **boot 那条路当「读不出来」**（`wt:load-work-doc` 里判，切过去一片空白等于没有），
+ * **import 那条路把空 Novel 原样返回**，由渲染层出声并拒绝。**别看到两处判空就以为是重复。**
  */
 function loadWorkDoc(filePath: string): Novel | null {
   if (typeof filePath !== 'string') return null
   try {
-    const novel = loadNovelFromFile(filePath)
-    return novel.flatText.length === 0 ? null : novel
+    return loadNovelFromFile(filePath)
   } catch (err) {
     console.warn('[wt] 读取工作文档失败：', filePath, err)
     return null
@@ -85,10 +89,17 @@ export function registerIpc(deps: IpcDeps): void {
     // 骨架与上面 import-novel 那个逐字相同，改一处要改两处（理由见那处的注释）。
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
+    // **空 Novel 原样返回**（不判空）：返回 null 会与「取消」撞成同一个值，渲染层就没法
+    // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
     return loadWorkDoc(result.filePaths[0])
   })
 
-  ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => loadWorkDoc(filePath))
+  // 启动这条路**判空**：空文档在这里等同于「读不出来」，落到 `workDocBroken`（设置里标红、
+  // 老板键给一句说明）。import 那条路刻意不判——理由见上面 `loadWorkDoc` 的说明。
+  ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => {
+    const novel = loadWorkDoc(filePath)
+    return novel && novel.flatText.length > 0 ? novel : null
+  })
 
   ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
 
