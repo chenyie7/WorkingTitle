@@ -905,4 +905,31 @@ describe('老板键', () => {
     const shown = screen.getByTestId('page-text').textContent ?? ''
     expect(doc.flatText.startsWith(shown)).toBe(true)
   })
+
+  it('老板模式下关窗，落盘的是【小说】的进度而不是工作文档的', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    // 【必须真等到切过去】没切过去时 shownEngine 仍是小说那本，这条用例就白测了
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: [PersistedSession][] }
+    }
+    const before = saveSession.mock.calls.length
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    // 【为什么取 before 那一条、而不是读 `saved`】600ms 那个防抖 effect 也会写小说那本；
+    // 读 `saved` 的话它随后一落盘就把值覆盖回小说，于是变异照样通过。
+    expect(saveSession.mock.calls.length).toBe(before + 1)
+    expect(saveSession.mock.calls[before][0].sourcePath).toBe(novel.sourcePath)
+  })
 })

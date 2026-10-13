@@ -98,7 +98,7 @@ export function useShortcutDispatcher({
   enabled
 }: UseShortcutDispatcherOptions): void {
   // 表与动作都挂在 ref 上，让监听器的身份保持稳定：依赖一变就要解绑重绑，而重绑之间那
-  // 一瞬间的按键会漏掉。渲染期写 ref 是本仓库既有的写法（见 App.tsx 的 engineRef）。
+  // 一瞬间的按键会漏掉。渲染期写 ref 是本仓库既有的写法（见 App.tsx 的 novelEngineRef）。
   const stateRef = useRef({ platform, table, actions, enabled })
   stateRef.current = { platform, table, actions, enabled }
 

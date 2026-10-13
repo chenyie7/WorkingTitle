@@ -230,7 +230,7 @@ export default function App() {
   }, [])
 
   /**
-   * 当前**显示**的那一份。渲染树只认这两个变量，其余地方一律不直接读 `novel` / `engine`。
+   * 当前**显示**的那一份。渲染树里凡是跟着「显示了什么内容」走的地方都读这两个变量。
    *
    * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】工作文档可能读不出来（文件被移走）
    * 或还没导入。那时 `bossMode` 若为真而工作文档是 null，页面会变成一片空白——用 `bossActive`
@@ -355,8 +355,9 @@ export default function App() {
       // 【但它退不过 revealStart】`revealTo` 的下界是 `revealStart` 而不是 0（见 Task 2 的
       // 注释与用例）。工作文档这一路 `revealStart` 恒为 0——它的引擎由 `new TypingEngine`
       // 建出来、从不走 `fromSession`；唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
-      // 章节栏上，而老板模式下章节栏是收起的。**唯一的例外**是用户点开那条 12px 的细缝
-      // 手动展开章节栏、再点一个章节——那时这条「按 −」会静默停在那儿不再往下走。
+      // 章节栏上；老板模式下章节栏由「界面跟随」那一步收起，所以这个例外只在用户手动展开
+      // 侧栏那条细缝时才可能出现：点开细缝、再点一个章节——那时这条「按 −」会静默停在那儿
+      // 不再往下走。
       // 危害很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
       if (bossActive) workEngine?.revealTo(fillCharsFor(next))
       notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
