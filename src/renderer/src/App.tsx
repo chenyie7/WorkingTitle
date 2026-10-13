@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BOSS_FILL_MAX, clampBossFillPercent } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
@@ -91,6 +92,18 @@ export default function App() {
    */
   const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
   /**
+   * 工作文档路径与老板键的铺满量。
+   *
+   * 【这里不是「让界面跟随」，只是**把磁盘上那份原样带回去**】下面那个 memo 就是防抖落盘的
+   * 载荷，少一个字段就等于「启动一次之后把它冲成默认值」。`shortcuts` 曾经恒为写死的 `{}`
+   * 时正是这个症状：手改过 settings.json 的人启动一次就被无声冲成空表（见下面那段说明）。
+   * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
+   *
+   * 两个 setter 眼下没有调用方——入口在「设置里的工作文档」那一步接上。
+   */
+  const [workDocPath, setWorkDocPath] = useState<string | null>(null)
+  const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
@@ -150,8 +163,26 @@ export default function App() {
    * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
    */
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
-    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio, shortcuts]
+    () => ({
+      docTitle,
+      themeSource,
+      darkPaper,
+      lastSourcePath,
+      ratio: globalRatio,
+      workDocPath,
+      bossFillPercent,
+      shortcuts
+    }),
+    [
+      docTitle,
+      themeSource,
+      darkPaper,
+      lastSourcePath,
+      globalRatio,
+      workDocPath,
+      bossFillPercent,
+      shortcuts
+    ]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
@@ -249,6 +280,11 @@ export default function App() {
       setLastSourcePath(settings.lastSourcePath)
       setGlobalRatio(settings.ratio)
       setShortcuts(settings.shortcuts)
+      // 【这一夹是必须的，不是防御】settingsProblem 只判「是不是有限数字」，值域夹紧归 core
+      // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
+      // 而第一次按「铺满 −」会从 500 一步跳到 100。
+      setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
+      setWorkDocPath(settings.workDocPath)
       setSettingsLoaded(true)
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。

@@ -403,7 +403,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: { import: 'Ctrl+KeyI' } })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -419,6 +419,48 @@ describe('设置的持久化', () => {
     // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
     // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
     expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+  })
+
+  // 【这条守的是「不回退」，与上一条同形，但守的是另外两个字段】`settings` memo 就是防抖
+  // 落盘的载荷，「读进来了却没写进 memo」的后果是把磁盘上那个值无声冲成默认值。这条性质
+  // 此前**没有任何用例守着**：实测（变异＝把 memo 里的 `workDocPath` 换成写死的 `null`）
+  // 在补上本条之前全套 372 条**照样全绿**，补上之后这一条单独变红。
+  it('磁盘上的 workDocPath / bossFillPercent 原样写回，不被默认值冲掉', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      workDocPath: '/tmp/周报.txt',
+      bossFillPercent: 40
+    }))
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    // 【读第一条，不读最后一条】第一条正是「读盘之后第一次落盘」那一发；取最后一条的话，
+    // 后面任何一次重算排的防抖写都会把它顶掉，断言就漂到别的那一发上了。
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.workDocPath).toBe('/tmp/周报.txt')
+    expect(payload.bossFillPercent).toBe(40)
+  })
+
+  // 【守的是读盘那一夹】`settingsProblem` 只判「是不是有限数字」，值域夹紧归 core——所以
+  // 一个手改出来的 `bossFillPercent: 500` 能一路通过校验。少了 `clampBossFillPercent`，
+  // 它原样进状态、再照原样写回磁盘，而第一次按「铺满 −」会从 500 一步跳到 100。
+  // 实测（变异＝把那一夹去掉）：在补上本条之前全套 373 条**照样全绿**。
+  it('磁盘上超出值域的 bossFillPercent 进状态时就夹紧，写回的也是夹紧后的值', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      bossFillPercent: 500
+    }))
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.bossFillPercent).toBe(100)
   })
 
   it('改了文档名之后会把设置写回去', async () => {

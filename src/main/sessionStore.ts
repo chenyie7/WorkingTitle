@@ -164,6 +164,11 @@ function settingsProblem(v: unknown): string | null {
   }
   const n = s.ratio
   if (typeof n !== 'number' || !Number.isFinite(n)) return 'ratio 不是有限数字'
+  if (s.workDocPath !== null && typeof s.workDocPath !== 'string') {
+    return 'workDocPath 既不是 null 也不是字符串'
+  }
+  const fill = s.bossFillPercent
+  if (typeof fill !== 'number' || !Number.isFinite(fill)) return 'bossFillPercent 不是有限数字'
   const sc = s.shortcuts
   if (typeof sc !== 'object' || sc === null || Array.isArray(sc)) return 'shortcuts 不是对象'
   for (const [id, spec] of Object.entries(sc as Record<string, unknown>)) {
@@ -204,7 +209,12 @@ function settingsProblem(v: unknown): string | null {
  */
 const FILLED_DEFAULTS = {
   ratio: () => defaultSettings().ratio,
-  shortcuts: () => defaultSettings().shortcuts
+  shortcuts: () => defaultSettings().shortcuts,
+  // 【这两个是同一件事的两半】漏了它们，旧版写下、没有这两个键的 settings.json 会被
+  // settingsProblem 判成不合法，于是**整份退回默认值**——用户改过的文档名 / 外观 / 纸张 /
+  // 快捷键一次性全丢，且没有任何报错，只有一行 console.warn。
+  workDocPath: () => defaultSettings().workDocPath,
+  bossFillPercent: () => defaultSettings().bossFillPercent
 } satisfies Readonly<Partial<Record<keyof AppSettings, () => unknown>>>
 
 function withDefaultsFilled(v: unknown): unknown {

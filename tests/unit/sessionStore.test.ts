@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import { resolveShortcuts } from '../../src/core/shortcuts'
-import { DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
+import { DEFAULT_DOC_TITLE, DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
@@ -250,6 +250,9 @@ describe('sessionStore 会话读写', () => {
       darkPaper: true,
       lastSourcePath: '/tmp/A.txt',
       ratio: 10,
+      // 后加的必填字段；这里给默认值，本用例要钉的是「清除记录不动设置」
+      workDocPath: null,
+      bossFillPercent: 100,
       // shortcuts 是后加的必填字段；这里给空表，本用例要钉的是「清除记录不动设置」
       shortcuts: {}
     })
@@ -286,6 +289,8 @@ describe('sessionStore 会话读写', () => {
       darkPaper: true,
       lastSourcePath: '/tmp/A.txt',
       ratio: 10,
+      workDocPath: null,
+      bossFillPercent: 100,
       shortcuts: {}
     })
   })
@@ -549,6 +554,8 @@ describe('sessionStore 设置读写', () => {
       darkPaper: true,
       lastSourcePath: '/tmp/测试书.txt',
       ratio: 10,
+      workDocPath: null,
+      bossFillPercent: 100,
       shortcuts: {}
     }
     store.writeSettings(s)
@@ -585,6 +592,8 @@ describe('sessionStore 设置读写', () => {
       darkPaper: true,
       lastSourcePath: null,
       ratio: 10,
+      workDocPath: null,
+      bossFillPercent: 100,
       shortcuts: {}
     }
     const bad = mangle(good)
@@ -633,6 +642,8 @@ describe('sessionStore 设置读写', () => {
         lastSourcePath: '/tmp/A.txt',
         ratio: DEFAULT_RATIO,
         // 与 ratio 同为「旧文件里没有、读时补上」的字段
+        workDocPath: null,
+        bossFillPercent: 100,
         shortcuts: {}
       })
       // 补默认值这条正常路径不该报 warn（一条在正常路径上也会响的告警等于没有告警）
@@ -640,6 +651,61 @@ describe('sessionStore 设置读写', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('旧版设置文件缺 workDocPath / bossFillPercent 时补默认值，且不冲掉用户原有的字段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    // 手工写一份**旧版**形状：没有这两个键，但用户改过文档名与快捷键
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt',
+        ratio: 25,
+        shortcuts: { import: 'Ctrl+KeyI' }
+      }),
+      'utf8'
+    )
+    const s = createSessionStore(dir).readSettings()
+    // 【这一条是本用例的全部意义】整份退回默认值的话，这四行全红
+    expect(s.docTitle).toBe('季度汇报')
+    expect(s.themeSource).toBe('dark')
+    expect(s.ratio).toBe(25)
+    expect(s.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+    // 两个新键补成了默认值
+    expect(s.workDocPath).toBeNull()
+    expect(s.bossFillPercent).toBe(100)
+  })
+
+  it('workDocPath 结构不合法时整份退回默认值', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    const store = createSessionStore(dir)
+    store.writeSettings({ ...defaultSettings(), docTitle: '季度汇报', workDocPath: 7 as unknown as string })
+    const s = store.readSettings()
+    expect(s.docTitle).toBe(DEFAULT_DOC_TITLE)
+    expect(s.workDocPath).toBeNull()
+  })
+
+  it('bossFillPercent 不是有限数字时整份退回默认值', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    const store = createSessionStore(dir)
+    store.writeSettings({
+      ...defaultSettings(),
+      docTitle: '季度汇报',
+      bossFillPercent: Number.NaN
+    })
+    expect(store.readSettings().docTitle).toBe(DEFAULT_DOC_TITLE)
+  })
+
+  it('workDocPath 是字符串时照常读回', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    const store = createSessionStore(dir)
+    store.writeSettings({ ...defaultSettings(), workDocPath: '/tmp/周报.txt', bossFillPercent: 40 })
+    const s = store.readSettings()
+    expect(s.workDocPath).toBe('/tmp/周报.txt')
+    expect(s.bossFillPercent).toBe(40)
   })
 
   it('settings.json 不是合法 JSON 时返回默认值而不抛异常', () => {
@@ -789,6 +855,8 @@ describe('旧版单槽会话的迁移', () => {
       darkPaper: true,
       lastSourcePath: '/tmp/另一本.txt',
       ratio: 10,
+      workDocPath: null,
+      bossFillPercent: 100,
       shortcuts: {}
     })
 
