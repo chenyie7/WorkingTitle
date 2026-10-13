@@ -49,9 +49,9 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `workDocPath` | `string \| null` | `null` | 工作文档源文件路径。`null` = 没配 |
-| `bossFillPercent` | `number` | `100` | 老板键「铺满一屏」的百分比，0–100 |
+| `bossFillPercent` | `number` | `100` | 老板键「铺满一页」的百分比，0–100 |
 
-`bossFillPercent` 的**结构校验只判「是不是有限数字」**，与 `ratio` 同一姿态；值域夹紧交给 core（见 5.3）。理由是 `sessionStore` 那一层的职责是「这份 JSON 能不能信」，不是业务规则。
+`bossFillPercent` 的**结构校验只判「是不是有限数字」**，与 `ratio` 同一姿态；值域夹紧交给 core（见 5.3）。理由是 `sessionStore` 那一层的职责是「这份 JSON 能不能信」，不是业务规则。**所以「夹紧」这件事必须在消费点上真的做掉**：启动读回这个值时就要过一遍 `clampBossFillPercent`（见第 6 节），否则一个有限的越界值（手改出来的 `500`）会直接进 React 状态、再照原样写回磁盘——`fillCharsFor` 内部虽然也夹，但设置里显示的和存盘的会是 500。
 
 ### 4.2 快捷键新增三条
 
@@ -104,7 +104,7 @@ revealTo(n: number): void
 export const BOSS_FILL_MIN = 0
 export const BOSS_FILL_MAX = 100
 export const BOSS_FILL_STEP = 10
-/** 一屏约多少字。约数，用户按 +/− 校准。 */
+/** 一页约多少字。约数，用户按 +/− 校准。 */
 export const CHARS_PER_SHEET = 1330
 
 export function clampBossFillPercent(n: number): number
@@ -116,9 +116,13 @@ export function fillCharsFor(percent: number): number               // → 给 r
 
 > 纸张宽 794px，左右 padding 各 84px → 正文宽 626px；字号 15px → 约 41.7 字/行。
 > `min-height` 1080px，上下 padding 72 / 96px → 正文区 912px；行高 1.9 × 15px = 28.5px → 32 行。
-> 32 × 41.7 ≈ 1335，取 1330（略保守——宁可少铺一点，也不要溢出一屏）。
+> 32 × 41.7 ≈ 1334，取 1330 —— 恰好铺满一整张纸（72 + 912 + 96 = 1080，纸不会长高）。
 
 它的性质与 `RENDER_WINDOW_LIMIT` 同类：**一个写在 core 里的经验常量**。字号、纸张尺寸、行高任何一个改了它都会失准，所以要可调——这正是 `+/−` 那两条键存在的理由。
+
+**量的是「一页」，不是「一屏」——这两个数差得不小，别混。** 可见区比一页矮：`.wt-canvas` 的可见高度实测 667px，减掉它自己的上下 padding（28 / 56）只剩约 583px ≈ 20 行 ≈ 850 字。所以 100% 时纸的上边沿落在视野之外，画面是一整窗连续的字——那正是老板键要的样子（像「你正在一份文档中间」，而不是「光标正好停在页首」）。想让纸的上边沿露出来，往 65% 以下调。
+
+由此还有一条：**65% 以上，按键带来的画面变化只是「字往上滑」**——所以 5.4 那条 toast 不是装饰，它是唯一能告诉用户「这一下按到了」的反馈。
 
 ### 5.4 `+` / `−` 的行为
 
@@ -140,8 +144,11 @@ bossMode: boolean        // 显示哪一份（新，纯内存）
 显示层只认一个「当前」：
 
 ```
-const shownNovel  = bossMode ? workNovel  : novel
-const shownEngine = bossMode ? workEngine : engine
+// bossActive 而不是裸的 bossMode：工作文档可能读不出来（文件被移走）或还没导入，
+// 那时若只看 bossMode，页面会变成一片空白。多这一层，「想切过去」与「切得过去」就分开了。
+const bossActive   = bossMode && workNovel !== null && workEngine !== null
+const shownNovel   = bossActive ? workNovel  : novel
+const shownEngine  = bossActive ? workEngine : engine
 ```
 
 `useTypingEngine(shownEngine)`、`InputCapture` 的目标、`Page` / `ChapterList` / `StatusBar` 的 props 全部改读这一对。**「老板模式下打字照样抽字」就是靠这一行落地的**，不需要额外逻辑。
