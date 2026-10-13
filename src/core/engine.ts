@@ -203,6 +203,33 @@ export class TypingEngine {
   }
 
   /**
+   * 把阅读光标直接设到 `n`，夹紧到 `[revealStart, total]`。**可增可减。**
+   *
+   * 老板键的「铺满」用它：切到工作文档时一次把设定好的那些字铺出来；按 +/- 调铺满量时又用它
+   * 重铺（那一处是全项目唯一会**往回退**的调用点——`pump` / `backspace` 各自都只会朝一个
+   * 方向走）。
+   *
+   * 【为什么走 commit 而不是自己改 `_state.cursor`】`commit` 是「统一收尾规则」的唯一实现：
+   * 它会补上被整章越过的那些章，并把 `chapterPos[新章]` 同步成章内偏移。绕开它自己设游标，
+   * 跳章后的侧栏高亮与 `chapterPos` 就会与游标脱节——而那种脱节不会抛错，只会表现为
+   * 「进度莫名其妙不对」。
+   *
+   * 【下界为什么是 revealStart 而不是 0】与 `backspace` 同一个理由：阅读区显示的是
+   * `flatText.slice(revealStart, cursor)`，游标退到窗口起点之前，阅读区就永久空白了。
+   *
+   * 【非有限值必须在这里挡掉】`Math.min(NaN, total)` 与 `Math.max(revealStart, NaN)` 都返回
+   * NaN，一路传进 commit 之后游标就是 NaN——`visibleText` 变空串、状态栏百分比变 NaN%，
+   * 而且**再也恢复不了**（此后每一次 pump 都在 NaN 上算）。这不是理论风险：调用方拿的是
+   * 「设置文件里的一个数字」。
+   */
+  revealTo(n: number): void {
+    if (!Number.isFinite(n)) return
+    const next = Math.max(this._state.revealStart, Math.min(n, this._novel.flatText.length))
+    if (next === this._state.cursor) return
+    this.commit(next)
+  }
+
+  /**
    * 跳转到第 i 章，并回填该章上次的阅读进度。
    *
    * 【本方法刻意不走 commit（统一收尾规则）】，而是直接写 activeChapter = i。

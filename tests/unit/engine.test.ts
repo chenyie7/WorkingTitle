@@ -506,3 +506,56 @@ describe('随机序列下的不变量（播种，确定性）', () => {
     expect(violations).toEqual([])
   })
 })
+
+describe('revealTo', () => {
+  it('把光标设到指定位置，可增可减', () => {
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(5)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(0, 5))
+    // 【可减是刻意的】按 +/- 调铺满量时要把已经铺出来的字收回去
+    e.revealTo(3)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(0, 3))
+  })
+
+  it('夹紧到 [0, 全文长度]', () => {
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(-10)
+    expect(e.visibleText).toBe('')
+    e.revealTo(99999)
+    expect(e.visibleText).toBe(e.novel.flatText)
+  })
+
+  it('非有限值是无操作，不会把游标写成 NaN', () => {
+    // 【这条是承重的】Math.min(NaN, total) 与 Math.max(revealStart, NaN) 都返回 NaN，
+    // 一路传到 commit 之后游标就成了 NaN——visibleText 变成空串、
+    // 状态栏百分比变成 NaN%，而且再也恢复不了（后面每次 pump 都在 NaN 上算）。
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(5)
+    e.revealTo(Number.NaN)
+    e.revealTo(Number.POSITIVE_INFINITY)
+    expect(e.getSnapshot().cursor).toBe(5)
+    expect(Number.isFinite(e.getSnapshot().cursor)).toBe(true)
+  })
+
+  it('走的是 commit，所以 chapterPos 与 activeChapter 跟着更新', () => {
+    // 与 pump / backspace 共用同一条「统一收尾规则」：越过整章要把那些章标成读完
+    const e = new TypingEngine(makeNovel())
+    const second = e.novel.chapters[1]
+    e.revealTo(second.start + 1)
+    const s = e.getSnapshot()
+    expect(s.activeChapter).toBe(1)
+    expect(s.chapterPos[1]).toBe(1)
+    // 第一章被整个越过 → 标成已读完
+    expect(s.chapterPos[0]).toBe(e.novel.chapters[0].charCount)
+  })
+
+  it('光标没变时不 emit', () => {
+    const e = new TypingEngine(makeNovel())
+    const spy = vi.fn()
+    e.subscribe(spy)
+    e.revealTo(5)
+    expect(spy).toHaveBeenCalledTimes(1)
+    e.revealTo(5)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+})
