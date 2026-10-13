@@ -410,6 +410,11 @@ export default function App() {
           // 就已经返回了。实测（探针＝把 loadWorkDoc 的桩拖成一个 50ms 的宏任务）：延迟之后比值
           // 就对上了——所以这不是「值算错了」而是**竞态**，真实 IPC 的耗时碰巧总让 React 先渲染完，
           // 于是它只在单测里显形。刚读回来的这个值没有这个问题，语义与「拿全局比例当初值」一致。
+          //
+          // 【别为了「两处看起来一致」把这里换回 ref】`openNovel` 必须读 ref，是因为它闭包里
+          // 那个 `globalRatio` 是**首次渲染**时的旧值（它的依赖只有 `flushSession`，见
+          // `globalRatioRef` 那段说明）；而 boot 里 `settings` 就在手边，压根不存在那个问题。
+          // 同一个写法在两个不同前提下会变成教条——这里要的是「当前值」，那里要的是「绕开闭包」。
           setWorkEngine(new TypingEngine(doc, { ratio: settings.ratio }))
         } else {
           // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
