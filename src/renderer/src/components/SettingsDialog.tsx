@@ -54,7 +54,12 @@ export interface SettingsDialogProps {
   /** 外观偏好：跟随系统 / 浅色 / 深色 */
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
-  /** 有没有打开小说：「当前书」的比例框据此禁用——没有书就没有「当前书」 */
+  /**
+   * 有没有打开文档：「当前书」的比例框据此禁用——没有文档就没有「当前书」。
+   *
+   * 【措辞刻意是「文档」不是「小说」】Task 7 起这一格描述的是**当前显示的那一份**，
+   * 而老板模式下屏幕上摊着的是一份工作文档。判据也早已是 `shownNovel !== null`。
+   */
   novelOpen: boolean
   /**
    * 用户改过的那些快捷键——**稀疏表**：缺条目就是「用该平台的默认值」。
@@ -79,6 +84,13 @@ export interface SettingsDialogProps {
    * 用户在设置里按下组合键的那一刻文件选择框就弹出来了。
    */
   onRecordingChange: (recording: boolean) => void
+  /** 工作文档的文件名（去扩展名）。`null` = 没导入。 */
+  workDocTitle: string | null
+  /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）。设置里据此标红。 */
+  workDocBroken: boolean
+  /** 立即动作，与 onImport / onClearSession 同类——**不走「草稿 + 保存」那一套**。 */
+  onImportWorkDoc: () => void
+  onRemoveWorkDoc: () => void
 }
 
 const THEME_OPTIONS = [
@@ -111,7 +123,11 @@ export function SettingsDialog({
   shortcuts,
   platform,
   onShortcutsChange,
-  onRecordingChange
+  onRecordingChange,
+  workDocTitle,
+  workDocBroken,
+  onImportWorkDoc,
+  onRemoveWorkDoc
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()
@@ -434,9 +450,9 @@ export function SettingsDialog({
                 <input
                   className="wt-ratio__input"
                   data-testid="ratio-input"
-                  aria-label="当前书比例：输入 1 个字显示小说多少字"
+                  aria-label="当前书比例：输入 1 个字显示文档多少字"
                   inputMode="numeric"
-                  // 没有书就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
+                  // 没有文档就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
                   disabled={!novelOpen}
                   value={drafts['ratio'] ?? String(ratio)}
                   onChange={(e) => setDraft('ratio', e.target.value)}
@@ -446,7 +462,7 @@ export function SettingsDialog({
                   }}
                 />
                 <span className="wt-ratio__label">字</span>
-                {!novelOpen && <span className="wt-ratio__note">未打开小说</span>}
+                {!novelOpen && <span className="wt-ratio__note">未打开文档</span>}
               </div>
             </div>
           </div>
@@ -586,6 +602,47 @@ export function SettingsDialog({
               <IconClear className="wt-btn__icon" />
               清除阅读记录
             </button>
+          </div>
+
+          <div className="wt-modal__row">
+            <span className="wt-modal__label">
+              <IconDocument className="wt-modal__label-icon" />
+              工作文档
+            </span>
+            {/*
+              按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
+              外部动作，做成「选了文件还得再点保存」很别扭。
+            */}
+            <span
+              className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
+              data-testid="work-doc-status"
+            >
+              {workDocBroken
+                ? `⚠ ${workDocTitle ?? ''} 读不出来了`
+                : (workDocTitle ?? '未导入')}
+            </span>
+            <button
+              type="button"
+              className="wt-btn"
+              data-testid="btn-import-work-doc"
+              title="导入工作文档（txt / md）"
+              onClick={() => onImportWorkDoc()}
+            >
+              <IconImport className="wt-btn__icon" />
+              导入工作文档
+            </button>
+            {workDocTitle !== null && (
+              <button
+                type="button"
+                className="wt-btn"
+                data-testid="btn-remove-work-doc"
+                title="移除工作文档"
+                onClick={() => onRemoveWorkDoc()}
+              >
+                <IconClear className="wt-btn__icon" />
+                移除
+              </button>
+            )}
           </div>
         </div>
 

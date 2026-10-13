@@ -1205,6 +1205,8 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
  */
 const ignoreShortcutsChange = (): void => {}
 const ignoreRecordingChange = (): void => {}
+/** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
+const ignoreAction = (): void => {}
 
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
@@ -1237,6 +1239,10 @@ export function Ribbon({
   platform = hostPlatform(),
   onShortcutsChange = ignoreShortcutsChange,
   onRecordingChange = ignoreRecordingChange,
+  workDocTitle = null,
+  workDocBroken = false,
+  onImportWorkDoc = ignoreAction,
+  onRemoveWorkDoc = ignoreAction,
   settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
@@ -1253,7 +1259,12 @@ export function Ribbon({
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
-  /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
+  /**
+   * 有没有打开文档。设置里「当前书」的比例框据此禁用——没有文档就没有「当前书」。
+   *
+   * 【措辞是「文档」不是「小说」】它由 `App` 传 `shownNovel !== null`：老板模式下屏幕上
+   * 摊着的是一份工作文档，那时这个框照样该能用。
+   */
   novelOpen: boolean
   /**
    * 设置对话框开不开。**从 Task 6 起由调用方持有**：原先这个状态住在本组件内部，而
@@ -1271,6 +1282,14 @@ export function Ribbon({
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   onRecordingChange?: (recording: boolean) => void
+  /**
+   * 工作文档那一组。与上面四个同属「可选带默认值」——`App` 是唯一的真调用方，
+   * 而既有测试不必为了这一组改动。不传＝「没导入、也没坏、点了没反应」。
+   */
+  workDocTitle?: string | null
+  workDocBroken?: boolean
+  onImportWorkDoc?: () => void
+  onRemoveWorkDoc?: () => void
   /**
    * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
    * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
@@ -1332,6 +1351,10 @@ export function Ribbon({
         platform={platform}
         onShortcutsChange={onShortcutsChange}
         onRecordingChange={onRecordingChange}
+        workDocTitle={workDocTitle}
+        workDocBroken={workDocBroken}
+        onImportWorkDoc={onImportWorkDoc}
+        onRemoveWorkDoc={onRemoveWorkDoc}
       />
     </div>
   )

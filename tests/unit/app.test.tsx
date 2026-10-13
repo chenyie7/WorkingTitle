@@ -1113,4 +1113,43 @@ describe('老板键', () => {
     const input = screen.getByTestId('doc-title-input') as HTMLInputElement
     expect(input.value).toBe('文档1')
   })
+
+  it('老板模式下只配了工作文档、没开小说时，「当前书」比例框仍然可用', async () => {
+    const doc = makeWorkDoc()
+    installApi(null, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    openSettings()
+    // 【这条钉的是 novelOpen】Task 7 把它改成 shownNovel !== null。屏幕上摊着的是工作
+    // 文档，所以那个框不该被禁用——改回 `novel !== null` 的话这里会红。
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).disabled).toBe(false)
+    expect(screen.queryByText('未打开文档')).toBeNull()
+  })
+})
+
+describe('设置里的工作文档', () => {
+  /**
+   * 【这条走的是启动时那一行 `setWorkDocBroken(true)`，组件层那条够不到它】
+   *
+   * `settings.test.tsx` 里那条同义用例直接把 `workDocBroken={true}` 传进壳，守的是组件层；
+   * 而「启动时读不出来 → 那个 prop 真的被置位」这一段在本次改动之前**一条断言都没有**——
+   * 实测：把 App 里那句 `setWorkDocBroken(true)` 改成 `false`，全套用例照样全绿。
+   */
+  it('配了路径但读不出来：那行说的是「读不出来」，而不是「未导入」', async () => {
+    installApi(null, null, { ...defaultSettings(), workDocPath: '/tmp/绝对不存在.txt' }, null)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    openSettings()
+    const status = screen.getByTestId('work-doc-status')
+    expect(status.textContent).toContain('读不出来')
+    // 前提自检：那一行不是碰巧两种文案都带——没坏的话它就是「未导入」
+    expect(status.textContent).not.toContain('未导入')
+  })
 })

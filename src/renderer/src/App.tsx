@@ -115,7 +115,8 @@ export default function App() {
    * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
    *
    * 【两个 setter 现在都有调用方了】`setBossFillPercent` 在 `adjustBossFill` 与启动读盘两处；
-   * `setWorkDocPath` 仍只有启动读盘那一处，它的入口在「设置里的工作文档」那一步接上。
+   * `setWorkDocPath` 在 `handleImportWorkDoc` / `handleRemoveWorkDoc` 与启动读盘三处
+   * ——「设置里的工作文档」那一步已经接上了。
    */
   const [workDocPath, setWorkDocPath] = useState<string | null>(null)
   const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
@@ -316,6 +317,36 @@ export default function App() {
     setLastSourcePath(null)
     await api.clearSession()
   }, [])
+
+  /**
+   * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
+   *
+   * 【为什么同时 setBossMode(false)】工作文档在启动时可能读不出来（那时 `bossMode` 仍是
+   * 上一次留下的值），此时导入一份新的，`bossActive` 会立刻变真、界面自己跳进老板模式。
+   * 导入这个动作本身不该改变你正在看什么。
+   */
+  const handleImportWorkDoc = useCallback(async (): Promise<void> => {
+    const api = getApi()
+    if (!api) return
+    const doc = await api.importWorkDoc()
+    if (!doc) return
+    setWorkNovel(doc)
+    setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+    // 路径就在 Novel 里，不必让 IPC 多返回一个值
+    setWorkDocPath(doc.sourcePath)
+    setWorkDocBroken(false)
+    setBossMode(false)
+    notify('已导入工作文档')
+  }, [notify])
+
+  const handleRemoveWorkDoc = useCallback((): void => {
+    setWorkNovel(null)
+    setWorkEngine(null)
+    setWorkDocPath(null)
+    setWorkDocBroken(false)
+    setBossMode(false)
+    notify('已移除工作文档')
+  }, [notify])
 
   /**
    * 老板键：切到工作文档 / 切回小说。
@@ -679,6 +710,10 @@ export default function App() {
           platform={platform}
           onShortcutsChange={setShortcuts}
           onRecordingChange={setRecording}
+          workDocTitle={workNovel?.title ?? null}
+          workDocBroken={workDocBroken}
+          onImportWorkDoc={() => void handleImportWorkDoc()}
+          onRemoveWorkDoc={handleRemoveWorkDoc}
           settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 

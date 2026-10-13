@@ -37,6 +37,12 @@ interface SetupOptions {
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
+  /** 工作文档的文件名（去扩展名）。不传＝没导入 */
+  workDocTitle?: string | null
+  /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）——设置里据此标红 */
+  workDocBroken?: boolean
+  onImportWorkDoc?: () => void
+  onRemoveWorkDoc?: () => void
 }
 
 function setup(opts: SetupOptions = {}): {
@@ -59,6 +65,12 @@ function setup(opts: SetupOptions = {}): {
     shortcuts = resolveShortcuts({}, 'other'),
     platform = 'win32',
     onShortcutsChange = vi.fn(),
+    // 工作文档那四个：默认「没导入、也没坏」。**必须在这里解构出来**，否则它们会被下面
+    // 那个 `...provider` 带进 `ToolbarProvider`（那是个类型错，且错在离用例很远的地方）。
+    workDocTitle = null,
+    workDocBroken = false,
+    onImportWorkDoc = vi.fn(),
+    onRemoveWorkDoc = vi.fn(),
     ...provider
   } = opts
 
@@ -123,6 +135,10 @@ function setup(opts: SetupOptions = {}): {
           platform={platform}
           onShortcutsChange={onShortcutsChange}
           onRecordingChange={reportRecording}
+          workDocTitle={workDocTitle}
+          workDocBroken={workDocBroken}
+          onImportWorkDoc={onImportWorkDoc}
+          onRemoveWorkDoc={onRemoveWorkDoc}
         />
         {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
         <Toast />
@@ -180,6 +196,10 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           novelOpen
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
+          workDocTitle={null}
+          workDocBroken={false}
+          onImportWorkDoc={() => {}}
+          onRemoveWorkDoc={() => {}}
         />
         <Toast />
       </ToolbarProvider>
@@ -903,5 +923,44 @@ describe('ToolbarProvider 的 toast 可以受控', () => {
     )
     // `??` 版这里显示残留的「来自里面」；`!== undefined` 版显示「（无）」
     expect(screen.getByTestId('probe').textContent).toBe('（无）')
+  })
+})
+
+describe('设置里的工作文档', () => {
+  it('没导入时显示「未导入」，且没有「移除」按钮', () => {
+    setup({})
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
+    expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
+  })
+
+  it('导入后显示文件名，并出现「移除」按钮', () => {
+    setup({ workDocTitle: '季度汇报' })
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('季度汇报')
+    expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
+  })
+
+  it('源文件读不出来时标红', () => {
+    setup({ workDocTitle: '季度汇报', workDocBroken: true })
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('读不出来')
+  })
+
+  it('点导入/移除会调到对应的回调——它们是立即动作，不走「保存」', () => {
+    const onImportWorkDoc = vi.fn()
+    const onRemoveWorkDoc = vi.fn()
+    setup({ workDocTitle: '季度汇报', onImportWorkDoc, onRemoveWorkDoc })
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    expect(onImportWorkDoc).toHaveBeenCalledTimes(1)
+    // 【这条钉的是「立即」】导入/移除刻意与「导入小说」「清除阅读记录」同类，
+    // 不是草稿字段——文件选择框是外部动作，做成「选了文件还得再点保存」很别扭
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
+    expect(onRemoveWorkDoc).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('settings-save')).toBeNull()
   })
 })
