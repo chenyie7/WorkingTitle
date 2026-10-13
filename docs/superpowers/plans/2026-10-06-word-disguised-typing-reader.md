@@ -5166,9 +5166,9 @@ export function openNovel(filePath: string): Novel {
 }
 
 /**
- * 读一份**工作文档**。
+ * 读一份**工作文档**。**只管读，不判空**。
  *
- * 【与 `openNovel` 的三处不同，每一处都是有意的】
+ * 【与 `openNovel` 的两处不同，每一处都是有意的】
  *
  * 1. **不写小说缓存**。缓存是单槽的（`novel-cache.json` + `novel-cache.txt` 共用一份），
  *    工作文档占了它，小说每次启动都要重解码一遍（9MB 那本是秒级）。工作文档是小文本，
@@ -5177,13 +5177,17 @@ export function openNovel(filePath: string): Novel {
  *    渲染层据此在设置里标红并给一句提示，而不是把那次 `invoke` 打成 rejection。
  *    （「解不出编码」今天传不到这里：`decodeBuffer` 是全域的，自带 catch、空缓冲也短路；
  *    留在 catch 里只是兜底。）
- * 3. **空文本判为不可用**。一份空文档放进来的话，老板键切过去是一片空白，等于没有。
+ *
+ * 【空文本这一条为什么从这里挪走了】它原先也在这里判，于是「对话框取消」与「选了个空文件」
+ * 在渲染层是**同一个 null**，`if (!doc) return` 只能沉默——用户选了个空 txt，屏幕上什么都
+ * 不发生，而设计 §9 承诺的是「当场拒绝 + toast」。两者必须分得开，判空因此各归各路：
+ * **boot 那条路当「读不出来」**（`wt:load-work-doc` 里判，切过去一片空白等于没有），
+ * **import 那条路把空 Novel 原样返回**，由渲染层出声并拒绝。**别看到两处判空就以为是重复。**
  */
 function loadWorkDoc(filePath: string): Novel | null {
   if (typeof filePath !== 'string') return null
   try {
-    const novel = loadNovelFromFile(filePath)
-    return novel.flatText.length === 0 ? null : novel
+    return loadNovelFromFile(filePath)
   } catch (err) {
     console.warn('[wt] 读取工作文档失败：', filePath, err)
     return null
@@ -5231,10 +5235,17 @@ export function registerIpc(deps: IpcDeps): void {
     // 骨架与上面 import-novel 那个逐字相同，改一处要改两处（理由见那处的注释）。
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
+    // **空 Novel 原样返回**（不判空）：返回 null 会与「取消」撞成同一个值，渲染层就没法
+    // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
     return loadWorkDoc(result.filePaths[0])
   })
 
-  ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => loadWorkDoc(filePath))
+  // 启动这条路**判空**：空文档在这里等同于「读不出来」，落到 `workDocBroken`（设置里标红、
+  // 老板键给一句说明）。import 那条路刻意不判——理由见上面 `loadWorkDoc` 的说明。
+  ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => {
+    const novel = loadWorkDoc(filePath)
+    return novel && novel.flatText.length > 0 ? novel : null
+  })
 
   ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
 
@@ -8960,6 +8971,7 @@ export function Ribbon({
   onShortcutsChange = ignoreShortcutsChange,
   onRecordingChange = ignoreRecordingChange,
   workDocTitle = null,
+  workDocPath = null,
   workDocBroken = false,
   onImportWorkDoc = ignoreAction,
   onRemoveWorkDoc = ignoreAction,
@@ -9007,6 +9019,8 @@ export function Ribbon({
    * 而既有测试不必为了这一组改动。不传＝「没导入、也没坏、点了没反应」。
    */
   workDocTitle?: string | null
+  /** 只用于那行的悬停提示（设计 §8）。与 `workDocTitle` 分开：坏掉那一路只有路径还在。 */
+  workDocPath?: string | null
   workDocBroken?: boolean
   onImportWorkDoc?: () => void
   onRemoveWorkDoc?: () => void
@@ -9072,6 +9086,7 @@ export function Ribbon({
         onShortcutsChange={onShortcutsChange}
         onRecordingChange={onRecordingChange}
         workDocTitle={workDocTitle}
+        workDocPath={workDocPath}
         workDocBroken={workDocBroken}
         onImportWorkDoc={onImportWorkDoc}
         onRemoveWorkDoc={onRemoveWorkDoc}
@@ -11190,7 +11205,22 @@ export default function App() {
     const api = getApi()
     if (!api) return
     const doc = await api.importWorkDoc()
+    // null ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
     if (!doc) return
+    /**
+     * **空文件在这里出声并拒绝**（设计 §9：「当场拒绝 + toast，设置不变」）。
+     *
+     * 【为什么判断在渲染层、而不是让 IPC 返回 null】`main` 侧那条 `loadWorkDoc` **刻意不判空**
+     * ——它要是判了，这里拿到的 null 与「取消」就是同一个值，只能沉默，用户选了个空 txt
+     * 屏幕上什么都不会发生（这正是修之前的行为）。
+     *
+     * 【与 main 侧那处判空不是重复】boot 那条路（`wt:load-work-doc`）**判**：启动时读到空文档
+     * 当「读不出来」，标红、按老板键给说明。两条路的策略不同是有意的，别顺手合并掉一处。
+     */
+    if (doc.flatText.length === 0) {
+      notify('这个文件是空的，换一个')
+      return
+    }
     setWorkNovel(doc)
     setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
     // 路径就在 Novel 里，不必让 IPC 多返回一个值
@@ -11227,7 +11257,19 @@ export default function App() {
     }
     const next = !bossMode
     if (next) workEngine.revealTo(fillCharsFor(bossFillPercentRef.current))
-    // 「展开前文」是阅读区那一边的窗口状态，带过去会让工作文档一进来就是一张长纸
+    /**
+     * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
+     *
+     * 【进入时】不清的话工作文档一进来就是一张长纸（小说那边点开的「展开前文」被带了过来）。
+     * 【出去时】同理：`expanded` 是一个共享值，而老板模式下它基本不会被改动——那条折叠条要
+     * `visibleText` 超过 `RENDER_WINDOW_LIMIT`（30000 字）才渲染，而铺满 100% 也才
+     * `CHARS_PER_SHEET`（1330）字；要在老板模式里把它顶到 30000 得再敲约三千下。所以退出时
+     * 它多半还停在**进老板模式之前**那个值上，带着它回去等于把用户刚离开的阅读位置又翻出来
+     * 一次，方向反了。
+     *
+     * 两个方向共用这一句是刻意的：谁都不该继承对面那一侧的展开态。所以它写在 `if (next)`
+     * 之外——**别把它挪进去**。
+     */
     setExpanded(false)
     setBossMode(next)
   }, [workNovel, workEngine, bossMode, workDocPath, notify])
@@ -11578,6 +11620,7 @@ export default function App() {
           onShortcutsChange={setShortcuts}
           onRecordingChange={setRecording}
           workDocTitle={workNovel?.title ?? null}
+          workDocPath={workDocPath}
           workDocBroken={workDocBroken}
           onImportWorkDoc={() => void handleImportWorkDoc()}
           onRemoveWorkDoc={handleRemoveWorkDoc}
@@ -12890,6 +12933,50 @@ describe('设置里的工作文档', () => {
     })
     await waitFor(() => expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBeNull())
   })
+
+  /**
+   * 【设计 §9 承诺过「导入空文件 → 当场拒绝 + toast，设置不变」】
+   *
+   * 修之前这条规则**零覆盖**，而且做不到「出声」：`main` 侧那句 `flatText.length === 0 ? null`
+   * 让「空文件被拒」与「对话框取消」在渲染层是同一个 `null`，`if (!doc) return` 只能沉默——
+   * 用户选了个空 txt，屏幕上什么都不发生。
+   */
+  it('导入一个空文件：给一条 toast 并且什么都不改（不建引擎、不写路径）', async () => {
+    // 空文本的 Novel：`importWorkDoc` 桩返回它，其余一切照常
+    const empty: Novel = {
+      title: '空的',
+      sourcePath: '/tmp/空的.txt',
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText: '',
+      chapters: []
+    }
+    installApi(makeNovel(), null, defaultSettings(), empty)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: [AppSettings][] }
+    }
+
+    openSettings()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    })
+
+    // 出声了
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('空的'))
+    // 【「设置不变」这一半】路径没被写进去。读最后一次载荷——早先那几发是启动读盘/导入
+    // 小说触发的，拿它们断言等于什么都没测。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath ?? null).toBeNull()
+    // 而且没有建出那一份：状态行仍是「未导入」，也就没有「移除」按钮
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
+    expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
+  })
 })
 ```
 
@@ -13485,6 +13572,14 @@ export interface SettingsDialogProps {
   onRecordingChange: (recording: boolean) => void
   /** 工作文档的文件名（去扩展名）。`null` = 没导入。 */
   workDocTitle: string | null
+  /**
+   * 工作文档的完整路径，只用于那行的 `title` 悬停提示（设计 §8）。
+   *
+   * 【为什么另给一个字段而不是从 `workDocTitle` 推】那是 `Novel.title`（去扩展名的文件名），
+   * 路径推不出来。两个值来源不同、生命周期也不同：坏掉那一路 `workDocTitle` 恒为 null，
+   * 而路径仍在（刻意保留，文件可能只是临时不在）。
+   */
+  workDocPath: string | null
   /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）。设置里据此标红。 */
   workDocBroken: boolean
   /** 立即动作，与 onImport / onClearSession 同类——**不走「草稿 + 保存」那一套**。 */
@@ -13524,6 +13619,7 @@ export function SettingsDialog({
   onShortcutsChange,
   onRecordingChange,
   workDocTitle,
+  workDocPath,
   workDocBroken,
   onImportWorkDoc,
   onRemoveWorkDoc
@@ -14020,6 +14116,9 @@ export function SettingsDialog({
             <span
               className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
               data-testid="work-doc-status"
+              // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
+              // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
+              title={workDocPath ?? undefined}
             >
               {workDocBroken
                 ? workDocTitle === null
@@ -14131,6 +14230,8 @@ interface SetupOptions {
   onRecordingChange?: (recording: boolean) => void
   /** 工作文档的文件名（去扩展名）。不传＝没导入 */
   workDocTitle?: string | null
+  /** 完整路径，只用于那行的悬停提示。不传＝没有 */
+  workDocPath?: string | null
   /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）——设置里据此标红 */
   workDocBroken?: boolean
   onImportWorkDoc?: () => void
@@ -14164,6 +14265,7 @@ function setup(opts: SetupOptions = {}): {
     // 多一个不解构的字段、`tsc --noEmit -p tsconfig.json` 照样 exit 0（跑过）。
     // 失败形态是那个 prop 悄悄传进 provider 然后被忽略，没有任何东西会报。
     workDocTitle = null,
+    workDocPath = null,
     workDocBroken = false,
     onImportWorkDoc = vi.fn(),
     onRemoveWorkDoc = vi.fn(),
@@ -14232,6 +14334,7 @@ function setup(opts: SetupOptions = {}): {
           onShortcutsChange={onShortcutsChange}
           onRecordingChange={reportRecording}
           workDocTitle={workDocTitle}
+          workDocPath={workDocPath}
           workDocBroken={workDocBroken}
           onImportWorkDoc={onImportWorkDoc}
           onRemoveWorkDoc={onRemoveWorkDoc}
@@ -15036,6 +15139,8 @@ describe('设置里的工作文档', () => {
     openViaButton()
     expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
     expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
+    // 没有路径就**不给** title：`title=""` 会渲染一个空的小气泡
+    expect(screen.getByTestId('work-doc-status').getAttribute('title')).toBeNull()
   })
 
   it('导入后显示文件名，并出现「移除」按钮', () => {
@@ -15045,6 +15150,14 @@ describe('设置里的工作文档', () => {
     expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
   })
 
+  it('状态行的 title 是完整路径（那行会按 CSS 截断，长路径看不全）', () => {
+    setup({ workDocTitle: '季度汇报', workDocPath: '/Users/某人/文档/2026Q3/季度汇报.txt' })
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').getAttribute('title')).toBe(
+      '/Users/某人/文档/2026Q3/季度汇报.txt'
+    )
+  })
+
   /**
    * 【夹具为什么是「无名字 + 坏掉」这组】`workDocBroken` 唯一的置位点是 boot 里
    * `loadWorkDoc` 读不出来，而**同一条路上 `workNovel` 必然是 null**——于是 `workDocTitle`
@@ -15052,13 +15165,15 @@ describe('设置里的工作文档', () => {
    * 那个洞盖住：既然永远有名字，「移除」按钮按名字 gate 也永远渲染得出来。
    */
   it('源文件读不出来时标红，并且「移除」按钮仍在（否则那个悬空路径没有入口清掉）', () => {
-    setup({ workDocTitle: null, workDocBroken: true })
+    setup({ workDocTitle: null, workDocPath: '/tmp/被移走的.txt', workDocBroken: true })
     openViaButton()
     const status = screen.getByTestId('work-doc-status')
     expect(status.textContent).toContain('读不出来')
     // 文案里不留一个永远填不上的名字位（曾经渲染成「⚠  读不出来了」，双空格）
     expect(status.textContent).not.toContain('  ')
     expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
+    // 坏掉那一路**路径仍在**（刻意保留：文件可能只是临时不在），所以悬停提示照样给得出
+    expect(status.getAttribute('title')).toBe('/tmp/被移走的.txt')
   })
 
   it('点导入/移除会调到对应的回调——它们是立即动作，不走「保存」', () => {
