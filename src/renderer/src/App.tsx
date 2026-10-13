@@ -17,6 +17,7 @@ import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
 const SAVE_DEBOUNCE_MS = 600
+const TOAST_MS = 1800
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
 const CARET_MARGIN = 24
 
@@ -82,6 +83,8 @@ export default function App() {
    * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
    */
   const [recording, setRecording] = useState(false)
+  /** toast 的当前内容。**归 App 所有**——老板键的提示从这一层的分发器里弹，见设计文档 6.2 节。 */
+  const [toast, setToast] = useState<string | null>(null)
   /**
    * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
    *
@@ -187,6 +190,14 @@ export default function App() {
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
+
+  /** 弹一条 1.8 秒后自动消失的提示。与 ToolbarContext 里原先那个实现逐字一致。 */
+  const notify = useCallback((message: string): void => {
+    setToast(message)
+    window.setTimeout(() => {
+      setToast((current) => (current === message ? null : current))
+    }, TOAST_MS)
+  }, [])
 
   const state = useTypingEngine(engine)
 
@@ -492,9 +503,11 @@ export default function App() {
       onGlobalRatioChange: setGlobalRatio,
       onModeChange: (m: InputMode) => engineRef.current?.setMode(m),
       onImport: () => void handleImport(),
-      onClearSession: () => void handleClearSession()
+      onClearSession: () => void handleClearSession(),
+      toast,
+      notify
     }),
-    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession]
+    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession, toast, notify]
   )
 
   return (

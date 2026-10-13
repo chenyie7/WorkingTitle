@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
-import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
+import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import type { InputMode } from '../../src/core/types'
@@ -836,5 +836,49 @@ describe('设置里的快捷键录制', () => {
 
     unmount()
     expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('ToolbarProvider 的 toast 可以受控', () => {
+  /** 一个只读 toast、只按 notify 的探针，用来从外面观察 provider 用的是哪一份 */
+  function Probe(): ReactElement {
+    const { toast, notify } = useToolbar()
+    return (
+      <button type="button" data-testid="probe" onClick={() => notify('来自里面')}>
+        {toast ?? '（无）'}
+      </button>
+    )
+  }
+
+  it('传了 toast / notify 就用外面那一份', () => {
+    // 【为什么这条重要】老板键的提示（「还没导入工作文档」、铺满档位）是从 App 那一层的
+    // 分发器里弹的，而 notify 原先住在 provider 内部——App 拿不到，那两条提示就没地方去。
+    const notify = vi.fn()
+    render(
+      <ToolbarProvider toast="外面给的" notify={notify}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('外面给的')
+    fireEvent.click(screen.getByTestId('probe'))
+    expect(notify).toHaveBeenCalledWith('来自里面')
+  })
+
+  it('toast 传 null 时不会被内部状态顶掉', () => {
+    // 【这条钉的就是 `!== undefined` 那处判断】写成 `toastProp ?? innerToast` 的话，
+    // null 会被当成「没传」而回落到内部状态——界面上那条提示永远不消失，
+    // 而且下一次 notify 也改不动它。
+    const { rerender } = render(
+      <ToolbarProvider toast="有提示" notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('有提示')
+    rerender(
+      <ToolbarProvider toast={null} notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('（无）')
   })
 })

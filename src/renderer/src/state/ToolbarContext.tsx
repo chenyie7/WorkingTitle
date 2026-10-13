@@ -47,6 +47,15 @@ export interface ToolbarProviderProps {
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
+  /**
+   * toast 的受控入口。**不传就自己持有**——与 `ratio` 那几个同形，让既有测试不必改动。
+   *
+   * 【为什么这两项要能受控】老板键的提示是从 `App` 那一层的快捷键分发器里弹的，而
+   * `notify` 原先住在本 provider 内部、`App` 又在 provider **外面**（它就是渲染
+   * `<ToolbarProvider>` 的那个组件），拿不到 `useToolbar()`。
+   */
+  toast?: string | null
+  notify?: (message: string) => void
 }
 
 export function ToolbarProvider({
@@ -58,11 +67,13 @@ export function ToolbarProvider({
   onGlobalRatioChange,
   onModeChange,
   onImport,
-  onClearSession
+  onClearSession,
+  toast: toastProp,
+  notify: notifyProp
 }: ToolbarProviderProps) {
   const [toggles, setToggles] = useState<Record<string, boolean>>({})
   const [choices, setChoices] = useState<Record<string, string>>({})
-  const [toast, setToast] = useState<string | null>(null)
+  const [innerToast, setInnerToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
   const [innerGlobalRatio, setInnerGlobalRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
@@ -79,12 +90,26 @@ export function ToolbarProvider({
     setChoices((prev) => ({ ...prev, [id]: value }))
   }, [])
 
-  const notify = useCallback((message: string) => {
-    setToast(message)
+  const innerNotify = useCallback((message: string) => {
+    setInnerToast(message)
     window.setTimeout(() => {
-      setToast((current) => (current === message ? null : current))
+      setInnerToast((current) => (current === message ? null : current))
     }, 1800)
   }, [])
+
+  /**
+   * 【`??` 在这里是错的，必须按 `!== undefined` 判】`toast` 的**有效值包含 `null`**
+   * （＝当前没有提示）。用 `toastProp ?? innerToast` 的话，App 一清空 toast，这里会把它
+   * 当成「没传」而回落到内部状态——界面上那条提示永远不消失，而且下一次 notify 也改不动它。
+   *
+   * 【这两行为什么排在 `innerNotify` 之后、而不是与上面 `ratio` 那三行并排】`notifyProp ?? innerNotify`
+   * 在 `notifyProp` 为 `undefined` 时会真的去读 `innerNotify`，而 `const` 声明之前是 TDZ：
+   * 排到它前面，所有「不传 notify」的地方（既有测试全部如此）当场 `ReferenceError`。
+   * 实测：放在 `ratio` 那三行下面，settings.test.tsx 50 条里红 48 条，报的正是
+   * `Cannot access 'innerNotify' before initialization`。
+   */
+  const toast = toastProp !== undefined ? toastProp : innerToast
+  const notify = notifyProp ?? innerNotify
 
   const setRatio = useCallback(
     (n: number) => {
