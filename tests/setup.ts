@@ -19,16 +19,20 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * 与 `openNovel`，`loadSettings` / `initialNovelPath` 在它之外）——而这个良性桩的
  * `initialNovelPath` 恒返回 null，所以 `target` 为空、那个 try 根本进不去，异常不会冒出去。
  *
- * 【这个 `WtApi` 是手写接口，不是 preload 的 `typeof api`——别以为漏一个方法会有人报错】
- * 它来自 `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
+ * 【这个 `WtApi` 是手写接口，不是 preload 的 `typeof api`】它来自
+ * `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
  * `export type WtApi = typeof api` **零引用者**（全仓库搜 `WtApi` 只有它自己的定义处）。
- * 两边没有编译期联系，所以 ①往 preload 加方法**不会**让这里编译不过；②这里少写一个方法
- * 也**不会**有人拦——只有在某个方法**多**出来、而接口里没有时才会红（TS2353 对象字面量的
- * 多余属性检查）。Task 4 就是这么发现的：先给 preload 加了两条通道，`pnpm typecheck`
- * 照旧 exit 0；反过来照计划给本桩加 `importWorkDoc` / `loadWorkDoc`，才当场报
- * `error TS2353: Object literal may only specify known properties`。
- * 换句话说：**补这两行是为了让对象字面量有多余属性可放，不是为了「跟 preload 同步」**，
- * 而接口那两行是这一句的前提。
+ *
+ * 【三份拷贝里只有一份有闸，别记反】同一个 API 形状在仓库里躺着三处：本文件的
+ * `benignApi`（`: WtApi`）、`tests/unit/app.test.tsx` 的 `installApi`（赋给 `unknown`）、
+ * 以及 preload 里那个对象。**本桩两个方向都会红**——多写一个成员报 TS2353（对象字面量的
+ * 多余属性检查），少写一个报 TS2741（缺属性），Task 4 两次都实测过；
+ * `installApi` 因为赋给 `unknown`，两条都不触发；**真正一条闸都没有的，是 preload 与那份
+ * 手写接口之间**——往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是
+ * 那一处，不是这一处。
+ *
+ * 所以补下面那两行不是「给多余属性找个地方放」——它们在这份桩里是**必填**属性；补上是为了
+ * 让本桩继续满足接口，从而让「少写一个就 TS2741」这条闸对之后新增的方法照样有效。
  */
 const benignApi: WtApi = {
   platform: 'darwin',
