@@ -23,6 +23,14 @@ describe('clampBossFillPercent', () => {
     // 落到 0 的话老板键切过去是一片空白——那正是这个功能要避免的画面。
     expect(clampBossFillPercent(Number.NaN)).toBe(BOSS_FILL_MAX)
     expect(clampBossFillPercent(Number.POSITIVE_INFINITY)).toBe(BOSS_FILL_MAX)
+    expect(clampBossFillPercent(Number.NEGATIVE_INFINITY)).toBe(BOSS_FILL_MAX)
+  })
+
+  it('常量本身被钉住', () => {
+    // 【为什么需要这一条】其余断言全是相对量：把 CHARS_PER_SHEET 改成 7，整套用例照样全过
+    // （变异实测）。而它是个对着 page.css 算出来的经验常量，改它必须是件有意识的事
+    // ——`engine.ts` 钉 10 / 500 用的也是这个写法。
+    expect(CHARS_PER_SHEET).toBe(1330)
   })
 })
 
@@ -30,6 +38,7 @@ describe('stepBossFill', () => {
   it('按 BOSS_FILL_STEP 步进', () => {
     expect(stepBossFill(40, 1)).toBe(50)
     expect(stepBossFill(40, -1)).toBe(30)
+    expect(stepBossFill(45, 1)).toBe(55)
   })
 
   it('两端夹住，不循环', () => {
@@ -53,6 +62,10 @@ describe('fillCharsFor', () => {
 
   it('0% 是 0 字——「不铺」是一个合法档位', () => {
     expect(fillCharsFor(0)).toBe(0)
+  })
+
+  it('33%（非整百分比）取整方向', () => {
+    expect(fillCharsFor(33)).toBe(439)
   })
 
   it('同样按 clamp 之后的值算', () => {
