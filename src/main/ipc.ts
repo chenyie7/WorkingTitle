@@ -19,6 +19,29 @@ export function openNovel(filePath: string): Novel {
   return novel
 }
 
+/**
+ * 读一份**工作文档**。
+ *
+ * 【与 `openNovel` 的三处不同，每一处都是有意的】
+ *
+ * 1. **不写小说缓存**。缓存是单槽的（`novel-cache.json` + `novel-cache.txt` 共用一份），
+ *    工作文档占了它，小说每次启动都要重解码一遍（9MB 那本是秒级）。工作文档是小文本，
+ *    每次启动直接读，几十毫秒。
+ * 2. **不抛异常，只返回 null**。文件读不出来（被移走、权限、EISDIR、解不出编码）是一条
+ *    正常路径——渲染层据此在设置里标红并给一句提示，而不是把那次 `invoke` 打成 rejection。
+ * 3. **空文本判为不可用**。一份空文档放进来的话，老板键切过去是一片空白，等于没有。
+ */
+function loadWorkDoc(filePath: string): Novel | null {
+  if (typeof filePath !== 'string') return null
+  try {
+    const novel = loadNovelFromFile(filePath)
+    return novel.flatText.length === 0 ? null : novel
+  } catch (err) {
+    console.warn('[wt] 读取工作文档失败：', filePath, err)
+    return null
+  }
+}
+
 export interface IpcDeps {
   getWindow: () => BrowserWindow | null
   getInitialNovelPath: () => string | null
@@ -42,6 +65,25 @@ export function registerIpc(deps: IpcDeps): void {
     if (result.canceled || result.filePaths.length === 0) return null
     return openNovel(result.filePaths[0])
   })
+
+  ipcMain.handle(CH.importWorkDoc, async (): Promise<Novel | null> => {
+    const win = deps.getWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '导入工作文档',
+      buttonLabel: '导入',
+      // 纯文本优先。docx 刻意不在列表里——那要一整套保真渲染，见设计文档第 3 节。
+      filters: [
+        { name: '文本文件', extensions: ['txt', 'md'] },
+        { name: '所有文件', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return loadWorkDoc(result.filePaths[0])
+  })
+
+  ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => loadWorkDoc(filePath))
 
   ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
 

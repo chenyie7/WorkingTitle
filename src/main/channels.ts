@@ -1,5 +1,7 @@
 export const CH = {
   importNovel: 'wt:import-novel',
+  importWorkDoc: 'wt:import-work-doc',
+  loadWorkDoc: 'wt:load-work-doc',
   openNovelPath: 'wt:open-novel-path',
   loadSession: 'wt:load-session',
   saveSession: 'wt:save-session',
