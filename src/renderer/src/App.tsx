@@ -114,7 +114,8 @@ export default function App() {
    * 时正是这个症状：手改过 settings.json 的人启动一次就被无声冲成空表（见下面那段说明）。
    * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
    *
-   * 两个 setter 眼下没有调用方——入口在「设置里的工作文档」那一步接上。
+   * 【两个 setter 现在都有调用方了】`setBossFillPercent` 在 `adjustBossFill` 与启动读盘两处；
+   * `setWorkDocPath` 仍只有启动读盘那一处，它的入口在「设置里的工作文档」那一步接上。
    */
   const [workDocPath, setWorkDocPath] = useState<string | null>(null)
   const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
@@ -156,7 +157,7 @@ export default function App() {
   const globalRatioRef = useRef(DEFAULT_RATIO)
   globalRatioRef.current = globalRatio
   /**
-   * 最新的铺满量，挂在 ref 上给上面两个动作读。
+   * 最新的铺满量，挂在 ref 上给下面两个动作读。
    *
    * 【为什么不用闭包里的 `bossFillPercent`】那两个动作每次渲染都是新函数（它们要进分发器的
    * actions 对象），直接把 `bossFillPercent` 放进依赖也行——但 `toggleBoss` 同时依赖
@@ -232,8 +233,10 @@ export default function App() {
   /**
    * 当前**显示**的那一份。渲染树里凡是跟着「显示了什么内容」走的地方都读这两个变量。
    *
-   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】工作文档可能读不出来（文件被移走）
-   * 或还没导入。那时 `bossMode` 若为真而工作文档是 null，页面会变成一片空白——用 `bossActive`
+   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】它防的是「`bossMode` 为真、工作
+   * 文档却是 null」——那时页面会变成一片空白。**当下这一条还不可达**：唯一的置位点在
+   * `toggleBoss`，而它在设 `bossMode` 之前就为 null 早返回了。它真正的用处在**「移除工作
+   * 文档」那一步**（Task 8）：那时 `workNovel` 会在 `bossMode` 仍为真时被置空，靠 `bossActive`
    * 把「想切过去」和「切得过去」分开，这一整类情形就自愈了。
    */
   const bossActive = bossMode && workNovel !== null && workEngine !== null
@@ -354,10 +357,9 @@ export default function App() {
       //
       // 【但它退不过 revealStart】`revealTo` 的下界是 `revealStart` 而不是 0（见 Task 2 的
       // 注释与用例）。工作文档这一路 `revealStart` 恒为 0——它的引擎由 `new TypingEngine`
-      // 建出来、从不走 `fromSession`；唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
-      // 章节栏上；老板模式下章节栏由「界面跟随」那一步收起，所以这个例外只在用户手动展开
-      // 侧栏那条细缝时才可能出现：点开细缝、再点一个章节——那时这条「按 −」会静默停在那儿
-      // 不再往下走。
+      // 建出来、从不走 `fromSession`；而**唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
+      // 章节栏上**——老板模式下章节栏能不能点到，是「界面跟随」那一步的口径；一旦它可达，
+      // 这条「按 −」就会静默停在那儿不再往下走。
       // 危害很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
       if (bossActive) workEngine?.revealTo(fillCharsFor(next))
       notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
@@ -400,8 +402,15 @@ export default function App() {
         if (cancelled) return
         if (doc) {
           setWorkNovel(doc)
-          // 与「新导入一本书」同一条路：拿全局比例当初值
-          setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+          // 与「新导入一本书」同一条路：拿全局比例当初值。
+          //
+          // 【这里读的是刚读回来的 `settings.ratio`，不是 `globalRatioRef.current`】两者本该
+          // 同值，但**那个 ref 在这一次 await 之后还是旧的**：写 ref 发生在渲染期，而上面那几行
+          // `setGlobalRatio(settings.ratio)` 排的那次渲染还没提交，`await api.loadWorkDoc(...)`
+          // 就已经返回了。实测（探针＝把 loadWorkDoc 的桩拖成一个 50ms 的宏任务）：延迟之后比值
+          // 就对上了——所以这不是「值算错了」而是**竞态**，真实 IPC 的耗时碰巧总让 React 先渲染完，
+          // 于是它只在单测里显形。刚读回来的这个值没有这个问题，语义与「拿全局比例当初值」一致。
+          setWorkEngine(new TypingEngine(doc, { ratio: settings.ratio }))
         } else {
           // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
           setWorkDocBroken(true)
@@ -510,8 +519,9 @@ export default function App() {
       'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
       'open-settings': () => setSettingsOpen(true),
       'boss-key': toggleBoss,
-      // 【为什么读 ref 而不是闭包里的值】actions 每次渲染都是新对象、分发器把它挂在 ref 上，
-      // 所以身份不稳也没关系；这里用 ref 只是与 toggleBoss 保持同一种写法。
+      // 这两行只是闭包，它们自己**不读 ref**——读 `bossFillPercentRef` 的是 `adjustBossFill`
+      // 内部（理由见那个 ref 声明处）。这里之所以每次渲染换新函数也没关系，是因为 actions
+      // 每次渲染都是新对象、分发器把它整个挂在 ref 上。
       'boss-fill-up': () => adjustBossFill(1),
       'boss-fill-down': () => adjustBossFill(-1)
     }
@@ -622,7 +632,23 @@ export default function App() {
       toast,
       notify
     }),
-    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession, toast, notify]
+    // 【`shownEngine` 必须在这个数组里】上面两个 setter 闭包捕获的是它，而**依赖数组不能
+    // 拿「值变没变」当判别依据**：小说与工作文档的 ratio / mode 默认值相同（都取全局比例、
+    // 都是 'ime'），切模式时这几个依赖可以毫无变化——memo 不重算，setter 就仍指着小说。
+    // 表现是老板模式下改「当前书」比例改的是小说那本（还会被防抖 effect 落进它的会话文件）。
+    //
+    // 【加进来没有额外代价】全仓没有 `React.memo`，切模式那一下本来就整棵树重渲染；而每次
+    // 击键 `shownEngine` 的身份不变，memo 照旧命中。
+    [
+      state?.ratio,
+      state?.mode,
+      globalRatio,
+      shownEngine,
+      handleImport,
+      handleClearSession,
+      toast,
+      notify
+    ]
   )
 
   return (

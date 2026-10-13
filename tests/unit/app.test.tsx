@@ -959,4 +959,107 @@ describe('老板键', () => {
     })
     await waitFor(() => expect(revealedChars()).toBe(fillCharsFor(90)))
   })
+
+  it('设置里的「当前书」比例改的是【当前显示的那一份】', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10)) // 小说的比例是 10
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    // 在老板模式里把比例改成 30（Enter 走的就是保存那条 `handleSave()`，与本文件里
+    // 「改比例后同样的击键抽出更多字」用的是同一个交互）
+    openSettings()
+    const ratioInput = screen.getByTestId('ratio-input')
+    fireEvent.change(ratioInput, { target: { value: '30' } })
+    fireEvent.keyDown(ratioInput, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    // 【判据落在打字上，不落在状态栏上】Task 7 之后老板模式下状态栏那格会被藏起来，
+    // 而「一次击键抽多少」是同一件事的、且不随界面口径变化的观测点。
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 30))
+
+    // 【这一半才是「回归」的判据】切回小说再打一次：小说的比例必须还是 10（10 → 20），
+    // 若 setter 改错了对象，小说已经被设成 30，这里会是 40。
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(20))
+  })
+
+  it('工作文档的起始比例取自【全局】比例，不是写死的 10', async () => {
+    const doc = makeWorkDoc()
+    // 没有小说：这一条只关心工作文档那台引擎的初值从哪来
+    installApi(null, null, { ...defaultSettings(), ratio: 3, workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    // 【为什么这一条分辨得出来】现有夹具的比例都是默认的 10，写死 `10` 与读全局值在它们
+    // 身上同形。全局设成 3 之后，「打一个是 +3」才把两者分开。
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 3))
+  })
+
+  it('老板模式下按 ⌘O 打开一本小说，会回到小说那一份', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    importViaSettings()
+    // 【判据】`openNovel` 里那句 `setBossMode(false)` 是「⌘O 回到小说」的唯一原因：
+    // 少了它，这里仍是老板模式，值会是 FILL_CHARS 而不是 0。
+    await waitFor(() => expect(revealedChars()).toBe(0))
+    // 前提自检：屏幕上确实是**小说**那一份（它有两章，工作文档只有一章）——少了这一句，
+    // 「小说压根没打开」也会让上面那条断言为 0 而假绿。
+    expect(screen.getByTestId('chapter-item-1')).toBeTruthy()
+  })
+
+  it('配了路径但读不出来时，按老板键给的是【读不出来】那句提示', async () => {
+    // 路径配上了、`loadWorkDoc` 却读不出来（文件被移走/删掉）——与「压根没配」那句提示不同
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: '/tmp/绝对不存在.txt' }, null)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toContain('工作文档读不出来了')
+    )
+  })
 })
