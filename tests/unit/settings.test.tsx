@@ -865,9 +865,6 @@ describe('ToolbarProvider 的 toast 可以受控', () => {
   })
 
   it('toast 传 null 时不会被内部状态顶掉', () => {
-    // 【这条钉的就是 `!== undefined` 那处判断】写成 `toastProp ?? innerToast` 的话，
-    // null 会被当成「没传」而回落到内部状态——界面上那条提示永远不消失，
-    // 而且下一次 notify 也改不动它。
     const { rerender } = render(
       <ToolbarProvider toast="有提示" notify={() => {}}>
         <Probe />
@@ -879,6 +876,28 @@ describe('ToolbarProvider 的 toast 可以受控', () => {
         <Probe />
       </ToolbarProvider>
     )
+    expect(screen.getByTestId('probe').textContent).toBe('（无）')
+  })
+
+  it('不受控写过一次之后再切受控传 null，内部那条不许顶上来', () => {
+    // 【为什么非要这一条：上面那条钉不住这个判断】`innerToast` 的初值本来就是 `null`，
+    // `null ?? null` 与 `null` 分不出来。实测：把 `!== undefined` 换成 `??`，本文件 50 条
+    // 与整个仓库 376 条**全绿**——那个变异在仓库里存活。
+    //
+    // 判别场景要先把**不受控**的 provider 往内部状态里写一次，再切到受控。
+    const { rerender } = render(
+      <ToolbarProvider>
+        <Probe />
+      </ToolbarProvider>
+    )
+    // 不受控 → notify 落回 innerNotify → 这一下写进了 innerToast
+    fireEvent.click(screen.getByTestId('probe'))
+    rerender(
+      <ToolbarProvider toast={null} notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    // `??` 版这里显示残留的「来自里面」；`!== undefined` 版显示「（无）」
     expect(screen.getByTestId('probe').textContent).toBe('（无）')
   })
 })

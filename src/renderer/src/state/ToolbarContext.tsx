@@ -105,7 +105,8 @@ export function ToolbarProvider({
    * 【这两行为什么排在 `innerNotify` 之后、而不是与上面 `ratio` 那三行并排】`notifyProp ?? innerNotify`
    * 在 `notifyProp` 为 `undefined` 时会真的去读 `innerNotify`，而 `const` 声明之前是 TDZ：
    * 排到它前面，所有「不传 notify」的地方（既有测试全部如此）当场 `ReferenceError`。
-   * 实测：放在 `ratio` 那三行下面，settings.test.tsx 50 条里红 48 条，报的正是
+   * 实测：放在 `ratio` 那三行下面，settings.test.tsx 51 条里红 49 条（活下来的 2 条都是显式
+   * 传了 `notify` 的——`??` 短路，读不到那个 `const`），报的正是
    * `Cannot access 'innerNotify' before initialization`。
    */
   const toast = toastProp !== undefined ? toastProp : innerToast
