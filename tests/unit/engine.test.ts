@@ -521,6 +521,11 @@ describe('revealTo', () => {
     const e = new TypingEngine(makeNovel())
     e.revealTo(-10)
     expect(e.visibleText).toBe('')
+    // 【为什么单独钉一条】游标是字符下标，不该有小数：3.7 会透传进 toSession 与 slice。
+    // 去掉 Math.round 的话这条是唯一会红的用例。
+    e.revealTo(3.7)
+    expect(e.getSnapshot().cursor).toBe(4)
+    expect(Number.isInteger(e.getSnapshot().cursor)).toBe(true)
     e.revealTo(99999)
     expect(e.visibleText).toBe(e.novel.flatText)
   })
@@ -549,6 +554,11 @@ describe('revealTo', () => {
     e.pump(1)
     expect(e.getSnapshot().cursor).toBe(15)
     expect(Number.isFinite(e.getSnapshot().cursor)).toBe(true)
+
+    // 【Infinity 要单独钉】非有限值有两个入口，只测 NaN 的话，把闸收窄成 `Number.isNaN(n)`
+    // 全套用例照样全绿——而 Infinity 放行会被夹到 total，游标一路走到底。
+    e.revealTo(Number.POSITIVE_INFINITY)
+    expect(e.getSnapshot().cursor).toBe(15)
   })
 
   it('走的是 commit，所以 chapterPos 与 activeChapter 跟着更新', () => {
