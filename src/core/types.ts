@@ -114,8 +114,8 @@ export interface AppSettings {
    * 导入的**工作文档**源文件路径。`null` = 没配。
    *
    * 老板键切过去显示的就是它。它是一本普通的 `Novel`（走同一条 `loadNovelFromFile` 管线），
-   * 只是**不落盘**——不写 novel-cache（缓存是单槽的，让它占了，小说每次启动都要重解码），
-   * 也不写 `sessions/`（老板键每次进入都按铺满量重铺，见设计文档第 5 节）。
+   * 只是**这份 `Novel` 的正文与进度不落盘**——不写 novel-cache（缓存是单槽的，让它占了，
+   * 小说每次启动都要重解码），也不写 `sessions/`（老板键每次进入都按铺满量重铺，见设计文档第 5 节）。
    */
   workDocPath: string | null
   /**
