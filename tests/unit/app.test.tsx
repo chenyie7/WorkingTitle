@@ -932,4 +932,31 @@ describe('老板键', () => {
     expect(saveSession.mock.calls.length).toBe(before + 1)
     expect(saveSession.mock.calls[before][0].sourcePath).toBe(novel.sourcePath)
   })
+
+  it('铺满 +/-：到端点只提示，在端点内则当场重铺', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    // 已经在 100%：按 + 是空转，只留一句提示，正文一个字都不动
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowUp', key: 'ArrowUp', metaKey: true, shiftKey: true })
+    })
+    expect(screen.getByTestId('toast').textContent).toContain('铺满已是 100%')
+    expect(revealedChars()).toBe(FILL_CHARS)
+
+    // 100% → 90%：钉的是「改设置的同时立刻重铺」（adjustBossFill 里那个 bossActive 分支）
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(fillCharsFor(90)))
+  })
 })
