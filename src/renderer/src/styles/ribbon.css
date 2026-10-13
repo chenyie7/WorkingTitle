@@ -603,9 +603,11 @@
   white-space: nowrap;
 }
 
-/* 源文件读不出来。用文字而不是只靠颜色——色觉差异之下「⚠」还在 */
+/* 源文件读不出来。用文字而不是只靠颜色——色觉差异之下「⚠」还在。
+   颜色走令牌：浅/深两档在 word.css 里，深色下那一档是提亮过的
+   （浅色那版压在深色面板上只有 2.8:1，12px 下低于 AA）。 */
 .wt-workdoc__status--broken {
-  color: #c0392b;
+  color: var(--wt-danger);
 }
 
 .wt-modal__text {

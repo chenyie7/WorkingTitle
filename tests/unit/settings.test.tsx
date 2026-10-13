@@ -66,7 +66,11 @@ function setup(opts: SetupOptions = {}): {
     platform = 'win32',
     onShortcutsChange = vi.fn(),
     // 工作文档那四个：默认「没导入、也没坏」。**必须在这里解构出来**，否则它们会被下面
-    // 那个 `...provider` 带进 `ToolbarProvider`（那是个类型错，且错在离用例很远的地方）。
+    // 那个 `...provider` 带进 `ToolbarProvider`。
+    //
+    // 【那不是类型错——实测过：它是**静默**的】被 spread 的变量不触发多余属性检查：
+    // 多一个不解构的字段、`tsc --noEmit -p tsconfig.json` 照样 exit 0（跑过）。
+    // 失败形态是那个 prop 悄悄传进 provider 然后被忽略，没有任何东西会报。
     workDocTitle = null,
     workDocBroken = false,
     onImportWorkDoc = vi.fn(),
@@ -949,10 +953,20 @@ describe('设置里的工作文档', () => {
     expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
   })
 
-  it('源文件读不出来时标红', () => {
-    setup({ workDocTitle: '季度汇报', workDocBroken: true })
+  /**
+   * 【夹具为什么是「无名字 + 坏掉」这组】`workDocBroken` 唯一的置位点是 boot 里
+   * `loadWorkDoc` 读不出来，而**同一条路上 `workNovel` 必然是 null**——于是 `workDocTitle`
+   * 也恒为 null。「有名字 + 坏掉」是 `App` **产生不出来的**组合，用它当夹具正好好把下面
+   * 那个洞盖住：既然永远有名字，「移除」按钮按名字 gate 也永远渲染得出来。
+   */
+  it('源文件读不出来时标红，并且「移除」按钮仍在（否则那个悬空路径没有入口清掉）', () => {
+    setup({ workDocTitle: null, workDocBroken: true })
     openViaButton()
-    expect(screen.getByTestId('work-doc-status').textContent).toContain('读不出来')
+    const status = screen.getByTestId('work-doc-status')
+    expect(status.textContent).toContain('读不出来')
+    // 文案里不留一个永远填不上的名字位（曾经渲染成「⚠  读不出来了」，双空格）
+    expect(status.textContent).not.toContain('  ')
+    expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
   })
 
   it('点导入/移除会调到对应的回调——它们是立即动作，不走「保存」', () => {

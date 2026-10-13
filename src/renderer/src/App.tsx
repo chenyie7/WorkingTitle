@@ -234,11 +234,14 @@ export default function App() {
   /**
    * 当前**显示**的那一份。渲染树里凡是跟着「显示了什么内容」走的地方都读这两个变量。
    *
-   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】它防的是「`bossMode` 为真、工作
-   * 文档却是 null」——那时页面会变成一片空白。**当下这一条还不可达**：唯一的置位点在
-   * `toggleBoss`，而它在设 `bossMode` 之前就为 null 早返回了。它真正的用处在**「移除工作
-   * 文档」那一步**（Task 8）：那时 `workNovel` 会在 `bossMode` 仍为真时被置空，靠 `bossActive`
-   * 把「想切过去」和「切得过去」分开，这一整类情形就自愈了。
+   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】它把「想切过去」与「切得过去」
+   * 分开，防的是「`bossMode` 为真、工作文档却是 null」——那时页面会变成一片空白。
+   *
+   * 【当下它每一帧都与 `bossMode` 相等，这是**防御性**的】两条能置空 `workNovel` 的路
+   * （`handleRemoveWorkDoc`、boot 里读不出来时的那次赋值）都与 `setBossMode(false)` 在
+   * 同一次批处理里，中间没有「`bossMode` 真而 `workNovel` 空」的渲染帧。实测两个 setter
+   * 一起提交的结果是 `[false, false, false]`。留着它是因为这类「两个状态各改各的」将来
+   * 很容易真的分叉——分叉的表现是整页空白，不值得等它发生再修。
    */
   const bossActive = bossMode && workNovel !== null && workEngine !== null
   const shownNovel = bossActive ? workNovel : novel
@@ -321,9 +324,12 @@ export default function App() {
   /**
    * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
    *
-   * 【为什么同时 setBossMode(false)】工作文档在启动时可能读不出来（那时 `bossMode` 仍是
-   * 上一次留下的值），此时导入一份新的，`bossActive` 会立刻变真、界面自己跳进老板模式。
-   * 导入这个动作本身不该改变你正在看什么。
+   * 【为什么同时 setBossMode(false)】它挡的是「**在老板模式开着的时候**导入一份新文档」：
+   * 没有这一行，`bossActive` 会立刻变真、界面自己跳到刚导入的那份上。导入这个动作本身
+   * 不该改变你正在看什么。
+   *
+   * 【别写成「启动时读不出来，bossMode 还留着上次的值」】那句是假的——`bossMode` 是纯渲染层
+   * 的 `useState(false)`，既不进 `AppSettings`、boot 也不恢复它，启动时恒为 false。
    */
   const handleImportWorkDoc = useCallback(async (): Promise<void> => {
     const api = getApi()
@@ -558,8 +564,9 @@ export default function App() {
     actions: {
       import: () => void handleImport(),
       // 【老板模式下不写】收起在那边是**强制覆盖**的（见下面 ChapterList 的 `collapsed`），
-      // 于是这一下屏幕上没有任何反馈；可它会把偏好写进去，退出老板模式那一刻突然生效
-      // ——侧栏反着用户的意展开。没有反馈的写是最难查的一类。
+      // 于是这一下屏幕上没有任何反馈；可它会改掉本次会话里的侧栏状态，退出老板模式那一刻
+      // 突然生效——侧栏反着用户的意展开。没有反馈的写是最难查的一类。
+      // （`sidebarCollapsed` 本身**不落盘**，所以这里说的是「这次会话的界面状态」，不是偏好。）
       'toggle-sidebar': () => {
         if (!bossActive) setSidebarCollapsed((v) => !v)
       },
@@ -730,9 +737,9 @@ export default function App() {
             onJump={(i) => shownEngine?.jumpToChapter(i)}
             collapsed={sidebarCollapsed || bossActive}
             // 【老板模式下不写】`collapsed` 那边是强制覆盖的，所以 rail 按钮在老板模式下
-            // 按下去屏幕上不会有任何变化——而（没有这道闸时）它会把偏好改掉，退出老板模式
-            // 那一刻突然生效。与上面 `toggle-sidebar` 那条**必须同时挡**：只挡一条会留下
-            // 「同样的操作，一个写一个不写」的更糟形态。
+            // 按下去屏幕上不会有任何变化——而（没有这道闸时）它会改掉本次会话里的侧栏状态，
+            // 退出老板模式那一刻突然生效。与上面 `toggle-sidebar` 那条**必须同时挡**：
+            // 只挡一条会留下「同样的操作，一个写一个不写」的更糟形态。
             onCollapsedChange={(v) => {
               if (!bossActive) setSidebarCollapsed(v)
             }}
@@ -760,9 +767,12 @@ export default function App() {
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
-          // 【传的是 `bossActive` 而不是 `bossMode`——两者不是一回事】它管的是「藏掉那三格」，
-          // 而 `bossActive` 才是「屏幕上摊着的确实是工作文档」。用 `bossMode` 的话，移除工作
-          // 文档那一刻（`workNovel` 已空、`bossMode` 仍真）三格会凭空消失而页面回到小说。
+          // 【传的是 `bossActive` 而不是 `bossMode`——两者今天其实同步，这是**防御性**的】
+          // 它管的是「藏掉那三格」，语义上要的是 `bossActive`（屏幕上摊着的确实是工作文档）
+          // 而不是 `bossMode`（想进老板模式）。今天两者在每个提交过的渲染里都相等
+          // ——`handleRemoveWorkDoc` 里那两个 setter 是同一次批处理，中间没有 `bossMode` 为真
+          // 而 `workNovel` 已空的那一帧。将来若「工作文档能在老板模式开着时被置空」成真，
+          // 这一行才真的救场。
           hideReadingCells={bossActive}
         />
 

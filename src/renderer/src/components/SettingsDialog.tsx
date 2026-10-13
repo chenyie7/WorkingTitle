@@ -432,7 +432,7 @@ export function SettingsDialog({
                 <input
                   className="wt-ratio__input"
                   data-testid="global-ratio-input"
-                  aria-label="全局比例：新导入的书，输入 1 个字显示小说多少字"
+                  aria-label="全局比例：新导入的书 / 工作文档，输入 1 个字显示多少字"
                   inputMode="numeric"
                   value={drafts['global-ratio'] ?? String(globalRatio)}
                   onChange={(e) => setDraft('global-ratio', e.target.value)}
@@ -612,13 +612,20 @@ export function SettingsDialog({
             {/*
               按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
               外部动作，做成「选了文件还得再点保存」很别扭。
+
+              【坏掉那一路没有名字可写】`workDocBroken` 只有一个置位点：boot 里 `loadWorkDoc`
+              读不出来。而**同一条路上 `workNovel` 必然是 null**，于是 `workDocTitle` 也恒为
+              null。所以这里不能写成 `⚠ ${workDocTitle ?? ''} 读不出来了`——那会渲染出
+              「⚠  读不出来了」这种一个永远填不上的名字位加双空格。
             */}
             <span
               className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
               data-testid="work-doc-status"
             >
               {workDocBroken
-                ? `⚠ ${workDocTitle ?? ''} 读不出来了`
+                ? workDocTitle === null
+                  ? '⚠ 工作文档读不出来了'
+                  : `⚠ ${workDocTitle} 读不出来了`
                 : (workDocTitle ?? '未导入')}
             </span>
             <button
@@ -631,7 +638,12 @@ export function SettingsDialog({
               <IconImport className="wt-btn__icon" />
               导入工作文档
             </button>
-            {workDocTitle !== null && (
+            {/*
+              【判据为什么是「配了路径」而不是「有名字」】坏掉那一路恒无名字（见上），
+              按名字 gate 的话那个按钮**根本不渲染**——而「文件被移走」正是唯一可达的坏
+              状态，用户于是没有任何入口清掉那个悬空路径，只能靠导入另一份顶掉它。
+            */}
+            {(workDocTitle !== null || workDocBroken) && (
               <button
                 type="button"
                 className="wt-btn"

@@ -1202,4 +1202,47 @@ describe('设置里的工作文档', () => {
     // 前提自检：那一行不是碰巧两种文案都带——没坏的话它就是「未导入」
     expect(status.textContent).not.toContain('未导入')
   })
+
+  /**
+   * 【这条补的是「用户能把一份工作文档导进来」这条核心路径——它此前**零覆盖**】
+   *
+   * 实测：删掉 `handleImportWorkDoc` 里那句 `setWorkDocPath(doc.sourcePath)`，或把
+   * `handleRemoveWorkDoc` 掏到只剩 `setBossMode(false) + notify`，**400 条全绿**。
+   * 而丢了路径写入的后果是静默的：工作文档每次启动都被忘掉。
+   *
+   * 【两个空转来源，都盯着】① 设置是 600ms 防抖落盘的，同步读 `saveSettings` 只会读到
+   * 上一发；所以要 `waitFor` 等它真落盘。② 读**最后一次**调用——早先那几发是别的路径
+   * （导入小说、启动读盘）触发的，拿它们断言等于什么都没测。
+   */
+  it('点「导入工作文档」会把路径写进落盘的设置，点「移除」会把它清掉', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, defaultSettings(), doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: [AppSettings][] }
+    }
+
+    // 前提自检：此刻设置里的路径确实是空的——否则下面那条「写进去了」可能只是启动读盘
+    // 带出来的，与这次点击无关。
+    expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath ?? null).toBeNull()
+
+    // 【openSettings 必须留在 act 外面】testing-library 把 React 的 flush 推到 act 结束，
+    // 与它同一个 act 里的 `getByTestId('btn-import-work-doc')` 会撞上「对话框还没挂载」。
+    openSettings()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    })
+    await waitFor(() =>
+      expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBe(doc.sourcePath)
+    )
+
+    // 「移除」按钮 gate 在 `workDocTitle !== null` 上，导入成功之后它才出现——顺序不能反
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
+    })
+    await waitFor(() => expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBeNull())
+  })
 })
