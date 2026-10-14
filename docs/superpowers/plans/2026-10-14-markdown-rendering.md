@@ -2147,28 +2147,36 @@ git commit -F /tmp/msg.txt
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { measureBlocks } from '../../src/renderer/src/markdown/measure'
+import { createElement } from 'react'
+import { render } from '@testing-library/react'
+import { measureBlocks, BLOCK_END_ATTR } from '../../src/renderer/src/markdown/measure'
+import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
+import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
 
 /**
- * 【怎么在 jsdom 里造出非零高度】jsdom 没有布局，`offsetHeight` 恒为 0。
- * 但它是可写的，`Object.defineProperty` 能给某个元素钉一个假高度——
+ * 【怎么在 jsdom 里造出布局】jsdom 没有布局，`offsetTop` / `offsetHeight` 恒为 0。
+ * 但它们是可写的，`Object.defineProperty` 能给某个元素钉一个假值——
  * 这样「映射逻辑」就能单测，只有「浏览器真的这么算」那一半留给真机。
  */
-function box(height: number): HTMLElement {
+function block(end: string | null, top: number, height = 0): HTMLElement {
   const el = document.createElement('div')
+  if (end !== null) el.setAttribute(BLOCK_END_ATTR, end)
+  Object.defineProperty(el, 'offsetTop', { value: top, configurable: true })
   Object.defineProperty(el, 'offsetHeight', { value: height, configurable: true })
   return el
 }
 
-function container(...heights: number[]): HTMLElement {
+function container(...els: HTMLElement[]): HTMLElement {
   const c = document.createElement('div')
-  for (const h of heights) c.appendChild(box(h))
+  for (const el of els) c.appendChild(el)
   return c
 }
 
 describe('measureBlocks', () => {
-  it('把每个直接子元素的高度与对应的结束偏移配起来', () => {
-    expect(measureBlocks(container(400, 300, 300), [100, 200, 300])).toEqual([
+  it('把每个块的结束偏移与高度配起来，高度取「下一个块的 offsetTop − 这个块的 offsetTop」', () => {
+    // 末块后面没有下一个块，用它自己的 offsetHeight。若改成一律用 offsetHeight，
+    // 前两块量出来会是 0 而不是 400 / 300 —— 中间那段外边距就丢了
+    expect(measureBlocks(container(block('100', 0), block('200', 400), block('300', 700, 300)))).toEqual([
       { end: 100, height: 400 },
       { end: 200, height: 300 },
       { end: 300, height: 300 }
@@ -2177,24 +2185,83 @@ describe('measureBlocks', () => {
 
   it('元素一个都没有：返回 null，不是空数组', () => {
     // 空数组会被上层当成「量到了，只是没有块」，于是切点变成 0、屏幕全白
-    expect(measureBlocks(container(), [])).toBeNull()
-    expect(measureBlocks(null, [100])).toBeNull()
+    expect(measureBlocks(container())).toBeNull()
+    expect(measureBlocks(null)).toBeNull()
   })
 
   it('高度全是 0：这是 jsdom 的常态，返回 null 让上层走兜底', () => {
-    expect(measureBlocks(container(0, 0), [100, 200])).toBeNull()
+    expect(measureBlocks(container(block('100', 0), block('200', 0)))).toBeNull()
   })
 
-  it('元素个数与结束偏移个数对不上：返回 null', () => {
-    // 对不上说明树与 DOM 不同步了，此时硬凑出来的切点是错的，不如退回去按字符数铺
-    expect(measureBlocks(container(400, 300), [100])).toBeNull()
+  it('读不到 data-block-end：返回 null', () => {
+    // 读不到说明这一份不是在渲染时套出来的，硬凑的偏移是错的
+    expect(measureBlocks(container(block(null, 0), block('200', 400)))).toBeNull()
+    expect(measureBlocks(container(block('100', 0), block(null, 400)))).toBeNull()
+  })
+
+  it('偏移不是有限数：返回 null（空串也算——Number("") 是 0，不显式挡就会被当成偏移 0 收下）', () => {
+    expect(measureBlocks(container(block('abc', 0), block('200', 400)))).toBeNull()
+    expect(measureBlocks(container(block('', 0), block('200', 400)))).toBeNull()
   })
 
   it('只要有一个块真的量到了高度，就算量到了', () => {
-    expect(measureBlocks(container(0, 300), [100, 200])).toEqual([
+    expect(measureBlocks(container(block('100', 0), block('200', 0, 300)))).toEqual([
       { end: 100, height: 0 },
       { end: 200, height: 300 }
     ])
+  })
+})
+
+describe('量高度那一份的块数', () => {
+  it('witness：含 definition 与 HTML 注释的文档，包装个数仍等于顶层节点数', () => {
+    const md = '前一段。\n\n[a]: https://example.com\n\n<!-- 注释 -->\n\n后一段。\n'
+    const doc = parseMarkdown(md)
+    expect(doc).not.toBeNull()
+    // 前提自检：这份文档确实含有那两个「渲染不出 Element」的类型，否则这条用例是空转
+    expect(doc!.children.map((n) => n.type)).toEqual(['paragraph', 'definition', 'html', 'paragraph'])
+
+    // 反面对照：可见那一份（不套包装）的直接子元素**比顶层节点少**——`definition` 渲染成
+    // null、注释那段只剩文本子节点，而 `children` 只数 Element。这正是「偏移另算一份」
+    // 会踩的坑：measureBlocks 判「对不上」，整篇静默退回按字符数铺
+    const visible = render(createElement('div', null, renderMarkdown(doc!))).container
+      .firstElementChild as HTMLElement
+    expect(visible.children.length).toBeLessThan(doc!.children.length)
+
+    const { container } = render(
+      createElement('div', { className: 'wt-md-measure' }, renderMarkdown(doc!, { withBlockEnds: true }))
+    )
+    const el = container.querySelector('.wt-md-measure') as HTMLElement
+    expect(el).not.toBeNull()
+    expect(el.children).toHaveLength(doc!.children.length)
+
+    // 每个包装自己带着偏移，正好是那个节点的结束偏移；顺带钉上假布局（definition 那个块
+    // 渲染成空 div，所以它高度为 0，其余三块各 100）
+    const ends = doc!.children.map((n) => n.position?.end.offset ?? '')
+    const tops = [0, 100, 100, 200]
+    Array.from(el.children).forEach((c, i) => {
+      expect(c.getAttribute(BLOCK_END_ATTR)).toBe(String(ends[i]))
+      Object.defineProperty(c, 'offsetTop', { value: tops[i], configurable: true })
+      Object.defineProperty(c, 'offsetHeight', { value: 100, configurable: true })
+    })
+
+    // 四条都读得回来——包括渲染成空的 definition 那条（高度 0，但它在表里，不是被丢掉
+    // 一个 → 对不上 → null）
+    expect(measureBlocks(el)).toEqual([
+      { end: ends[0], height: 100 },
+      { end: ends[1], height: 0 },
+      { end: ends[2], height: 100 },
+      { end: ends[3], height: 100 }
+    ])
+  })
+
+  it('不带 withBlockEnds 时输出不变：可见那一份一个包装都不加', () => {
+    const doc = parseMarkdown('## 标题\n\n段落\n')
+    const holder = render(createElement('div', null, renderMarkdown(doc!))).container
+      .firstElementChild as HTMLElement
+    expect(holder.querySelector('.wt-md-measure-block')).toBeNull()
+    expect(holder.children).toHaveLength(2)
+    expect(holder.children[0].tagName).toBe('H2')
+    expect(holder.children[1].tagName).toBe('P')
   })
 })
 ```
@@ -2213,6 +2280,23 @@ pnpm vitest run tests/unit/markdownMeasure.test.ts
 import type { BlockHeight } from './fill'
 
 /**
+ * 每个顶层块在「量高度用的那一份隐藏副本」里带的结束偏移属性。
+ *
+ * 【为什么偏移写在 DOM 上，而不是另外算一份数组传进来】「有几个块」如果由两处各自决定，
+ * 就永远能对不上——而这里的判据是「对不上就整篇退回按字符数铺」，于是对不上是**静默**的。
+ * 实测能触发它的两种节点：
+ * - `definition`（`[a]: https://example.com`，真 md 里很常见）走 `renderMarkdown` 的
+ *   `default` 分支渲染成 `null`，**零个 Element**；
+ * - 只含注释 / `<script>` 的 HTML 块，`tokenizeHtml` 白名单过滤之后产物只剩文本子节点，
+ *   而 `container.children` **只数 Element、不数文本**。
+ *
+ * 两种都让 DOM 的直接子元素比「块」少一个。现在每个顶层块由
+ * `renderMarkdown(root, { withBlockEnds: true })` 套一层带偏移的包装，一一对应由构造保证。
+ * **渲染与测量共用这一个常量，改名要同步 `toReact.tsx`。**
+ */
+export const BLOCK_END_ATTR = 'data-block-end'
+
+/**
  * 从一个装着「整篇文档」的隐藏容器里，量出每个顶层块的高度。
  *
  * 【为什么返回 `BlockHeight[] | null` 而不是空数组】`null` 的语义是**量不出来**，
@@ -2220,23 +2304,40 @@ import type { BlockHeight } from './fill'
  * 兜底 2），拿到空数组则会算出切点 0、铺出一张白纸。jsdom 里 `offsetHeight` 恒为 0，
  * 所以这条路径在单测里是**常态**而不是异常——`tests/` 跑的就是 jsdom。
  *
- * 【为什么要求个数一一对应】容器的直接子元素就是渲染出来的顶层块，顺序与
- * `ends` 一致。对不上说明 DOM 与语法树不同步（渲染出错、或者有人往容器里塞了别的东西），
- * 此时硬凑出来的偏移是错的，宁可退回兜底路径。
+ * 【高度为什么取「下一个块的 offsetTop − 这个块的 offsetTop」，而不是 `offsetHeight`】
+ * 相邻块之间的**外边距是折叠到包装元素之外的**，`offsetHeight` 量不到那一段。按
+ * `offsetHeight` 累加，一页几十个块会少算几百像素——铺满就成了永远铺不满。末块后面
+ * 没有下一个块，用它自己的 `offsetHeight`。
+ * （前提是所有块共享同一个 `offsetParent`：`.wt-md-measure` 是 `position: absolute`，
+ * 静态子元素的 offsetParent 就是它。换掉那条样式会让这里量出垃圾。）
+ *
+ * 【为什么要求每个块都读得到偏移】读不到说明这一份不是渲染时套出来的（有人往容器里
+ * 塞了别的东西，或者包装被去掉了）。此时硬凑出来的偏移是错的，宁可退回兜底路径。
  *
  * 【为什么是「全是 0 才算量不出来」而不是「有一个是 0 就算」】高度真的可以为 0
- * （分隔线、空段落）。判据取严的那一侧：只要有一个块量到了非零高度，就说明这台
- * 环境是有布局的，那就照实返回。
+ * （分隔线、空段落、`[a]: url` 那种渲染成空的块）。判据取严的那一侧：只要有一个块
+ * 量到了非零高度，就说明这台环境是有布局的，那就照实返回。
  */
-export function measureBlocks(
-  container: HTMLElement | null,
-  ends: readonly number[]
-): BlockHeight[] | null {
+export function measureBlocks(container: HTMLElement | null): BlockHeight[] | null {
   if (!container) return null
   const kids = Array.from(container.children) as HTMLElement[]
-  if (kids.length === 0 || kids.length !== ends.length) return null
-  const heights = kids.map((el) => el.offsetHeight)
+  if (kids.length === 0) return null
+
+  const ends: number[] = []
+  for (const el of kids) {
+    const raw = el.getAttribute(BLOCK_END_ATTR)
+    // 空串要单独挡：`Number('')` 是 0，只判 `Number.isFinite` 会把「没写偏移」当成偏移 0 收下
+    if (raw === null || raw.trim() === '') return null
+    const end = Number(raw)
+    if (!Number.isFinite(end)) return null
+    ends.push(end)
+  }
+
+  const heights = kids.map((el, i) =>
+    i + 1 < kids.length ? kids[i + 1].offsetTop - el.offsetTop : el.offsetHeight
+  )
   if (heights.every((h) => h === 0)) return null
+
   return heights.map((height, i) => ({ end: ends[i], height }))
 }
 ```
