@@ -753,7 +753,6 @@ describe('pickFillCut', () => {
 
   it('恰好等于时算装得下', () => {
     expect(pickFillCut(THREE, 400)).toBe(100)
-    expect(pickFillCut(THREE, 0.5)).toBe(0)
   })
 
   it('目标高度为 0 或负数：一个字都不铺', () => {
@@ -764,8 +763,11 @@ describe('pickFillCut', () => {
   })
 
   it('第一个块就超过一页：铺满那一个块', () => {
-    // 宁可溢出一页，也不能铺出一张白纸
+    // 宁可溢出一页，也不能铺出一张白纸。
+    // 目标高度是 0.5 这种「大于 0 却一个块都装不下」的也算这一条——
+    // 只有 <= 0 才走「一个字都不铺」那条。
     expect(pickFillCut(THREE, 100)).toBe(100)
+    expect(pickFillCut(THREE, 0.5)).toBe(100)
     expect(pickFillCut([{ end: 999, height: 5000 }], 912)).toBe(999)
   })
 
@@ -890,6 +892,8 @@ pnpm typecheck
 ```
 
 期望：全过，exit 0。
+
+**这一节在实施时改掉了一条断言**（计划作者抄错的）：Step 1 里 `expect(pickFillCut(THREE, 0.5)).toBe(0)` 与它所在用例的标题（「恰好等于时算装得下」）、与 Step 3 的实现、与设计第 7 节的兜底 1 都对不上——`0.5 > 0` **不触发**那条提前返回，第一个块高 400 装不下，于是走兜底、返回 `blocks[0].end`（100）。交付的用例把它挪进「第一个块就超过一页」那条并断言 100，另加一句注释说清「只有 `<= 0` 才是一个字都不铺」。**Step 3 的实现片段一字未动。**
 
 - [ ] **Step 5: 提交**
 
