@@ -34,8 +34,27 @@ const HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const
  *
  * 【`default` 分支落到哪里】`definition`（链接引用定义）走那里：它本身不该出现在正文里。
  * 其余 mdast 节点类型（yaml / toml / math 之类）本仓库的插件集产不出来。
+ *
+ * 【`withBlockEnds` 是给量高度那一份用的】它为真时每个顶层块**多套一层带
+ * `data-block-end` 的包装**，让「有几个块」只由这一处决定：渲染成 `null` 的节点
+ * （`definition`）也照样有一个包装、高度 0，于是 DOM 与偏移按构造一一对应，
+ * `measureBlocks` 那条「对不上就退回兜底」永远不会因为节点类型被误触。
+ * 包装本身没有内外边距与边框，子元素的外边距**照常折叠穿透**，所以量出来的高度
+ * 与不套包装时一致；有可见那一份在，这一份的层级再多也不影响用户看到的东西。
+ * 为假时走 `renderAll`，输出**一个字节都不变**。
  */
-export function renderMarkdown(root: Root): ReactNode {
+export function renderMarkdown(root: Root, opts: { withBlockEnds?: boolean } = {}): ReactNode {
+  if (opts.withBlockEnds) {
+    return root.children.map((node, i) => (
+      <div
+        className="wt-md-measure-block"
+        key={i}
+        data-block-end={node.position?.end.offset ?? ''}
+      >
+        {renderNode(node, { header: false })}
+      </div>
+    ))
+  }
   return renderAll(root.children, { header: false })
 }
 
