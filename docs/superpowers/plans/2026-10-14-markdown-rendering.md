@@ -183,8 +183,13 @@ describe('parseMarkdown', () => {
     expect(node.value).toContain('<div')
   })
 
-  it('解析不出来的输入返回 null，而不是抛出去', () => {
-    // remark 对畸形 md 基本不抛，这条守的是「真有东西抛出来时不许冒到调用方」
+  it('空串解析成空 root（remark 对畸形 md 基本不抛）', () => {
+    // 【这条用例原来叫「解析不出来的输入返回 null，而不是抛出去」，名不副实】
+    // 空串不是「解析不出来」——remark 把它**正常**解析成一个空的 root，返回的是树不是 null。
+    // 也就是说这个文件里 `catch` 那条路一次都没走到，对降级契约是零覆盖。
+    // 真正守「真有东西抛出来时不许冒到调用方」的是
+    // tests/unit/markdownParseFallback.test.ts（它把 unified 换成必抛的替身）。
+    // 这里保留两条断言，但只当「空串这个边角输入」的回归用。
     expect(() => parseMarkdown('')).not.toThrow()
     expect(parseMarkdown('')!.type).toBe('root')
   })
@@ -419,6 +424,9 @@ describe('clipTree —— 结构预知', () => {
     // 光标落在「加粗」的第一个字上：strong 节点已开始（** 在它之前）
     const out = clipTree(t, 0, src.indexOf('加粗'))
     expect(textOf(out.children[0])).toBe('前')
+    // 【结构预知】这条用例的名字承诺了「结构节点在」，所以必须真的断言到结构——
+    // 只断言文字的话，把 strong 整个丢掉这条照样绿（实测）。
+    expect(typesDeep(out.children[0])).toContain('strong')
   })
 
   it('偏移之外的节点原样保留，不会把整棵树丢掉', () => {
@@ -931,6 +939,15 @@ git commit -F /tmp/msg.txt
 ```ts
 import { describe, it, expect } from 'vitest'
 import { tokenizeHtml } from '../../src/renderer/src/markdown/html'
+import type { HtmlToken } from '../../src/renderer/src/markdown/html'
+
+/** 把所有 text token 拼起来。断言「哪些字上了屏」比逐 token 对着写更贴核心不变量。 */
+function textOf(tokens: HtmlToken[]): string {
+  return tokens
+    .filter((t) => t.kind === 'text')
+    .map((t) => t.value)
+    .join('')
+}
 
 describe('tokenizeHtml —— 白名单', () => {
   it('白名单标签切成 open / close', () => {
@@ -995,6 +1012,121 @@ describe('tokenizeHtml —— 白名单', () => {
       { kind: 'open', tag: 'div' },
       { kind: 'text', value: '开' }
     ])
+  })
+
+  /**
+   * 【属性段必须按 HTML 规范的 ASCII 名字收窄】不是洁癖，是核心不变量：
+   * 属性段一旦允许任意字符，「`<` 紧跟字母」到下一个 `>` 之间的东西就会被**当属性吃掉**，
+   * 于是那段字上不了屏——正是「已揭示的字少上屏」。
+   *
+   * 下面两条喂的都是**真能从 markdown 走到这里**的输入：块级 HTML 整段是一个 html 节点、
+   * 原样送进来（`<div>后面的话</div>` 那种），所以注释结束符那样的字面量、中文，
+   * 都会跟着 `<` 一起到。
+   */
+  it('`<b */>` 不是标签：`*/` 一个字不丢，也不凭空多出一个 b', () => {
+    const out = tokenizeHtml('<style>/* a<b */</style>')
+    expect(textOf(out)).toContain('/* a<b */')
+    expect(out).not.toContainEqual({ kind: 'open', tag: 'b' })
+  })
+
+  it('属性名不是 ASCII 名字时不按标签吃：`<b 且 c>` 整段落回文字', () => {
+    // 块级 HTML `<div>\n如果 a<b 且 c>d\n</div>` 就是一个 html 节点，
+    // 中文与尖括号一起原样进来——这条不是为了凑输入而构造的。
+    const out = tokenizeHtml('<div>\n如果 a<b 且 c>d\n</div>')
+    expect(textOf(out)).toContain('如果 a<b 且 c>d')
+    expect(out).not.toContainEqual({ kind: 'open', tag: 'b' })
+  })
+
+  it('ASCII 属性名仍然算标签（`<b and c>` 按规范本来就是标签，别顺手改严）', () => {
+    expect(tokenizeHtml('a <b and c> d')).toEqual([
+      { kind: 'text', value: 'a ' },
+      { kind: 'open', tag: 'b' },
+      { kind: 'text', value: ' d' }
+    ])
+  })
+})
+
+/**
+ * 【第二组：白名单之外】对应设计文档第 11 节「安全边界」。
+ *
+ * 上面那一组测的是**切分对不对**，这一组测的是**挡没挡住**。这个模块的价值全在
+ * 后者——所以这里逐条来，一条标签一条断言，别用一个样本代表一整类。
+ */
+describe('tokenizeHtml —— 白名单之外（安全边界）', () => {
+  /** 拿不到门票的标签，逐个走一遍。含能执行脚本的与能取网络的。 */
+  const NOT_ALLOWED = [
+    'script',
+    'iframe',
+    'img',
+    'svg',
+    'object',
+    'embed',
+    'form',
+    'input',
+    'button',
+    'style',
+    'link',
+    'meta',
+    'base',
+    'template',
+    'video',
+    'audio',
+    'canvas',
+    'math',
+    'a',
+    'table'
+  ]
+
+  it('逐条：白名单外的标签整个丢掉，里面的文字按普通文字留下', () => {
+    for (const tag of NOT_ALLOWED) {
+      // 标签名一起塞进比较值：红的时候能一眼看出是哪个标签漏了，不用去数第几行
+      expect([tag, tokenizeHtml(`<${tag}>t</${tag}>`)]).toEqual([tag, [{ kind: 'text', value: 't' }]])
+      // 开标签、闭标签各自单独出现时也一个 token 都不产出
+      expect([tag, tokenizeHtml(`<${tag}>`)]).toEqual([tag, []])
+      expect([tag, tokenizeHtml(`</${tag}>`)]).toEqual([tag, []])
+    }
+  })
+
+  it('事件属性带不出执行面：整条标签连同属性一起丢', () => {
+    expect(tokenizeHtml('<img src=x onerror="alert(1)">')).toEqual([])
+    expect(tokenizeHtml('<svg onload=alert(1)></svg>')).toEqual([])
+    expect(tokenizeHtml('<a href="javascript:alert(1)">点</a>')).toEqual([{ kind: 'text', value: '点' }])
+  })
+
+  it('引号里的尖括号夹带不出一个标签', () => {
+    // 属性值里的 `<script>` 只是属性值。匹配式先整段吃掉引号里的内容，
+    // 所以它字面上长得像标签也不该被切出来。
+    expect(tokenizeHtml('<div title="<script>">t</div>')).toEqual([
+      { kind: 'open', tag: 'div' },
+      { kind: 'text', value: 't' },
+      { kind: 'close', tag: 'div' }
+    ])
+  })
+
+  it('白名单里的标签逐个都在（设计文档第 11 节列的那 18 个）', () => {
+    const ALLOWED_TAGS = [
+      'b',
+      'strong',
+      'i',
+      'em',
+      'u',
+      's',
+      'del',
+      'sub',
+      'sup',
+      'span',
+      'div',
+      'p',
+      'code',
+      'pre',
+      'small',
+      'mark'
+    ]
+    for (const tag of ALLOWED_TAGS) {
+      expect([tag, tokenizeHtml(`<${tag}>`)]).toEqual([tag, [{ kind: 'open', tag }]])
+    }
+    expect(tokenizeHtml('<br>')).toEqual([{ kind: 'void', tag: 'br' }])
+    expect(tokenizeHtml('<hr>')).toEqual([{ kind: 'void', tag: 'hr' }])
   })
 })
 ```
@@ -1062,10 +1194,20 @@ export type HtmlToken =
   | { kind: 'text'; value: string }
 
 /**
- * 标签的匹配式。三段属性用「先吃掉引号里的内容、再吃非 `>`」写，是为了让
- * `<div title="a>b">` 不被那个 `>` 切断——这是这类正则最常见的错法。
+ * 标签的匹配式。两处都不能改松：
+ *
+ * 1. **属性段按 HTML 规范写**（ASCII 属性名 + 可选的值），不用「任何字符」那种宽松写法。
+ *    宽松写法会把「`<` 紧跟字母」到下一个 `>` 之间的东西整个当属性吃掉，
+ *    于是那段字**上不了屏**——比如块级 HTML `<div>\n如果 a<b 且 c>d\n</div>`
+ *    （整段是一个 html 节点，会原样送到这里），` 且 c` 会被当成 `<b>` 的属性吞掉，
+ *    还凭空多出一个 `open b`。按规范收紧后 `且` 不是合法属性名，`<b 且 c>` 整个
+ *    匹配不上、整段落回 text 照常上屏。
+ *    而 `<b and c>` 仍然匹配——按 HTML 规范**那本来就是标签**，不是缺陷。
+ * 2. **属性值要能含 `>`**（引号里先整段吃掉），否则 `<div title="a>b">` 会被那个 `>`
+ *    切断——这是这类正则最常见的错法。
  */
-const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g
+const TAG =
+  /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*)(\/?)>/g
 
 export function tokenizeHtml(raw: string): HtmlToken[] {
   const out: HtmlToken[] = []
