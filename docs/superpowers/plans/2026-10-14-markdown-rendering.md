@@ -2127,6 +2127,15 @@ git commit -F /tmp/msg.txt
   visibility: hidden;
   pointer-events: none;
 }
+
+/* 真图：最宽不超过正文宽，高度自适应。`display: block` 让块级图片独占一行，
+   与 Word 里「嵌入型」图片的行为一致。 */
+.wt-md-img-real {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.4em 0;
+}
 ```
 
 - [ ] **Step 2: 在入口引进来**
@@ -3076,10 +3085,14 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
+// 【每个用例用自己的地址，别复用】缓存是**模块级、跨用例存活**的（设计 8.4 要求它
+// 不淘汰），而 `afterEach` 也清不掉它。两个用例用同一个地址就会互相污染：先跑的那个
+// 把它定住（先挂起的那个永不 resolve，后跑的就永远停在占位框上）。实测过：三个用例
+// 都用 `a.png` 时，「取不到就停在占位框上」红在「上一个用例缓存了 AAA」上。
 describe('MarkdownImage', () => {
   it('还没取到时显示占位框与替代文字', () => {
     install(() => new Promise(() => {})) // 永不 resolve
-    const c = render(<MarkdownImage url="a.png" alt="架构图" />).container
+    const c = render(<MarkdownImage url="还没回来.png" alt="架构图" />).container
     expect(c.querySelector('[data-testid="md-image"]')!.textContent).toBe('架构图')
     expect(c.querySelector('img')).toBeNull()
   })
@@ -3093,7 +3106,7 @@ describe('MarkdownImage', () => {
 
   it('取不到（null）就停在占位框上，不抛', async () => {
     install(async () => null)
-    const c = render(<MarkdownImage url="a.png" alt="架构图" />).container
+    const c = render(<MarkdownImage url="取不到.png" alt="架构图" />).container
     await waitFor(() => expect(c.querySelector('[data-testid="md-image"]')).not.toBeNull())
     expect(c.querySelector('img')).toBeNull()
   })
@@ -3127,16 +3140,37 @@ export interface MarkdownImageProps {
 }
 
 /**
- * 取回来的图片按地址缓存。
+ * 取过的图片按地址缓存。**存的是那次请求本身（Promise），不是它的结果。**
  *
- * 【为什么必须有这一层】阅读区每次按键都重渲染，而图片节点在树里是稳定的。
- * 没有缓存的话每敲一个字都会重发一次 IPC——大图的 base64 会一个字符一次地搬。
+ * 【为什么必须有这一层】阅读区每次按键都重渲染，而图片节点在树里是稳定的；
+ * 没有缓存的话，节点每重建一次就重发一次 IPC——大图的 base64 会一次次地搬。
+ *
+ * 【为什么存 Promise 而不是结果】同一个地址在一份文档里出现两次是常事，而两个
+ * `MarkdownImage` 是在**同一次提交里挂载**的：那会儿第一次请求还没回来，
+ * 「结果缓存」两次都落空，于是发两次 IPC。存 Promise 才是真的「同一个地址只请求一次」。
+ * （写成本文件最初那一版时实测过：两个同地址节点 `toHaveBeenCalledTimes(2)`。）
+ *
+ * 【为什么必带 catch】这个 Promise 会一直躺在缓存里，一旦是 rejected 的，之后每次
+ * 挂载都会拿到同一个拒绝——不但永远画不出图，还会变成一个 unhandled rejection
+ * （本仓库实测过：那会让整轮 vitest 的 exit code 变 1，而用例行照旧 passed）。
  *
  * 【为什么不做淘汰】地址来自工作文档，一个文档里的图片地址个数天然有限；
  * 换文档时整棵子树都会被重建，而模块级的这份缓存会留下来。留下的是 base64，
  * 有界但不清——真出现「换了很多文档、内存涨上去」再考虑，现在加淘汰是过度设计。
  */
-const cache = new Map<string, string | null>()
+const cache = new Map<string, Promise<string | null>>()
+
+/** 按地址取一次图。同一个地址并发调用只发一次 IPC。 */
+function fetchOnce(url: string): Promise<string | null> {
+  const hit = cache.get(url)
+  if (hit) return hit
+  const api = (
+    window as unknown as { api?: { loadWorkDocImage?: (s: string) => Promise<string | null> } }
+  ).api
+  const p = (api?.loadWorkDocImage?.(url) ?? Promise.resolve(null)).catch(() => null)
+  cache.set(url, p)
+  return p
+}
 
 /**
  * markdown 图片。
@@ -3149,19 +3183,12 @@ const cache = new Map<string, string | null>()
  * 工作文档自己的路径）。渲染层传的只是一个原样的 `src`。
  */
 export function MarkdownImage({ url, alt }: MarkdownImageProps): ReactNode {
-  const [dataUrl, setDataUrl] = useState<string | null>(() => cache.get(url) ?? null)
+  const [dataUrl, setDataUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (!url) return
-    if (cache.has(url)) {
-      setDataUrl(cache.get(url) ?? null)
-      return
-    }
     let alive = true
-    const api = (window as unknown as { api?: { loadWorkDocImage?: (s: string) => Promise<string | null> } }).api
-    if (!api?.loadWorkDocImage) return
-    void api.loadWorkDocImage(url).then((v) => {
-      cache.set(url, v)
+    void fetchOnce(url).then((v) => {
       if (alive) setDataUrl(v)
     })
     return () => {

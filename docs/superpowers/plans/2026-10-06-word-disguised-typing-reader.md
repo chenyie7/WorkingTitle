@@ -4851,6 +4851,7 @@ describe('IPC 契约', () => {
       importNovel: 'wt:import-novel',
       importWorkDoc: 'wt:import-work-doc',
       loadWorkDoc: 'wt:load-work-doc',
+      loadWorkDocImage: 'wt:load-work-doc-image',
       openNovelPath: 'wt:open-novel-path',
       loadSession: 'wt:load-session',
       saveSession: 'wt:save-session',
@@ -5145,8 +5146,10 @@ export type WtApi = typeof api
 
 ```ts
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
+import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
 import { getStore } from './session'
+import { loadWorkDocImage } from './workDocImage'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
 // 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
@@ -5247,6 +5250,22 @@ export function registerIpc(deps: IpcDeps): void {
     return novel && novel.flatText.length > 0 ? novel : null
   })
 
+  /**
+   * 取工作文档里的图片。
+   *
+   * 【基准目录为什么在这里算，而不是让渲染层传】渲染层若能指定基准目录，
+   * 就等于能把「读相对路径」变成「读任意目录下的任意图片」。这里从设置里读
+   * 工作文档自己的路径、取它的目录，渲染层能碰的范围就锁死在「工作文档旁边 + 网络」。
+   *
+   * 【失败返回 null，不抛】与 `loadWorkDoc` 同一姿态：读不出来是一条正常路径，
+   * 渲染层显示占位框，不该把那次 invoke 打成 rejection。
+   */
+  ipcMain.handle(CH.loadWorkDocImage, async (_e, src: string): Promise<string | null> => {
+    const docPath = getStore().readSettings().workDocPath
+    const baseDir = docPath ? dirname(docPath) : ''
+    return loadWorkDocImage(src, baseDir)
+  })
+
   ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
@@ -5297,6 +5316,7 @@ export const CH = {
   importNovel: 'wt:import-novel',
   importWorkDoc: 'wt:import-work-doc',
   loadWorkDoc: 'wt:load-work-doc',
+  loadWorkDocImage: 'wt:load-work-doc-image',
   openNovelPath: 'wt:open-novel-path',
   loadSession: 'wt:load-session',
   saveSession: 'wt:save-session',
@@ -5354,6 +5374,7 @@ const api = {
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   importWorkDoc: () => ipcRenderer.invoke(CH.importWorkDoc),
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
+  loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
@@ -10751,6 +10772,8 @@ const benignApi: WtApi = {
   // （见 tests/unit/app.test.tsx 的 installApi）。
   importWorkDoc: async () => null,
   loadWorkDoc: async () => null,
+  // 单测里一律「取不到图」，于是渲染层走占位框那条路
+  loadWorkDocImage: async () => null,
   openNovelPath: async () => {
     throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')
   },
@@ -10829,6 +10852,8 @@ export interface WtApi {
   importNovel: () => Promise<Novel | null>
   importWorkDoc: () => Promise<Novel | null>
   loadWorkDoc: (path: string) => Promise<Novel | null>
+  /** 取一张工作文档里的图片，回来的是 `data:` URL；失败给 `null` */
+  loadWorkDocImage: (src: string) => Promise<string | null>
   openNovelPath: (path: string) => Promise<Novel>
   initialNovelPath: () => Promise<string | null>
   /** 取【某一本书】自己的阅读进度。按书存之后，sourcePath 是必填的那把钥匙。 */
@@ -11787,7 +11812,12 @@ function installApi(
     // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
     // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
     importWorkDoc: vi.fn(async () => workDoc),
-    loadWorkDoc: loadWorkDocMock
+    loadWorkDoc: loadWorkDocMock,
+    // 【Task 9 补的第三个有闸的替身】本文件这个对象字面量的目标类型是 `WtApi`（见上面那段
+    // 说明），所以少写一个成员同样报 TS2741——计划 Task 9 Step 6 只点了 `tests/setup.ts`
+    // 与 `types/global.d.ts` 两处，实测漏了这一处（`pnpm typecheck` exit 2）。姿态与
+    // setup.ts 那份一致：单测里一律「取不到图」，渲染层于是走占位框那条路。
+    loadWorkDocImage: vi.fn(async () => null)
   }
 }
 
