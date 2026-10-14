@@ -301,6 +301,18 @@ export default function App() {
   }, [])
 
   /**
+   * 铺满铺的是**工作文档**，所以「要不要量高度」判的也是它，**不是当前显示的那一份**。
+   *
+   * 【为什么不能用 `mdDoc`】`mdDoc` 跟着 `shownNovel = bossActive ? workNovel : novel` 走，
+   * 而按下老板键那一刻 `bossActive` 还是 false——那一下 `mdDoc` 还是**小说**那一份的
+   * （小说是 txt 时为 null）。照 `mdDoc` 分岔，进老板模式就永远进不了量高度那一支，
+   * 铺出来的是按字数估的切点、屏幕底部切在半句话上；只有「已经在老板模式里」再按
+   * ⌘⇧↑/↓ 才会量。实测（Task 11 收尾）：把分岔改回 `mdDoc`，那条「按 ⌘⇧B 会调
+   * `measureBlocks`」的用例当场红。
+   */
+  const workIsMarkdown = workNovel !== null && isMarkdownPath(workNovel.sourcePath)
+
+  /**
    * 铺满：能算就直接算，算不了就先开量高度、等量完再算。
    *
    * 【三条路，顺序不能换】
@@ -315,11 +327,11 @@ export default function App() {
       const eng = workEngine
       if (!eng) return
       const cached = heightsRef.current
-      if (mdDoc && cached && cached.doc === mdDoc) {
+      if (workIsMarkdown && cached && cached.doc === workNovel) {
         eng.revealTo(pickFillCut(cached.heights, (pageTextHeight() * percent) / 100))
         return
       }
-      if (!mdDoc) {
+      if (!workIsMarkdown) {
         // 不是 md：没有结构可量，本来就是按字符数铺
         eng.revealTo(fillCharsFor(percent))
         return
@@ -327,7 +339,7 @@ export default function App() {
       pendingFillRef.current = percent
       setMeasuring(true)
     },
-    [workEngine, mdDoc, pageTextHeight]
+    [workEngine, workNovel, workIsMarkdown, pageTextHeight]
   )
 
   /**
@@ -356,13 +368,13 @@ export default function App() {
     }
     const percent = pendingFillRef.current
     pendingFillRef.current = null
-    if (heights && mdDoc) heightsRef.current = { doc: mdDoc, heights }
+    if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
     // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
     workEngine?.revealTo(
       heights ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100) : fillCharsFor(percent ?? 0)
     )
     setMeasuring(false)
-  }, [measuring, mdDoc, workEngine, pageTextHeight])
+  }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
 
   const mdSource: MarkdownSource | null =
     mdDoc && state
@@ -477,6 +489,9 @@ export default function App() {
       notify('这个文件是空的，换一个')
       return
     }
+    // 【表达意图的冗余，不是承重的那道闸】块高表真正的失效判据是**身份**
+    // （`cached.doc === workNovel`），而这里必然换上一个新的 `workNovel`、陈旧表本来就命中
+    // 不了。留着它是「别捏着上一份文档的高度数组不放」。同款一处见 `handleRemoveWorkDoc`。
     heightsRef.current = null
     setWorkNovel(doc)
     setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
@@ -488,6 +503,8 @@ export default function App() {
   }, [notify])
 
   const handleRemoveWorkDoc = useCallback((): void => {
+    // 同 `handleImportWorkDoc`：身份（`workNovel` 变成 null）已经足以判失效，这一行是
+    // 「顺手丢掉那份引用」，不是任何用例的判据。
     heightsRef.current = null
     setWorkNovel(null)
     setWorkEngine(null)
@@ -559,9 +576,14 @@ export default function App() {
       // 按住——老板模式下强制收起，`jumpToChapter` 在界面上再没有入口。
       // 危害本来也很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
       if (bossActive) applyFill(next)
-      notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+      /**
+       * 【md 那一路不能报字数】它按**渲染后的高度**铺，`fillCharsFor` 只是量不出高度时的
+       * 兜底估算——报出来是个假数字（屏幕上根本不是那么多个字）。那种「看起来精确、
+       * 其实错」的提示比不提示更糟，所以那一路只报档位。
+       */
+      notify(workIsMarkdown ? `铺满 ${next}%` : `铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
     },
-    [bossActive, applyFill, notify]
+    [bossActive, applyFill, notify, workIsMarkdown]
   )
 
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
