@@ -108,6 +108,46 @@ describe('tokenizeHtml —— 白名单', () => {
 })
 
 /**
+ * 【注释为什么单独一组】它既不是白名单标签、也不属于「标签丢掉、文字留下」那一类
+ * ——注释里没有给人看的文字。整段丢掉是设计第 11 节的口径；不丢的话它**不是标签**
+ * （标签匹配式够不着 `<!`），会原样成为屏幕上的字面文字。
+ */
+describe('tokenizeHtml —— HTML 注释', () => {
+  it('整段丢掉，一个字都不上屏', () => {
+    expect(tokenizeHtml('<!-- 这是注释 -->')).toEqual([])
+    expect(tokenizeHtml('<!--多行\n注释\n-->')).toEqual([])
+  })
+
+  it('夹在文字与标签之间的注释：文字与标签照旧，注释消失', () => {
+    expect(textOf(tokenizeHtml('前<!-- 注 -->后'))).toBe('前后')
+    expect(tokenizeHtml('<div>a<!-- c -->b</div>')).toEqual([
+      { kind: 'open', tag: 'div' },
+      { kind: 'text', value: 'a' },
+      { kind: 'text', value: 'b' },
+      { kind: 'close', tag: 'div' }
+    ])
+  })
+
+  it('注释里的标签不算标签', () => {
+    // 注释内的 <script> 只是注释的一部分，不该被切成 token——更不该被执行
+    expect(tokenizeHtml('<!-- <script>alert(1)</script> -->')).toEqual([])
+    expect(tokenizeHtml('<!-- <div> -->')).toEqual([])
+  })
+
+  it('没有收尾的注释按 HTML 规范吃到末尾', () => {
+    // 注释一直没关：`-->` 之后的一切都是注释，于是后面那个 <div> 也一起没了
+    expect(tokenizeHtml('<!-- 没关')).toEqual([])
+    expect(tokenizeHtml('<!-- 没关\n<div>内容</div>')).toEqual([])
+  })
+
+  it('`<!` 后面不是 `--` 的（doctype 之类）不是注释，也不该被吃掉', () => {
+    // 这条钉的是「别把注释那条规则写宽」：`<!doctype html>` 现在按普通文字上屏，
+    // 是有意留着的现状（设计第 11 节只处置注释），改动它要另开一条口径
+    expect(textOf(tokenizeHtml('<!doctype html>'))).toBe('<!doctype html>')
+  })
+})
+
+/**
  * 【第二组：白名单之外】对应设计文档第 11 节「安全边界」。
  *
  * 上面那一组测的是**切分对不对**，这一组测的是**挡没挡住**。这个模块的价值全在

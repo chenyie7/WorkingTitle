@@ -118,6 +118,14 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
     const c = dom('<div>开\n\n后面一段\n')
     expect(c.textContent).toContain('后面一段')
   })
+
+  it('HTML 注释一个字都不上屏', () => {
+    // 整段是一个 html 节点，注释不是标签——不处置的话它会原样成为屏幕上的字面文字
+    const c = dom('前文\n\n<!-- 这是注释 -->\n\n后文\n')
+    expect(c.textContent).toContain('前文')
+    expect(c.textContent).toContain('后文')
+    expect(c.textContent).not.toContain('这是注释')
+  })
 })
 
 /**

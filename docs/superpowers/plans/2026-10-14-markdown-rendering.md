@@ -1047,6 +1047,46 @@ describe('tokenizeHtml —— 白名单', () => {
 })
 
 /**
+ * 【注释为什么单独一组】它既不是白名单标签、也不属于「标签丢掉、文字留下」那一类
+ * ——注释里没有给人看的文字。整段丢掉是设计第 11 节的口径；不丢的话它**不是标签**
+ * （标签匹配式够不着 `<!`），会原样成为屏幕上的字面文字。
+ */
+describe('tokenizeHtml —— HTML 注释', () => {
+  it('整段丢掉，一个字都不上屏', () => {
+    expect(tokenizeHtml('<!-- 这是注释 -->')).toEqual([])
+    expect(tokenizeHtml('<!--多行\n注释\n-->')).toEqual([])
+  })
+
+  it('夹在文字与标签之间的注释：文字与标签照旧，注释消失', () => {
+    expect(textOf(tokenizeHtml('前<!-- 注 -->后'))).toBe('前后')
+    expect(tokenizeHtml('<div>a<!-- c -->b</div>')).toEqual([
+      { kind: 'open', tag: 'div' },
+      { kind: 'text', value: 'a' },
+      { kind: 'text', value: 'b' },
+      { kind: 'close', tag: 'div' }
+    ])
+  })
+
+  it('注释里的标签不算标签', () => {
+    // 注释内的 <script> 只是注释的一部分，不该被切成 token——更不该被执行
+    expect(tokenizeHtml('<!-- <script>alert(1)</script> -->')).toEqual([])
+    expect(tokenizeHtml('<!-- <div> -->')).toEqual([])
+  })
+
+  it('没有收尾的注释按 HTML 规范吃到末尾', () => {
+    // 注释一直没关：`-->` 之后的一切都是注释，于是后面那个 <div> 也一起没了
+    expect(tokenizeHtml('<!-- 没关')).toEqual([])
+    expect(tokenizeHtml('<!-- 没关\n<div>内容</div>')).toEqual([])
+  })
+
+  it('`<!` 后面不是 `--` 的（doctype 之类）不是注释，也不该被吃掉', () => {
+    // 这条钉的是「别把注释那条规则写宽」：`<!doctype html>` 现在按普通文字上屏，
+    // 是有意留着的现状（设计第 11 节只处置注释），改动它要另开一条口径
+    expect(textOf(tokenizeHtml('<!doctype html>'))).toBe('<!doctype html>')
+  })
+})
+
+/**
  * 【第二组：白名单之外】对应设计文档第 11 节「安全边界」。
  *
  * 上面那一组测的是**切分对不对**，这一组测的是**挡没挡住**。这个模块的价值全在
@@ -1194,7 +1234,7 @@ export type HtmlToken =
   | { kind: 'text'; value: string }
 
 /**
- * 标签的匹配式。两处都不能改松：
+ * 标签的匹配式。三处都不能改松：
  *
  * 1. **属性段按 HTML 规范写**（ASCII 属性名 + 可选的值），不用「任何字符」那种宽松写法。
  *    宽松写法会把「`<` 紧跟字母」到下一个 `>` 之间的东西整个当属性吃掉，
@@ -1205,9 +1245,15 @@ export type HtmlToken =
  *    而 `<b and c>` 仍然匹配——按 HTML 规范**那本来就是标签**，不是缺陷。
  * 2. **属性值要能含 `>`**（引号里先整段吃掉），否则 `<div title="a>b">` 会被那个 `>`
  *    切断——这是这类正则最常见的错法。
+ * 3. **注释排在最前面**（`<!-- … -->`，见下面那条 `if`）：注释不是标签，
+ *    不先吃掉它，它就会整段落回 text 上屏（设计第 11 节要它消失）。
+ *    第二条注释分支是没有收尾的那一种——按 HTML 规范吃到**输入末尾**，
+ *    所以它写成 `[\s\S]*` 而不是 `[\s\S]*?$`：后者在「末尾恰好是个换行」时
+ *    只吃到换行之前，会把那个换行留下变成一个字面换行。
+ *    `<!` 后面**不是** `--` 的（doctype / CDATA 之类）不在这条规则的范围内。
  */
 const TAG =
-  /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*)(\/?)>/g
+  /<!--[\s\S]*?-->|<!--[\s\S]*|<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*)(\/?)>/g
 
 export function tokenizeHtml(raw: string): HtmlToken[] {
   const out: HtmlToken[] = []
@@ -1219,6 +1265,9 @@ export function tokenizeHtml(raw: string): HtmlToken[] {
   for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
     if (m.index > last) out.push({ kind: 'text', value: raw.slice(last, m.index) })
     last = m.index + m[0].length
+    // 注释整段丢掉（设计第 11 节）：它是写给作者看的，不是内容。这里靠「匹配到的
+    // 是什么」分叉，不看捕获组——注释那一支的 `m[1]` / `m[2]` 是 undefined。
+    if (m[0].startsWith('<!--')) continue
     const tag = m[2].toLowerCase()
     if (!ALLOWED.has(tag)) continue
     if (m[1] === '/') out.push({ kind: 'close', tag })
@@ -1389,6 +1438,14 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
     // 没有闭合标签时，收尾那一步会把它合上——后面兄弟节点仍然渲染得出来
     const c = dom('<div>开\n\n后面一段\n')
     expect(c.textContent).toContain('后面一段')
+  })
+
+  it('HTML 注释一个字都不上屏', () => {
+    // 整段是一个 html 节点，注释不是标签——不处置的话它会原样成为屏幕上的字面文字
+    const c = dom('前文\n\n<!-- 这是注释 -->\n\n后文\n')
+    expect(c.textContent).toContain('前文')
+    expect(c.textContent).toContain('后文')
+    expect(c.textContent).not.toContain('这是注释')
   })
 })
 

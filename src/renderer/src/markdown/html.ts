@@ -50,7 +50,7 @@ export type HtmlToken =
   | { kind: 'text'; value: string }
 
 /**
- * 标签的匹配式。两处都不能改松：
+ * 标签的匹配式。三处都不能改松：
  *
  * 1. **属性段按 HTML 规范写**（ASCII 属性名 + 可选的值），不用「任何字符」那种宽松写法。
  *    宽松写法会把「`<` 紧跟字母」到下一个 `>` 之间的东西整个当属性吃掉，
@@ -61,9 +61,15 @@ export type HtmlToken =
  *    而 `<b and c>` 仍然匹配——按 HTML 规范**那本来就是标签**，不是缺陷。
  * 2. **属性值要能含 `>`**（引号里先整段吃掉），否则 `<div title="a>b">` 会被那个 `>`
  *    切断——这是这类正则最常见的错法。
+ * 3. **注释排在最前面**（`<!-- … -->`，见下面那条 `if`）：注释不是标签，
+ *    不先吃掉它，它就会整段落回 text 上屏（设计第 11 节要它消失）。
+ *    第二条注释分支是没有收尾的那一种——按 HTML 规范吃到**输入末尾**，
+ *    所以它写成 `[\s\S]*` 而不是 `[\s\S]*?$`：后者在「末尾恰好是个换行」时
+ *    只吃到换行之前，会把那个换行留下变成一个字面换行。
+ *    `<!` 后面**不是** `--` 的（doctype / CDATA 之类）不在这条规则的范围内。
  */
 const TAG =
-  /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*)(\/?)>/g
+  /<!--[\s\S]*?-->|<!--[\s\S]*|<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*)(\/?)>/g
 
 export function tokenizeHtml(raw: string): HtmlToken[] {
   const out: HtmlToken[] = []
@@ -75,6 +81,9 @@ export function tokenizeHtml(raw: string): HtmlToken[] {
   for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
     if (m.index > last) out.push({ kind: 'text', value: raw.slice(last, m.index) })
     last = m.index + m[0].length
+    // 注释整段丢掉（设计第 11 节）：它是写给作者看的，不是内容。这里靠「匹配到的
+    // 是什么」分叉，不看捕获组——注释那一支的 `m[1]` / `m[2]` 是 undefined。
+    if (m[0].startsWith('<!--')) continue
     const tag = m[2].toLowerCase()
     if (!ALLOWED.has(tag)) continue
     if (m[1] === '/') out.push({ kind: 'close', tag })
