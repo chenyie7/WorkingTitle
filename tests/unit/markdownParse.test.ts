@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath } from '../../src/renderer/src/markdown/parse'
 
 /**
  * 【这一批用例断言的是**关系**，不是字面数字】
@@ -65,5 +65,14 @@ describe('parseMarkdown', () => {
     // 这里保留两条断言，但只当「空串这个边角输入」的回归用。
     expect(() => parseMarkdown('')).not.toThrow()
     expect(parseMarkdown('')!.type).toBe('root')
+  })
+
+  it('按扩展名判定：.md / .markdown 才算，大小写不敏感', () => {
+    expect(isMarkdownPath('/Users/某人/周报.md')).toBe(true)
+    expect(isMarkdownPath('/Users/某人/周报.MARKDOWN')).toBe(true)
+    expect(isMarkdownPath('/Users/某人/周报.txt')).toBe(false)
+    // 【这一条是刻意的】内容长得像 md 的 txt 不渲染：导入 txt 的人要的就是原文
+    expect(isMarkdownPath('/Users/某人/周报.md.txt')).toBe(false)
+    expect(isMarkdownPath('/Users/某人/周报')).toBe(false)
   })
 })

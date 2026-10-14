@@ -35,3 +35,18 @@ export function parseMarkdown(text: string): Root | null {
     return null
   }
 }
+
+/**
+ * 这份工作文档要不要渲染。
+ *
+ * 【为什么按扩展名而不是按内容嗅探】「内容长得像 md」判不准，而且判错的代价是
+ * 双向的：把一份纯文本当 md 渲染会吃掉里面的 `*` 和 `#`，把一份 md 当纯文本
+ * 又会露出记号。扩展名是用户的意图，也是他后来能自己改回来的东西。
+ *
+ * 【`.md.txt` 判 false 是有意的】`extname` 只看最后一段。用户的意图是 txt。
+ */
+const MARKDOWN_EXT = /\.(md|markdown)$/i
+
+export function isMarkdownPath(filePath: string): boolean {
+  return MARKDOWN_EXT.test(filePath)
+}

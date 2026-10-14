@@ -23,13 +23,18 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
  * `export type WtApi = typeof api` **零引用者**（全仓库搜 `WtApi` 只有它自己的定义处）。
  *
- * 【三份拷贝里只有一份有闸，别记反】同一个 API 形状在仓库里躺着三处：本文件的
- * `benignApi`（`: WtApi`）、`tests/unit/app.test.tsx` 的 `installApi`（赋给 `unknown`）、
- * 以及 preload 里那个对象。**本桩两个方向都会红**——多写一个成员报 TS2353（对象字面量的
- * 多余属性检查），少写一个报 TS2741（缺属性），Task 4 两次都实测过；
- * `installApi` 因为赋给 `unknown`，两条都不触发；**真正一条闸都没有的，是 preload 与那份
- * 手写接口之间**——往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是
- * 那一处，不是这一处。
+ * 【三份拷贝里有两份有闸，别记反】【这一句原来写的是「只有一份有闸」，那已经是假话】
+ * 同一个 API 形状在仓库里躺着三处：本文件的 `benignApi`（`: WtApi`）、
+ * `tests/unit/app.test.tsx` 的 `installApi`、以及 preload 里那个对象。
+ * **前两处的对象字面量目标类型都是 `WtApi`，两个方向都会红**——多写一个成员报 TS2353
+ * （对象字面量的多余属性检查），少写一个报 TS2741（缺属性）。本桩在 Task 4 两次实测过；
+ * `tests/unit/app.test.tsx` 那份在 Task 9 实测过一次（TS2741），2026-10-14 又复验过一次：
+ * 往 `WtApi` 里插一个方法，`tsc --noEmit -p tsconfig.json` 精确报出这两行——
+ * `tests/setup.ts(37,7): error TS2741` 与 `tests/unit/app.test.tsx(67,4): error TS2741`。
+ * **所以加一个 API 方法时，这两处都要跟着改。**
+ *
+ * **真正一条闸都没有的，是 preload 与那份手写接口之间**——同一次复验里 preload 一行都没报，
+ * 往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是那一处，不是前两处。
  *
  * 所以补下面那两行不是「给多余属性找个地方放」——它们在这份桩里是**必填**属性；补上是为了
  * 让本桩继续满足接口，从而让「少写一个就 TS2741」这条闸对之后新增的方法照样有效。

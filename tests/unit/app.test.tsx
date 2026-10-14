@@ -1188,6 +1188,121 @@ describe('老板键', () => {
   })
 })
 
+describe('工作文档的 markdown 渲染', () => {
+  /**
+   * 造一本正文**真的含 `#`** 的小说。
+   *
+   * 【为什么不能拿 `makeNovel()` 顶上】那份夹具的正文里一个 `#` 都没有，于是
+   * `querySelector('h1')` 为 null 是必然的——**它证明不了「没走渲染」**，因为
+   * 「走了渲染」在那种夹具上同样得到 null。判据必须是「含 `#` 的正文有没有被吃掉」。
+   */
+  function makeHashNovel(sourcePath: string): Novel {
+    const text = '# 季度汇报\n\n本季度共归档 3 项。\n'
+    const { flatText, chapters } = splitChapters(text, '测试书')
+    return {
+      title: '测试书',
+      sourcePath,
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText,
+      chapters
+    }
+  }
+
+  /**
+   * 抽 1 个字（默认比例 10），让小说那条路的阅读区真的有东西。
+   *
+   * 【这里断的是「大于 0」，不是「等于 10」】`revealedChars()` 量的是 `page-text` 的
+   * **DOM 文本长度**，这在纯文本那条路上恰好等于抽出的字符数——但在 md 那条路上不等：
+   * 记号本身（`# `、`\n\n`）被渲染吃掉了，抽 10 个字符出来、DOM 里只有 6 个字
+   * （`季度汇报` + `本季`）。写死 10 会让 md 那两条用例量到的是渲染细节，而不是
+   * 「有没有东西被抽出来」——那正是这个前提自检唯一要保证的事。
+   */
+  async function typeOneChar(): Promise<void> {
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+  }
+
+  it('导入 .md 后按老板键：阅读区是渲染后的结构，不是裸文本', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.md',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    // 记号一个都不该露出来
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
+  })
+
+  it('.txt 工作文档走纯文本那条路：既不渲染，也不掉字', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.txt',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').textContent).toContain('#'))
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【强的这一条】小说是 `.txt`、正文**确实含 `# 标题`** → 必须原样显示那个 `#`。
+   *
+   * 这才是「.md 判定不会漏到小说身上」的真正判据：夹具里有一个**会被渲染吃掉**的记号，
+   * 所以「显示了」与「被吃了」在页面上是可区分的。旧版那条用例拿一份没有 `#` 的夹具断言
+   * `h1` 为 null，两个世界都通过，是空转的。
+   */
+  it('小说走 .txt：正文里的 `#` 原样显示，没有 h1', async () => {
+    const n = makeHashNovel('/tmp/测试书.txt')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    expect(screen.getByTestId('page-text').textContent).toContain('#')
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【诚实的这一条】小说是 `.md`、正文含 `# 标题` → **会**渲染成 `h1`。
+   *
+   * 这是刻意的、不是漏洞：判定只看**当前显示的那一份**的 `sourcePath` 扩展名，
+   * 与「工作文档」共用同一套渲染机制。小说导入的过滤器只收 txt，但「所有文件」那个入口
+   * 能让人选到 .md——那时它就该按 md 渲染（见 `App.tsx` 里 `mdDoc` 那段说明）。
+   * 这条用例钉的是这个事实，免得将来有人把它当成回归。
+   */
+  it('小说走 .md：同一个渲染机制照样生效，`#` 被吃成 h1（刻意如此）', async () => {
+    const n = makeHashNovel('/tmp/测试书.md')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
+  })
+})
+
 describe('设置里的工作文档', () => {
   /**
    * 【这条走的是启动时那一行 `setWorkDocBroken(true)`，组件层那条够不到它】

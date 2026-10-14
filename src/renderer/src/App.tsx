@@ -6,6 +6,7 @@ import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
+import type { MarkdownSource } from './components/Page'
 import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
@@ -13,6 +14,7 @@ import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
+import { isMarkdownPath, parseMarkdown } from './markdown/parse'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
@@ -248,6 +250,45 @@ export default function App() {
   const shownEngine = bossActive ? workEngine : engine
 
   const state = useTypingEngine(shownEngine)
+
+  /**
+   * 【解析只做一次，缓存在这里】`useMemo` 的键是 `shownNovel` 这个对象：
+   * 它只在「换书 / 切老板模式 / 重新导入」时换身份，按键时不换。
+   * 200KB 的 md 解析是几十毫秒量级，每次按键重解析不可接受。
+   *
+   * 【判定按扩展名，只在工作文档这一路生效】小说的导入过滤器只收 txt，
+   * 但「所有文件」那个入口能让人选到 .md——那种情况下这里的判定也会为真，
+   * 而它与「工作文档」是同一套渲染，行为一致，不是漏洞。
+   *
+   * 【解析失败（null）就退回纯文本】`mdDoc` 为 null 时下面那个 `mdSource` 也是 null，
+   * `Page` 走纯文本那条路（设计第 12 节：不许白屏）。
+   */
+  const mdDoc = useMemo(() => {
+    if (!shownNovel || !isMarkdownPath(shownNovel.sourcePath)) return null
+    return parseMarkdown(shownNovel.flatText)
+  }, [shownNovel])
+
+  /**
+   * 量高度用的隐藏副本开关。默认关：那份副本是**整篇**文档的 DOM，
+   * 每次按键都渲染它不可接受。只有「要算铺满切点」时才开一下（Task 11）。
+   */
+  const [measuring, setMeasuring] = useState(false)
+  /** 隐藏副本的根元素。`MarkdownView` 挂载时交过来，量高度时读它的直接子元素 */
+  const measureElRef = useRef<HTMLElement | null>(null)
+  const onMeasureNode = useCallback((el: HTMLElement | null): void => {
+    measureElRef.current = el
+  }, [])
+
+  const mdSource: MarkdownSource | null =
+    mdDoc && state
+      ? {
+          doc: mdDoc,
+          revealStart: state.revealStart,
+          cursor: state.cursor,
+          measuring,
+          onMeasureNode
+        }
+      : null
 
   /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
   const flushSession = useCallback((): void => {
@@ -781,6 +822,7 @@ export default function App() {
               onToggleExpand={() => setExpanded(true)}
               empty={!shownNovel}
               importShortcut={formatShortcut(shortcutTable.import, kind)}
+              markdown={mdSource}
             >
               {shownEngine && state && (
                 <InputCapture engine={shownEngine} mode={state.mode} />
