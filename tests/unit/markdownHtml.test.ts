@@ -138,6 +138,10 @@ describe('tokenizeHtml —— HTML 注释', () => {
     // 注释一直没关：`-->` 之后的一切都是注释，于是后面那个 <div> 也一起没了
     expect(tokenizeHtml('<!-- 没关')).toEqual([])
     expect(tokenizeHtml('<!-- 没关\n<div>内容</div>')).toEqual([])
+    // 末尾恰好是个换行时也得吃干净：这一支写成 `[^\n]*` 就只吃掉第一行，
+    // 剩下的 `\n`（以及再多行的正文）会落回 text 上屏 —— 这条钉的就是那件事
+    expect(tokenizeHtml('<!-- 没关\n')).toEqual([])
+    expect(textOf(tokenizeHtml('<!-- 没关\n第二行'))).toBe('')
   })
 
   it('`<!` 后面不是 `--` 的（doctype 之类）不是注释，也不该被吃掉', () => {

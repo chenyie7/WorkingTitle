@@ -135,6 +135,14 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
     expect(c.textContent).toContain('后文')
     expect(c.textContent).not.toContain('这是注释')
   })
+
+  it('没关的注释会一直吃到文末（HTML 规范如此，浏览器对同样的字节也是这个行为）', () => {
+    // remark 把「`<!--` 到文末」整段做成**一个** html 节点，所以那个注释之后的内容
+    // 也跟着不显示。这条把那个后果明写出来——它是刻意的（注释没关就没法知道
+    // 作者想表达什么），不是漏掉了「后文」两个字
+    const c = dom('前文\n\n<!-- 没关的注释\n\n后文\n')
+    expect(c.textContent).toBe('前文')
+  })
 })
 
 /**
