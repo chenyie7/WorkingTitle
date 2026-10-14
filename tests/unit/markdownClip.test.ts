@@ -140,3 +140,48 @@ describe('clipTree —— 块内的叶子节点', () => {
     expect(textOf(out)).toContain('后')
   })
 })
+
+/**
+ * 内嵌 HTML 的 `value` 里**连文字一起**（块级 HTML 是一个整节点：`<div>后面的话</div>`
+ * 是 0..15 的一个 html 节点）。所以它不能像图片那样「一揭示就整体出现」，两条路都堵着：
+ *
+ * - 从中间切开 → 得到 `<di` 这种碎片，`tokenizeHtml` 认不出它是标签、会当普通文字吐出来，
+ *   等于把裸源码字符弄上屏；
+ * - 不切、整块留着 → 未揭示的字跟着一起上屏。
+ *
+ * 于是只有第三条路：**等它整个抽完（`end <= to`）才出现**。图片、脚注引用、硬换行没有这个
+ * 问题（它们没有文字，切不出半个也无所谓），仍然是一开始揭示就整体出现。
+ */
+describe('clipTree —— 内嵌 HTML 等抽完才出现', () => {
+  const BLOCK = '<div>后面的话</div>\n'
+
+  it('块级 HTML 抽到一半：不在树里，未揭示的字也不在', () => {
+    const out = clipTree(parseMarkdown(BLOCK)!, 0, BLOCK.indexOf('后') + 1) // 刚过 `<div>后`
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).not.toContain('面的话')
+  })
+
+  it('块级 HTML 抽完之后：在树里，value 是完整那串（反面对照）', () => {
+    const out = clipTree(parseMarkdown(BLOCK)!, 0, BLOCK.length)
+    expect(typesDeep(out)).toContain('html')
+    expect(textOf(out)).toContain('<div>后面的话</div>')
+  })
+
+  it('行内 HTML 抽到一半（光标在标签中间）：不在树里', () => {
+    // 【为什么单补这一条】上一条「还没抽到的内嵌 HTML 不留在树里」喂的是 to = 2，那时
+    // html 节点**还没开始**，是叶子那条 `start >= to` 把它挡掉的——把 html 这条规则整个
+    // 撤掉，那条用例照样绿。要真正压住 html 规则，光标必须落在**标签中间**（start < to
+    // 而 end > to），也就是这一条。
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('<span>') + 3) // 光标在 `<spa|n>` 里
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).not.toContain('后面')
+  })
+
+  it('行内 HTML 刚好抽完：在树里（边界是 end <= to，取等）', () => {
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('后面')) // `<span>` 的 end 正好是 9
+    expect(textOf(out)).toContain('<span>')
+    expect(textOf(out)).not.toContain('</span>') // 闭合标签还没抽到，不在
+  })
+})
