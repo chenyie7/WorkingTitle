@@ -10,7 +10,7 @@
 
 **设计文档：** `docs/superpowers/specs/2026-10-14-markdown-rendering-design.md`。每个 Task 开头都标了它对应设计文档的哪几节，有疑问先读那一节。
 
-**分支：** `feat/markdown-rendering`，从 `feat/boss-key` 切出（工作文档这个概念整个来自那一批，它还没合并）。**继续在这条分支上开发。**
+**分支：** `feat/boss-key`（工作文档这个概念整个来自那一批，它还没合并）。**本功能直接在这条分支上继续开发，不另开分支。**
 
 ---
 
