@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { tokenizeHtml } from '../../src/renderer/src/markdown/html'
+import type { HtmlToken } from '../../src/renderer/src/markdown/html'
+
+/** 把所有 text token 拼起来。断言「哪些字上了屏」比逐 token 对着写更贴核心不变量。 */
+function textOf(tokens: HtmlToken[]): string {
+  return tokens
+    .filter((t) => t.kind === 'text')
+    .map((t) => t.value)
+    .join('')
+}
 
 describe('tokenizeHtml —— 白名单', () => {
   it('白名单标签切成 open / close', () => {
@@ -63,6 +72,37 @@ describe('tokenizeHtml —— 白名单', () => {
     expect(tokenizeHtml('<div>开')).toEqual([
       { kind: 'open', tag: 'div' },
       { kind: 'text', value: '开' }
+    ])
+  })
+
+  /**
+   * 【属性段必须按 HTML 规范的 ASCII 名字收窄】不是洁癖，是核心不变量：
+   * 属性段一旦允许任意字符，「`<` 紧跟字母」到下一个 `>` 之间的东西就会被**当属性吃掉**，
+   * 于是那段字上不了屏——正是「已揭示的字少上屏」。
+   *
+   * 下面两条喂的都是**真能从 markdown 走到这里**的输入：块级 HTML 整段是一个 html 节点、
+   * 原样送进来（`<div>后面的话</div>` 那种），所以注释结束符那样的字面量、中文，
+   * 都会跟着 `<` 一起到。
+   */
+  it('`<b */>` 不是标签：`*/` 一个字不丢，也不凭空多出一个 b', () => {
+    const out = tokenizeHtml('<style>/* a<b */</style>')
+    expect(textOf(out)).toContain('/* a<b */')
+    expect(out).not.toContainEqual({ kind: 'open', tag: 'b' })
+  })
+
+  it('属性名不是 ASCII 名字时不按标签吃：`<b 且 c>` 整段落回文字', () => {
+    // 块级 HTML `<div>\n如果 a<b 且 c>d\n</div>` 就是一个 html 节点，
+    // 中文与尖括号一起原样进来——这条不是为了凑输入而构造的。
+    const out = tokenizeHtml('<div>\n如果 a<b 且 c>d\n</div>')
+    expect(textOf(out)).toContain('如果 a<b 且 c>d')
+    expect(out).not.toContainEqual({ kind: 'open', tag: 'b' })
+  })
+
+  it('ASCII 属性名仍然算标签（`<b and c>` 按规范本来就是标签，别顺手改严）', () => {
+    expect(tokenizeHtml('a <b and c> d')).toEqual([
+      { kind: 'text', value: 'a ' },
+      { kind: 'open', tag: 'b' },
+      { kind: 'text', value: ' d' }
     ])
   })
 })
