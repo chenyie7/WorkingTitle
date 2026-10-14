@@ -156,7 +156,8 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
         <ul className="wt-md-list">{renderAll(node.children, ctx)}</ul>
       )
     case 'listItem': {
-      // `checked` 是 GFM 任务列表才有的字段：普通项是 undefined，任务项是 true / false
+      // `checked` 是 GFM 任务列表才有的字段：普通项是 **null**（实测，不是 undefined），
+      // 任务项是 true / false。所以这里判的是「等不等于那两个布尔值」，不是「字段在不在」
       const task = node.checked === true || node.checked === false
       return (
         <li className={task ? 'wt-md-li wt-md-li--task' : 'wt-md-li'}>

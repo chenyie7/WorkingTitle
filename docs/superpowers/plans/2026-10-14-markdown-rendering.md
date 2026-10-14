@@ -755,13 +755,11 @@ const THREE = [
 
 describe('pickFillCut', () => {
   it('装得下几个就铺几个，切点落在块边界上', () => {
+    // 700 这一条就是「恰好等于时算装得下」那条边界：400 + 300 正好 700，
+    // 改成 `>=` 会在这里断掉（返回 100 而不是 200）
     expect(pickFillCut(THREE, 700)).toBe(200)
     expect(pickFillCut(THREE, 699)).toBe(100)
     expect(pickFillCut(THREE, 1000)).toBe(300)
-  })
-
-  it('恰好等于时算装得下', () => {
-    expect(pickFillCut(THREE, 400)).toBe(100)
   })
 
   it('目标高度为 0 或负数：一个字都不铺', () => {
@@ -1715,7 +1713,8 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
         <ul className="wt-md-list">{renderAll(node.children, ctx)}</ul>
       )
     case 'listItem': {
-      // `checked` 是 GFM 任务列表才有的字段：普通项是 undefined，任务项是 true / false
+      // `checked` 是 GFM 任务列表才有的字段：普通项是 **null**（实测，不是 undefined），
+      // 任务项是 true / false。所以这里判的是「等不等于那两个布尔值」，不是「字段在不在」
       const task = node.checked === true || node.checked === false
       return (
         <li className={task ? 'wt-md-li wt-md-li--task' : 'wt-md-li'}>
@@ -1925,8 +1924,21 @@ git commit -F /tmp/msg.txt
 
 /* ── 块级 ───────────────────────────────────────────────── */
 
+/**
+ * 【这四条里的 `white-space: normal` 是必须显式写的，别当成冗余删掉】
+ *
+ * `white-space` **会被继承**，而 markdown 这一段长在 `.wt-page__text` 下面——
+ * 那里写的是 `pre-wrap`（纯文本那条路要的：它显示的是一个字符串，换行就是换行）。
+ * 不重置的话，段落里的**软换行**（md 源文件里就是一个换行，CommonMark 让它折成空格）
+ * 会变成硬换行，屏幕上于是出现一行行对齐源文件的短行——真 Word 不是这样排的。
+ *
+ * 反过来 `.wt-md-pre` 要保住 `pre-wrap`（代码就是要保行），所以它在下面自己写了一条。
+ * 表格单元格与脚注定义（`.wt-md-cell` / `.wt-md-fndef`）**没有**跟着重置：它们不是
+ * 段落那种连续文字，源文件里的换行在单元格里保不保留都说得过去，暂按现状。
+ */
 .wt-md-p {
   margin: 0 0 0.85em;
+  white-space: normal;
 }
 
 .wt-md-h {
@@ -1937,6 +1949,7 @@ git commit -F /tmp/msg.txt
   margin: 0.9em 0 0.45em;
   line-height: 1.4;
   font-weight: 600;
+  white-space: normal;
 }
 
 .wt-md-h1 { font-size: 26px; }
@@ -1958,6 +1971,7 @@ git commit -F /tmp/msg.txt
 
 .wt-md-li {
   margin: 0.15em 0;
+  white-space: normal;
 }
 
 .wt-md-li--task {
@@ -1976,6 +1990,7 @@ git commit -F /tmp/msg.txt
   padding: 0.1em 0 0.1em 14px;
   border-left: 3px solid var(--wt-md-quote-bar);
   color: var(--wt-md-quote-fg);
+  white-space: normal;
 }
 
 .wt-md-pre {

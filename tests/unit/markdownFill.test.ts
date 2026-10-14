@@ -10,13 +10,11 @@ const THREE = [
 
 describe('pickFillCut', () => {
   it('装得下几个就铺几个，切点落在块边界上', () => {
+    // 700 这一条就是「恰好等于时算装得下」那条边界：400 + 300 正好 700，
+    // 改成 `>=` 会在这里断掉（返回 100 而不是 200）
     expect(pickFillCut(THREE, 700)).toBe(200)
     expect(pickFillCut(THREE, 699)).toBe(100)
     expect(pickFillCut(THREE, 1000)).toBe(300)
-  })
-
-  it('恰好等于时算装得下', () => {
-    expect(pickFillCut(THREE, 400)).toBe(100)
   })
 
   it('目标高度为 0 或负数：一个字都不铺', () => {
