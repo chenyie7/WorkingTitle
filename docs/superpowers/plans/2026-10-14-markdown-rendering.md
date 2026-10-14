@@ -1273,6 +1273,7 @@ git commit -F /tmp/msg.txt
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import { clipTree } from '../../src/renderer/src/markdown/clip'
 import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
 
 /** 把 md 渲染进一个容器，返回容器本身——断言一律用 querySelector / textContent。 */
@@ -1280,6 +1281,13 @@ function dom(md: string): HTMLElement {
   const tree = parseMarkdown(md)
   expect(tree).not.toBeNull()
   return render(<div>{renderMarkdown(tree!)}</div>).container
+}
+
+/** 与 `dom()` 相同，但先按 `cursor` 裁一次——钉「揭示到一半」时的形态。 */
+function domAt(md: string, cursor: number): HTMLElement {
+  const tree = parseMarkdown(md)
+  expect(tree).not.toBeNull()
+  return render(<div>{renderMarkdown(clipTree(tree!, 0, cursor))}</div>).container
 }
 
 describe('renderMarkdown —— 块级', () => {
@@ -1383,6 +1391,48 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
     expect(c.textContent).toContain('后面一段')
   })
 })
+
+/**
+ * 【行内 HTML 为什么要单独一组】行内标签在 mdast 里是**一个标签一个节点**——
+ * `前文 <b>加粗</b> 后文` 是 text / html / text / html 四个兄弟节点。上一组用的
+ * `<div>内容</div>` 是**块级** HTML（整段一个节点），凭空就对；这一组钉的是行内那一半。
+ */
+describe('renderMarkdown —— 行内 HTML（合并兄弟节点）', () => {
+  it('行内标签包住文字，不是一个空元素', () => {
+    const c = dom('前文 <b>加粗</b> 后文\n')
+    expect(c.querySelector('b')).not.toBeNull()
+    expect(c.querySelector('b')!.textContent).toBe('加粗')
+    expect(c.textContent).toBe('前文 加粗 后文')
+  })
+
+  it('mark / u 这些行内标签同样包住文字', () => {
+    const c = dom('x <mark>高亮</mark> y <u>下划线</u> z\n')
+    expect(c.querySelector('mark')!.textContent).toBe('高亮')
+    expect(c.querySelector('u')!.textContent).toBe('下划线')
+    expect(c.textContent).toBe('x 高亮 y 下划线 z')
+  })
+
+  it('嵌套的行内标签各归各的层', () => {
+    const c = dom('x <span>a<b>b</b></span> y\n')
+    expect(c.querySelector('span')!.textContent).toBe('ab')
+    expect(c.querySelector('b')!.textContent).toBe('b')
+    expect(c.textContent).toBe('x ab y')
+  })
+
+  it('白名单之外的行内标签：标签丢掉、文字留在原处', () => {
+    const c = dom('前文 <blink>闪</blink> 后文\n')
+    expect(c.querySelector('blink')).toBeNull()
+    expect(c.textContent).toBe('前文 闪 后文')
+  })
+
+  it('收尾标签还没被揭示时，标签仍然包住已揭示的那几个字', () => {
+    // clip 会把「没抽完」的 html 节点丢掉，于是流里只剩 `<b>加粗`
+    // ——收尾那一步补上闭标签，这两个字照样是粗的
+    const c = domAt('前文 <b>加粗</b> 后文\n', 8)
+    expect(c.querySelector('b')!.textContent).toBe('加粗')
+    expect(c.textContent).toBe('前文 加粗')
+  })
+})
 ```
 
 - [ ] **Step 2: 跑测试，确认它红**
@@ -1462,13 +1512,87 @@ const HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const
  *
  * 【`default` 分支落到哪里】`definition`（链接引用定义）走那里：它本身不该出现在正文里。
  * 其余 mdast 节点类型（yaml / toml / math 之类）本仓库的插件集产不出来。
+ *
+ * 【`withBlockEnds` 是给量高度那一份用的】它为真时每个顶层块**多套一层带
+ * `data-block-end` 的包装**，让「有几个块」只由这一处决定：渲染成 `null` 的节点
+ * （`definition`）也照样有一个包装、高度 0，于是 DOM 与偏移按构造一一对应，
+ * `measureBlocks` 那条「对不上就退回兜底」永远不会因为节点类型被误触。
+ * 包装本身没有内外边距与边框，子元素的外边距**照常折叠穿透**，所以量出来的高度
+ * 与不套包装时一致；有可见那一份在，这一份的层级再多也不影响用户看到的东西。
+ * 为假时走 `renderAll`，输出**一个字节都不变**。
  */
-export function renderMarkdown(root: Root): ReactNode {
+export function renderMarkdown(root: Root, opts: { withBlockEnds?: boolean } = {}): ReactNode {
+  if (opts.withBlockEnds) {
+    return root.children.map((node, i) => (
+      <div
+        className="wt-md-measure-block"
+        key={i}
+        data-block-end={node.position?.end.offset ?? ''}
+      >
+        {renderNode(node, { header: false })}
+      </div>
+    ))
+  }
   return renderAll(root.children, { header: false })
 }
 
+/** 一段 text / html 节点的原文字符串。别处取不到——这两种节点才带 `value`。 */
+const rawOf = (node: MdNode): string => (node.type === 'text' || node.type === 'html' ? node.value : '')
+
+/**
+ * 渲染一串兄弟节点。
+ *
+ * 【为什么要合并连续节点】行内 HTML 在 mdast 里是**一个标签一个节点**：`前文 <b>加粗</b> 后文`
+ * 是 text / html / text / html 四个兄弟节点。逐个节点各自 token 一次的话，`<b>` 那个节点
+ * 永远看不到自己的内容（内容在兄弟节点里），于是画出一个空的 `<b></b>`、文字落在元素外面——
+ * 白名单 18 个里有 12 个是行内标签，等于大半是空转的。把连续的一串 text / html 合成
+ * **一段 token 流**再渲染，`<b>` 与 `</b>` 就落进同一次 `renderTokens`，元素包住了内容。
+ *
+ * 【拼的是 token，不是原文】两处区别都来自「这些字符**已经**被 markdown 解析过一遍」：
+ * 一是 text 节点里的 `<` 可能是 `\<` 或实体转义来的，拼回原文再 tokenize 等于把它当标签
+ * 重新解析一次（正是 `html.ts` 那个属性段收窄要防的东西）；二是相邻节点的碎片本来不是
+ * 一个标签（`<div title="a"` + `>`），拼起来会凭空合成一个。逐个 html 节点 tokenize、
+ * 把 token 接起来，这两件事都不会发生。
+ *
+ * 【纯文字的串一个字节都不变】一串里**没有** html 节点时走原来那条路（每个节点一个
+ * Fragment，内容就是它的 value），合并只在至少有一个 html 节点时发生。
+ *
+ * 【一个接受的退化：md 的行内节点不拉进来】`strong` / `emphasis` / `code` 这些**会打断**
+ * 这一串，于是 `前 <b>**粗**</b> 后` 退化成「空的 `<b>` + 一个 `<strong>粗</strong>`」——
+ * 文字一个字不丢，只是那个 `<b>` 没包住东西。要归并它得多一套跨类型匹配规则，而收益
+ * 只是这种交错写法好看一点（设计第 11 节承诺的是「安全的排版标签生效」，不是「与 md
+ * 记号交错时也归并」）。
+ */
 function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode {
-  return nodes.map((node, i) => <Fragment key={i}>{renderNode(node, ctx)}</Fragment>)
+  const out: ReactNode[] = []
+  let i = 0
+  while (i < nodes.length) {
+    const node = nodes[i]
+    if (node.type !== 'text' && node.type !== 'html') {
+      out.push(<Fragment key={i}>{renderNode(node, ctx)}</Fragment>)
+      i++
+      continue
+    }
+    // 一串连续的 text / html：先看它有多长、里面有没有 html
+    const start = i
+    let hasHtml = false
+    while (i < nodes.length && (nodes[i].type === 'text' || nodes[i].type === 'html')) {
+      if (nodes[i].type === 'html') hasHtml = true
+      i++
+    }
+    if (!hasHtml) {
+      for (let k = start; k < i; k++) out.push(<Fragment key={k}>{rawOf(nodes[k])}</Fragment>)
+      continue
+    }
+    const tokens: HtmlToken[] = []
+    for (let k = start; k < i; k++) {
+      const n = nodes[k]
+      if (n.type === 'html') tokens.push(...tokenizeHtml(n.value))
+      else tokens.push({ kind: 'text', value: rawOf(n) })
+    }
+    out.push(<Fragment key={start}>{renderTokens(tokens)}</Fragment>)
+  }
+  return out
 }
 
 function renderNode(node: MdNode, ctx: Ctx): ReactNode {
@@ -1641,6 +1765,12 @@ pnpm typecheck
 期望：全过，exit 0。
 
 **若「表格」那两条没过**，先用 `console.log(JSON.stringify(tree, null, 2))` 看一眼 mdast 的实际形状——GFM 的表格第一个 `tableRow` 就是表头，这是本实现的前提。前提不成立就停下来报，别改成猜的。
+
+**这一节的 `renderAll` 在实施之后改过一次（规格评审量出来的一个缺口），围栏已同步：**
+
+**行内 HTML 的标签原来是空转的。** 原实现逐个节点渲染，而行内标签在 mdast 里是**一个标签一个节点**——`前文 <b>加粗</b> 后文` 是 text / html / text / html 四个兄弟节点，于是 `<b>` 那个节点看不到自己的内容（内容在兄弟节点里），画出来是一个空的 `<b></b>`、文字落在元素外面。白名单 18 个里 12 个是行内标签，等于大半是空转的；上一组用例用的 `<div>内容</div>` 是**块级** HTML（整段一个节点），凭空就对，所以这个缺口没被测试逮住。现在把连续的 text / html 兄弟节点合成**一段 token 流**再渲染。**拼的是 token 不是原文**，理由（转义过的 `<` 不该被重新解析、相邻碎片不该被合成一个标签）写在 `renderAll` 的注释里；md 的行内节点（`strong` / `emphasis` / `code`）**不拉进来**，那是刻意的取舍，也写在注释里。测试新增一组「行内 HTML（合并兄弟节点）」。
+
+**另外 `renderMarkdown` 多了 `withBlockEnds` 那个参数**（Task 7 量高度那一份用的包装），Task 7 当时没回写本节的围栏，这次一并补上——所以本节的围栏现在才是与源码逐字节相等的那一面。
 
 - [ ] **Step 6: 提交**
 
