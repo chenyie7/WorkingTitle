@@ -23,6 +23,12 @@ function typesOf(tree: Root): string[] {
   return tree.children.map((n) => n.type)
 }
 
+/** 深度遍历，收集树里出现过的所有节点类型——用来断言某个结构节点到底在不在。 */
+function typesDeep(node: unknown): string[] {
+  const n = node as { type?: string; children?: unknown[] }
+  return [n.type ?? '', ...(n.children ?? []).flatMap((c) => typesDeep(c))]
+}
+
 const doc = parseMarkdown(DOC)!
 
 /** 取某个字符串在 DOC 里的起始下标——用例里要按真实偏移切，不能拍脑袋写数字。 */
@@ -84,5 +90,53 @@ describe('clipTree —— 结构预知', () => {
 
   it('光标在 0：整棵树是空的', () => {
     expect(clipTree(doc, 0, 0).children).toHaveLength(0)
+  })
+})
+
+/**
+ * 块内的**叶子**（没有 `value` 可裁、也没有 `children`）——图片、内嵌 HTML、
+ * 脚注引用、硬换行。它们截不出「半个」，所以只能在「留整块」与「丢」之间二选一。
+ *
+ * 二选一的判据是**它自己的字符区间**（与顶层块同一条规则），不是「所在块已经开始」：
+ * 留着没抽到的图片就等于提前去抓图（设计 8.2：只抓已经抽出来的那张），
+ * 留着没抽到的 HTML 就等于把还没有揭示的字画到屏幕上。
+ */
+describe('clipTree —— 块内的叶子节点', () => {
+  const IMG = '前 ![图](a.png) 后\n'
+
+  it('还没抽到的图片不留在树里（留着就等于提前发 IPC 去抓图）', () => {
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.indexOf('前') + 1) // 只抽到「前」
+    expect(textOf(out)).toBe('前')
+    expect(typesDeep(out)).not.toContain('image')
+  })
+
+  it('光标落在图片源码中间：图片整张在树里（设计 8.3，一揭示就整张出现）', () => {
+    // 这条与上一条一起把边界钉死：判据是图片**自己的起始偏移**，不是它的结束偏移
+    // ——路径还没抽完时图就该跳出来，而它一旦开始就整张出现、不做半张。
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.indexOf('a.png'))
+    expect(typesDeep(out)).toContain('image')
+  })
+
+  it('光标推过整张图之后：图片还在（上一条的反面对照）', () => {
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.length)
+    expect(typesDeep(out)).toContain('image')
+    expect(textOf(out)).toContain('后')
+  })
+
+  it('还没抽到的内嵌 HTML 标签同样不留在树里', () => {
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('前文') + 2) // 只抽到「前文」
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).toBe('前文')
+  })
+
+  it('折点已经翻过去的图片也丢掉（叶子看的是自己的区间，不是所在块开没开始）', () => {
+    // from 落在块**中间**：`revealStart` 是 jumpToChapter 抬起来的，可以落在任何位置，
+    // 所以「块留着、块里的图在窗口之外」是会发生的。留着它就等于给一张窗口外的图发
+    // IPC 去抓（设计 8.2）。边界是 `end <= from`——这条用例正好卡在 end == from 上。
+    const from = IMG.indexOf(' 后')
+    const out = clipTree(parseMarkdown(IMG)!, from, IMG.length)
+    expect(typesDeep(out)).not.toContain('image')
+    expect(textOf(out)).toContain('后')
   })
 })
