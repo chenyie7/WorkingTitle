@@ -1186,6 +1186,65 @@ describe('老板键', () => {
     await exitBoss()
     expect(screen.queryByTestId('chapter-list')).toBeNull()
   })
+
+  /**
+   * 【夹具为什么是 `.md`，而不是计划原文里的 `makeWorkDoc()`（那是 `.txt`）】
+   *
+   * 换成 `.txt` 的话这两条用例**走不到它们要守的那条路**：`.txt` 的工作文档 `mdDoc` 为
+   * null，`applyFill` 在第一道分岔就进了「不是 md：本来就是按字符数铺」那一支（直接
+   * `revealTo(fillCharsFor(percent))`）——**既不开 `measuring`、也不量高度**。后果实测：
+   *
+   * - 第一条的「屏幕不是空的」是 `applyFill` 直接铺出来的，与「量不出块高 → 退回按字符数」
+   *   这条降级路无关：名字与断言对不上，删掉 effect 里那次铺字它照样绿；
+   * - 第二条里 `measuring` 恒为 false，隐藏副本从来不存在，`not.toBeNull()` 永远不成立。
+   *
+   * 而这条降级路正是本任务存在的全部理由（`measureBlocks` 量不出的那半边只有真机能判），
+   * 设计第 7 节也明说它「在 jsdom 里是**可测的**」。所以只改 `sourcePath` 这一个字段，
+   * 正文 / 章节 / 助手全不动——Task 10 那两条 md 用例也是这个写法。
+   */
+  it('进老板模式时量不出块高（jsdom 没有布局）→ 退回按字符数铺，屏幕不是空的', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), bossFillPercent: 100, workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await pressBossKey()
+
+    // 【这条守的是降级路径本身】jsdom 里 offsetHeight 恒为 0，measureBlocks 返回 null，
+    // 于是走 fillCharsFor(100) = 1330 字那条老路。屏幕上有字，而不是空白。
+    //
+    // 【它同时是「开关真的开过」的证人】md 这一支里 `applyFill` **一个字都不铺**，铺字的
+    // 只有量完的那个 effect——所以这里量到非空，就等于「measuring 开过 + 量不出 + 退回按
+    // 字符数」三件事一起成立。下一条用例的弱点正是靠这一条补上的（见那里的说明）。
+    await waitFor(() => {
+      const text = screen.getByTestId('page-text').textContent ?? ''
+      expect(text.length).toBeGreaterThan(0)
+    })
+    expect(screen.getByTestId('page-text').textContent!.length).toBeLessThanOrEqual(1330)
+  })
+
+  it('量高度期间不渲染那份隐藏副本之外的东西：measuring 关掉之后副本就没了', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await pressBossKey()
+    // 【等屏幕真的有字再断言】这一发敲下去要串起「进老板模式 → 开 measuring → effect 量完
+    // 并关掉」，等它等于「那一串已经跑完」。少了它，断言可能落在那一串**之前**——那时副本
+    // 同样不存在，这条就是**假绿**（计划 Step 2 警告的正是这个形态）。
+    await waitFor(() => expect(screen.getByTestId('page-text').textContent!.length).toBeGreaterThan(0))
+
+    // 副本只在算铺满那一下存在；量完必须关掉，否则每个按键都在重建整篇 DOM。
+    //
+    // 【这条断言单独看是弱的，它由上面那一条补齐】`measuring` 从没打开时副本也不存在，
+    // 这一条照样绿——计划 Step 2 因此要求「先断言它出现过」。**那一句在 jsdom 里写不出来**
+    // （实测：开着它跑就是红的）。原因不是副本没挂上，而是它挂上又摘掉都在**同一次 act 的
+    // flush 里**：`setMeasuring(true)` 与 effect 里那次 `setMeasuring(false)` 之间那一帧的
+    // DOM 从来不落到 `waitFor` 轮询得到的世界里。所以「开关真的开过」交给**上一条用例**
+    // 作证，而不是在这里干等一个永远轮询不到的中间态。
+    await waitFor(() => expect(document.querySelector('.wt-md-measure')).toBeNull())
+  })
 })
 
 describe('工作文档的 markdown 渲染', () => {
