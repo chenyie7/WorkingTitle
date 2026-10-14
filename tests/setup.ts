@@ -30,8 +30,10 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * （对象字面量的多余属性检查），少写一个报 TS2741（缺属性）。本桩在 Task 4 两次实测过；
  * `tests/unit/app.test.tsx` 那份在 Task 9 实测过一次（TS2741），2026-10-14 又复验过一次：
  * 往 `WtApi` 里插一个方法，`tsc --noEmit -p tsconfig.json` 精确报出这两行——
- * `tests/setup.ts(37,7): error TS2741` 与 `tests/unit/app.test.tsx(67,4): error TS2741`。
- * **所以加一个 API 方法时，这两处都要跟着改。**
+ * `tests/setup.ts` 的 `const benignApi: WtApi = {`（当时在那份文件的 42 行）与
+ * `tests/unit/app.test.tsx` 的 `;(window as … as { api: WtApi }).api = {`（当时 67 行），
+ * 两条都是 `TS2741`。**所以加一个 API 方法时，这两处都要跟着改。**
+ * （行号随这份注释增删就会漂——认上面那两行代码，别认数字。）
  *
  * **真正一条闸都没有的，是 preload 与那份手写接口之间**——同一次复验里 preload 一行都没报，
  * 往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是那一处，不是前两处。
