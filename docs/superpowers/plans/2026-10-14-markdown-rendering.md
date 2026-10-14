@@ -2128,6 +2128,38 @@ describe('Page —— md 分支', () => {
     expect(n).toBeGreaterThan(0)
     expect(n).toBeLessThan(long.length)
   })
+
+  /**
+   * 【这条守的是「块的对齐」这件事本身】
+   *
+   * 量高度那一份副本里，**DOM 的直接子元素个数必须等于语法树的顶层节点个数**。
+   * 少了这一条，`definition`（`[a]: url`，真 md 里很常见）与只含注释 / `<script>`
+   * 的 HTML 块都会渲染出零个 Element，于是 DOM 比「块」少一个，
+   * `measureBlocks` 恒返回 null，**整篇静默退回按字符数铺**——不报错、不白屏。
+   *
+   * 缺口是 Task 7 的实施者量出来的：他拿真实的 `renderMarkdown(doc)` 跑，
+   * 数出来比 `doc.children.length` 少。
+   */
+  it('量高度那一份：DOM 子元素个数必须等于顶层节点个数（含 definition 与纯注释块）', () => {
+    const src = [
+      '# 标题',
+      '',
+      '[a]: https://example.com',
+      '',
+      '<!-- 一段注释 -->',
+      '',
+      '正文'
+    ].join('\n')
+    const doc = parseMarkdown(src)!
+    const measure = page({ doc, revealStart: 0, cursor: 0, measuring: true }).container.querySelector(
+      '.wt-md-measure'
+    )!
+    expect(measure.children.length).toBe(doc.children.length)
+    // 顺带钉住每个包装都带着自己的结束偏移——`measureBlocks` 靠它配对
+    for (const el of Array.from(measure.children)) {
+      expect(el.getAttribute('data-block-end')).not.toBeNull()
+    }
+  })
 })
 ```
 
@@ -2189,7 +2221,15 @@ export function MarkdownView({
       {renderMarkdown(visible)}
       {measuring && (
         <div className="wt-md-measure" ref={onMeasureNode} aria-hidden="true">
-          {renderMarkdown(doc)}
+          {/*
+            【`withBlockEnds` 是这一份副本独有的】它给每个顶层块套一层带
+            `data-block-end` 的包装。这样「有几个块」就只由渲染这一处决定——
+            渲染出 null 的节点（`definition`，即 `[a]: url` 那种链接引用定义，
+            真 md 里很常见）照样有一个包装、高度 0。少了这一层，「DOM 子元素个数」
+            与「外部数组长度」是两处各自决定的，永远能对不上，而对不上的后果是
+            **整篇静默退回按字符数铺**：不报错、不白屏，只有真机上铺不满才看得出来。
+          */}
+          {renderMarkdown(doc, { withBlockEnds: true })}
         </div>
       )}
     </>
@@ -3170,8 +3210,22 @@ import { measureBlocks } from './markdown/measure'
   useEffect(() => {
     if (!measuring) return
     const el = measureElRef.current
-    const ends = mdDoc ? mdDoc.children.map((n) => n.position?.end.offset ?? 0) : []
-    const heights = measureBlocks(el, ends)
+    /**
+     * 【为什么整个包在 try 里】设计第 7 节那条兜底写的是「量不出高度（jsdom 里
+     * `offsetHeight` 恒为 0，**或测量抛错**）→ 退回按字符数」。`offsetHeight` 本身
+     * 不抛，但读布局在渲染异常、DOM 已被卸载之类的情况下会抛，而这条 effect 里抛出去
+     * 就是一次未捕获异常。包住它，兜底路径才真的是兜底。
+     *
+     * 【为什么不再传 ends】`measureBlocks` 现在从 DOM 自己的 `data-block-end` 读偏移，
+     * 不再吃一个外部数组。原因是那样是「两处各自决定有几个块」，永远能对不上；
+     * 而对不上的后果是整篇静默退回按字符数铺（见 `MarkdownView` 里那段说明）。
+     */
+    let heights: BlockHeight[] | null = null
+    try {
+      heights = measureBlocks(el)
+    } catch (err) {
+      console.warn('[wt] 量 markdown 块高失败，退回按字符数铺：', err)
+    }
     const percent = pendingFillRef.current
     pendingFillRef.current = null
     if (heights && mdDoc) heightsRef.current = { doc: mdDoc, heights }
