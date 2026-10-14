@@ -107,7 +107,12 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
 
   it('事件属性不会被搬到元素上', () => {
     const c = dom('<div onclick="alert(1)" class="x" style="color:red">t</div>\n')
-    const div = c.querySelector('div')!
+    // `firstElementChild` 那一跳不能省：`c` 是 RTL 自己造的那个包裹 div，而
+    // `c.querySelector('div')` 命中的是**它**（`dom()` 里那一层），markdown 渲出来的
+    // 那个 div 在它里面。少了这一跳，下面三条断言查的是一个测试助手造的、永远没有
+    // 属性的元素——它们恒真（实测：给 `renderTokens` 建的每个元素都加上 class，全绿）。
+    const div = c.firstElementChild!.querySelector('div')!
+    expect(div.textContent).toBe('t')
     expect(div.hasAttribute('onclick')).toBe(false)
     expect(div.hasAttribute('class')).toBe(false)
     expect(div.hasAttribute('style')).toBe(false)
@@ -117,6 +122,10 @@ describe('renderMarkdown —— 内嵌 HTML（安全断言）', () => {
     // 没有闭合标签时，收尾那一步会把它合上——后面兄弟节点仍然渲染得出来
     const c = dom('<div>开\n\n后面一段\n')
     expect(c.textContent).toContain('后面一段')
+    // 「合上」这件事本身也要单独钉：上面那条断言是**兄弟段落**给的，与收尾那一步
+    // 无关（实测：整段删掉收尾那一步，只断言上一句时全绿）。真删掉的话，这个 div
+    // 连元素都建不出来，「开」这个**已揭示的字**就上不了屏了——那才是要防的那条。
+    expect(c.firstElementChild!.querySelector('div')!.textContent).toBe('开')
   })
 
   it('HTML 注释一个字都不上屏', () => {
