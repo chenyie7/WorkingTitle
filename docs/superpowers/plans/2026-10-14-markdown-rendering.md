@@ -46,7 +46,9 @@ pnpm test && echo TEST_OK
 
 ### 4. 依赖是 ESM-only，只许渲染层引用
 
-`remark` 全族都是 `"type": "module"`（实测 `remark@15.0.1`、`remark-gfm@4.0.1`）。**它们只允许出现在 `src/renderer/src/markdown/` 下**。一旦 `src/main/` 或 `src/core/` 引到，`tsconfig.node.json` 那条链就会去解析它们——那是本功能最容易引入的静默失败面。Task 1 有一条专门守它的检查。
+`remark` 全族都是 `"type": "module"`（实测 `unified@11.0.5`、`remark-parse@11.0.0`、`remark-gfm@4.0.1` 三个包的 `"type"` 都是 `module`）。**它们只允许出现在 `src/renderer/src/markdown/` 下**。一旦 `src/main/` 或 `src/core/` 引到，`tsconfig.node.json` 那条链就会去解析它们——那是本功能最容易引入的静默失败面。
+
+守它的是 `pnpm typecheck`（两个 tsconfig 都跑），**没有独立的用例**——为了测「main 引用了 ESM 包」去 mock 一个 ESM 包并不现实。所以这条是靠类型检查 + `parse.ts` 里那段注释一起守的。
 
 ---
 
@@ -246,7 +248,9 @@ pnpm vitest run tests/unit/markdownParse.test.ts
 pnpm typecheck
 ```
 
-期望：用例全过；`typecheck` exit 0。**如果 typecheck 报的是 `processor.parse` 的返回类型对不上 `Root`**，说明这个版本的类型没接上，就地加一层显式断言并写上注释说明为什么，别改成 `any`。
+期望：用例全过；`typecheck` exit 0。
+
+**实测（Task 1 落地时的组合）：`processor.parse()` 的返回类型直接就是 `Root`，不需要任何显式断言。** 若将来换版本后报类型对不上，就地加一层显式断言并写清原因，**别改成 `any`**。
 
 - [ ] **Step 7: 提交**
 
