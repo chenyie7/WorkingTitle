@@ -56,8 +56,13 @@ describe('parseMarkdown', () => {
     expect(node.value).toContain('<div')
   })
 
-  it('解析不出来的输入返回 null，而不是抛出去', () => {
-    // remark 对畸形 md 基本不抛，这条守的是「真有东西抛出来时不许冒到调用方」
+  it('空串解析成空 root（remark 对畸形 md 基本不抛）', () => {
+    // 【这条用例原来叫「解析不出来的输入返回 null，而不是抛出去」，名不副实】
+    // 空串不是「解析不出来」——remark 把它**正常**解析成一个空的 root，返回的是树不是 null。
+    // 也就是说这个文件里 `catch` 那条路一次都没走到，对降级契约是零覆盖。
+    // 真正守「真有东西抛出来时不许冒到调用方」的是
+    // tests/unit/markdownParseFallback.test.ts（它把 unified 换成必抛的替身）。
+    // 这里保留两条断言，但只当「空串这个边角输入」的回归用。
     expect(() => parseMarkdown('')).not.toThrow()
     expect(parseMarkdown('')!.type).toBe('root')
   })
