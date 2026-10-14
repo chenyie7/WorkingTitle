@@ -1236,6 +1236,9 @@ describe('工作文档的 markdown 渲染', () => {
     render(<App />)
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 【这一句不能省】`loadWorkDoc` 还没回来时按老板键，收到的是一条 toast 而不是切换
+    // ——用例会以「没有 h1」这种**看起来像功能没做**的样子红掉。见 `waitForWorkDocLoaded`。
+    await waitForWorkDocLoaded()
     await act(async () => {
       pressBossKey()
     })
@@ -1255,6 +1258,8 @@ describe('工作文档的 markdown 渲染', () => {
     render(<App />)
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 同前一条：不等它，老板键可能撞上「工作文档还没进内存」
+    await waitForWorkDocLoaded()
     await act(async () => {
       pressBossKey()
     })
