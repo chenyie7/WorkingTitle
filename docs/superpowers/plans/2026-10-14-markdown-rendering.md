@@ -3404,6 +3404,8 @@ describe('工作文档的 markdown 渲染', () => {
 
 **`installApi` / `makeWorkDoc` 若签名与本任务假设的不一致**（比如 `installApi` 的第四个参数名字不同），按它们的实际签名写，别去改助手——那几个助手是老板键那一批的交付物，改动会波及一批用例。
 
+**实施时实测出来的一条**：上面这两条用例还缺两样东西——`pressBossKey()` 要包进 `act`（与那个文件里其余用例一致），以及按之前要 `await waitForWorkDocLoaded()`。少了后者时按老板键会收到 toast 而不是切换，用例会以「没有 h1」这种**看起来像功能没做**的样子红掉，而那正是那个助手存在的理由。当时连跑几轮都是绿的，所以这是防将来偶发、不是修一条已经红的用例。
+
 - [ ] **Step 6: 跑测试，确认它红**
 
 ```bash
@@ -3421,7 +3423,7 @@ import { isMarkdownPath, parseMarkdown } from './markdown/parse'
 import type { MarkdownSource } from './components/Page'
 ```
 
-**7b.** 在 `const shownEngine = ...`（现约 248 行）之后加：
+**7b.** 在 `const state = useTypingEngine(shownEngine)` **之后**加（**不是** `shownEngine` 之后——下面那段片段读了 `state`，而它是下一行才声明的，照字面放在 `shownEngine` 后面会 TDZ / TS2448。这是实施时实测出来的）：
 
 ```tsx
   /**
