@@ -19,6 +19,8 @@ export interface WtApi {
   importNovel: () => Promise<Novel | null>
   importWorkDoc: () => Promise<Novel | null>
   loadWorkDoc: (path: string) => Promise<Novel | null>
+  /** 取一张工作文档里的图片，回来的是 `data:` URL；失败给 `null` */
+  loadWorkDocImage: (src: string) => Promise<string | null>
   openNovelPath: (path: string) => Promise<Novel>
   initialNovelPath: () => Promise<string | null>
   /** 取【某一本书】自己的阅读进度。按书存之后，sourcePath 是必填的那把钥匙。 */

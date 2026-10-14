@@ -41,6 +41,8 @@ const benignApi: WtApi = {
   // （见 tests/unit/app.test.tsx 的 installApi）。
   importWorkDoc: async () => null,
   loadWorkDoc: async () => null,
+  // 单测里一律「取不到图」，于是渲染层走占位框那条路
+  loadWorkDocImage: async () => null,
   openNovelPath: async () => {
     throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')
   },

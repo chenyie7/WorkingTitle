@@ -240,3 +240,12 @@
   visibility: hidden;
   pointer-events: none;
 }
+
+/* 真图：最宽不超过正文宽，高度自适应。`display: block` 让块级图片独占一行，
+   与 Word 里「嵌入型」图片的行为一致。 */
+.wt-md-img-real {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.4em 0;
+}

@@ -98,7 +98,12 @@ function installApi(
     // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
     // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
     importWorkDoc: vi.fn(async () => workDoc),
-    loadWorkDoc: loadWorkDocMock
+    loadWorkDoc: loadWorkDocMock,
+    // 【Task 9 补的第三个有闸的替身】本文件这个对象字面量的目标类型是 `WtApi`（见上面那段
+    // 说明），所以少写一个成员同样报 TS2741——计划 Task 9 Step 6 只点了 `tests/setup.ts`
+    // 与 `types/global.d.ts` 两处，实测漏了这一处（`pnpm typecheck` exit 2）。姿态与
+    // setup.ts 那份一致：单测里一律「取不到图」，渲染层于是走占位框那条路。
+    loadWorkDocImage: vi.fn(async () => null)
   }
 }
 

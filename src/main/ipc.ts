@@ -1,6 +1,8 @@
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
+import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
 import { getStore } from './session'
+import { loadWorkDocImage } from './workDocImage'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
 // 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
@@ -99,6 +101,22 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.loadWorkDoc, (_e, filePath: string): Novel | null => {
     const novel = loadWorkDoc(filePath)
     return novel && novel.flatText.length > 0 ? novel : null
+  })
+
+  /**
+   * 取工作文档里的图片。
+   *
+   * 【基准目录为什么在这里算，而不是让渲染层传】渲染层若能指定基准目录，
+   * 就等于能把「读相对路径」变成「读任意目录下的任意图片」。这里从设置里读
+   * 工作文档自己的路径、取它的目录，渲染层能碰的范围就锁死在「工作文档旁边 + 网络」。
+   *
+   * 【失败返回 null，不抛】与 `loadWorkDoc` 同一姿态：读不出来是一条正常路径，
+   * 渲染层显示占位框，不该把那次 invoke 打成 rejection。
+   */
+  ipcMain.handle(CH.loadWorkDocImage, async (_e, src: string): Promise<string | null> => {
+    const docPath = getStore().readSettings().workDocPath
+    const baseDir = docPath ? dirname(docPath) : ''
+    return loadWorkDocImage(src, baseDir)
   })
 
   ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))

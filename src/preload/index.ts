@@ -14,6 +14,7 @@ const api = {
   importNovel: () => ipcRenderer.invoke(CH.importNovel),
   importWorkDoc: () => ipcRenderer.invoke(CH.importWorkDoc),
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
+  loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
   openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
