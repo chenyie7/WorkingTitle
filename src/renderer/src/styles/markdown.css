@@ -197,3 +197,46 @@
   color: var(--wt-md-quote-fg);
   font-size: 0.9em;
 }
+
+/* ── 量高度那份副本的包装：**一条规则都不要加** ─────────────────────────
+
+   `.wt-md-measure-block` 是「量高度」那份隐藏副本里每个顶层块的包装
+   （`renderMarkdown(doc, { withBlockEnds: true })` 产出，见 `markdown/toReact.tsx`）。
+
+   【为什么一条都不能加】`measure.ts` 量的不是 `offsetHeight`，而是
+   `下一个包装的 offsetTop − 这个包装的 offsetTop`（`measure.ts:58`），
+   因为相邻块之间的**外边距是折叠到包装之外**的、`offsetHeight` 量不到那一段。
+   这个算法成立的前提是：包装在布局上是一条**透明的通道**——它自己不产生任何
+   可见的盒子。包装上挂了 `padding` / `border` / `overflow`（非 visible）里任何一条，
+   它就变成一个真实的盒子，子元素的外边距不再穿透它（`position` 不在此列，
+   它不阻止折叠），于是量出来的数与不套包装的可见那份**不是同一份文档**，
+   而且**不报错**——只是铺满铺少了。
+
+   真 Chromium 实测（4 个 `margin-bottom: 0.85em` 的段落，套/不套包装各量一遍，
+   用的是 `measure.ts` 那个 offsetTop 差值算法）：
+
+     不套包装（基准）        137
+     套包装、无规则（现状）  137   ← 相等，这就是这条禁令要保住的不变量
+     包装 + padding 10px 0   231
+     包装 + border 1px       159
+     包装 + overflow: hidden 151
+     包装 + position: relative 137  ← 这条实测无影响，但同样别加
+
+   差额随块数线性累加（外边距从「折叠一次」变成「每个块各算一次 + padding」），
+   几十个块就是几百像素。`position: relative` 那条之所以「没事」是因为它既不阻止
+   外边距折叠、也不改变包装自己相对 `.wt-md-measure` 的 `offsetParent`
+   （`measure.ts` 读的是包装自己的 `offsetTop`，不是它后代的）；**别把它的「没事」
+   推广到别的属性上** —— 上面那三条看着同样无辜。
+
+   所以这个类名出现在 CSS 里的唯一意义就是「别给它写规则」。 */
+
+/* 量高度用的隐藏副本：绝对定位 + 不可见，但**参与布局**（`visibility: hidden`
+   而不是 `display: none`——后者会让 offsetHeight 恒为 0，量不了）。 */
+.wt-md-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
