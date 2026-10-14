@@ -10754,13 +10754,20 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
  * `export type WtApi = typeof api` **零引用者**（全仓库搜 `WtApi` 只有它自己的定义处）。
  *
- * 【三份拷贝里只有一份有闸，别记反】同一个 API 形状在仓库里躺着三处：本文件的
- * `benignApi`（`: WtApi`）、`tests/unit/app.test.tsx` 的 `installApi`（赋给 `unknown`）、
- * 以及 preload 里那个对象。**本桩两个方向都会红**——多写一个成员报 TS2353（对象字面量的
- * 多余属性检查），少写一个报 TS2741（缺属性），Task 4 两次都实测过；
- * `installApi` 因为赋给 `unknown`，两条都不触发；**真正一条闸都没有的，是 preload 与那份
- * 手写接口之间**——往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是
- * 那一处，不是这一处。
+ * 【三份拷贝里有两份有闸，别记反】【这一句原来写的是「只有一份有闸」，那已经是假话】
+ * 同一个 API 形状在仓库里躺着三处：本文件的 `benignApi`（`: WtApi`）、
+ * `tests/unit/app.test.tsx` 的 `installApi`、以及 preload 里那个对象。
+ * **前两处的对象字面量目标类型都是 `WtApi`，两个方向都会红**——多写一个成员报 TS2353
+ * （对象字面量的多余属性检查），少写一个报 TS2741（缺属性）。本桩在 Task 4 两次实测过；
+ * `tests/unit/app.test.tsx` 那份在 Task 9 实测过一次（TS2741），2026-10-14 又复验过一次：
+ * 往 `WtApi` 里插一个方法，`tsc --noEmit -p tsconfig.json` 精确报出这两行——
+ * `tests/setup.ts` 的 `const benignApi: WtApi = {`（当时在那份文件的 42 行）与
+ * `tests/unit/app.test.tsx` 的 `;(window as … as { api: WtApi }).api = {`（当时 67 行），
+ * 两条都是 `TS2741`。**所以加一个 API 方法时，这两处都要跟着改。**
+ * （行号随这份注释增删就会漂——认上面那两行代码，别认数字。）
+ *
+ * **真正一条闸都没有的，是 preload 与那份手写接口之间**——同一次复验里 preload 一行都没报，
+ * 往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是那一处，不是前两处。
  *
  * 所以补下面那两行不是「给多余属性找个地方放」——它们在这份桩里是**必填**属性；补上是为了
  * 让本桩继续满足接口，从而让「少写一个就 TS2741」这条闸对之后新增的方法照样有效。
@@ -10902,6 +10909,7 @@ import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
+import type { MarkdownSource } from './components/Page'
 import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
@@ -10909,6 +10917,7 @@ import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
+import { isMarkdownPath, parseMarkdown } from './markdown/parse'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
@@ -11144,6 +11153,45 @@ export default function App() {
   const shownEngine = bossActive ? workEngine : engine
 
   const state = useTypingEngine(shownEngine)
+
+  /**
+   * 【解析只做一次，缓存在这里】`useMemo` 的键是 `shownNovel` 这个对象：
+   * 它只在「换书 / 切老板模式 / 重新导入」时换身份，按键时不换。
+   * 200KB 的 md 解析是几十毫秒量级，每次按键重解析不可接受。
+   *
+   * 【判定按扩展名，只在工作文档这一路生效】小说的导入过滤器只收 txt，
+   * 但「所有文件」那个入口能让人选到 .md——那种情况下这里的判定也会为真，
+   * 而它与「工作文档」是同一套渲染，行为一致，不是漏洞。
+   *
+   * 【解析失败（null）就退回纯文本】`mdDoc` 为 null 时下面那个 `mdSource` 也是 null，
+   * `Page` 走纯文本那条路（设计第 12 节：不许白屏）。
+   */
+  const mdDoc = useMemo(() => {
+    if (!shownNovel || !isMarkdownPath(shownNovel.sourcePath)) return null
+    return parseMarkdown(shownNovel.flatText)
+  }, [shownNovel])
+
+  /**
+   * 量高度用的隐藏副本开关。默认关：那份副本是**整篇**文档的 DOM，
+   * 每次按键都渲染它不可接受。只有「要算铺满切点」时才开一下（Task 11）。
+   */
+  const [measuring, setMeasuring] = useState(false)
+  /** 隐藏副本的根元素。`MarkdownView` 挂载时交过来，量高度时读它的直接子元素 */
+  const measureElRef = useRef<HTMLElement | null>(null)
+  const onMeasureNode = useCallback((el: HTMLElement | null): void => {
+    measureElRef.current = el
+  }, [])
+
+  const mdSource: MarkdownSource | null =
+    mdDoc && state
+      ? {
+          doc: mdDoc,
+          revealStart: state.revealStart,
+          cursor: state.cursor,
+          measuring,
+          onMeasureNode
+        }
+      : null
 
   /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
   const flushSession = useCallback((): void => {
@@ -11677,6 +11725,7 @@ export default function App() {
               onToggleExpand={() => setExpanded(true)}
               empty={!shownNovel}
               importShortcut={formatShortcut(shortcutTable.import, kind)}
+              markdown={mdSource}
             >
               {shownEngine && state && (
                 <InputCapture engine={shownEngine} mode={state.mode} />
@@ -12899,6 +12948,126 @@ describe('老板键', () => {
     fireEvent.click(screen.getByTestId('sidebar-toggle'))
     await exitBoss()
     expect(screen.queryByTestId('chapter-list')).toBeNull()
+  })
+})
+
+describe('工作文档的 markdown 渲染', () => {
+  /**
+   * 造一本正文**真的含 `#`** 的小说。
+   *
+   * 【为什么不能拿 `makeNovel()` 顶上】那份夹具的正文里一个 `#` 都没有，于是
+   * `querySelector('h1')` 为 null 是必然的——**它证明不了「没走渲染」**，因为
+   * 「走了渲染」在那种夹具上同样得到 null。判据必须是「含 `#` 的正文有没有被吃掉」。
+   */
+  function makeHashNovel(sourcePath: string): Novel {
+    const text = '# 季度汇报\n\n本季度共归档 3 项。\n'
+    const { flatText, chapters } = splitChapters(text, '测试书')
+    return {
+      title: '测试书',
+      sourcePath,
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText,
+      chapters
+    }
+  }
+
+  /**
+   * 抽 1 个字（默认比例 10），让小说那条路的阅读区真的有东西。
+   *
+   * 【这里断的是「大于 0」，不是「等于 10」】`revealedChars()` 量的是 `page-text` 的
+   * **DOM 文本长度**，这在纯文本那条路上恰好等于抽出的字符数——但在 md 那条路上不等：
+   * 记号本身（`# `、`\n\n`）被渲染吃掉了，抽 10 个字符出来、DOM 里只有 6 个字
+   * （`季度汇报` + `本季`）。写死 10 会让 md 那两条用例量到的是渲染细节，而不是
+   * 「有没有东西被抽出来」——那正是这个前提自检唯一要保证的事。
+   */
+  async function typeOneChar(): Promise<void> {
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+  }
+
+  it('导入 .md 后按老板键：阅读区是渲染后的结构，不是裸文本', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.md',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 【这一句不能省】`loadWorkDoc` 还没回来时按老板键，收到的是一条 toast 而不是切换
+    // ——用例会以「没有 h1」这种**看起来像功能没做**的样子红掉。见 `waitForWorkDocLoaded`。
+    await waitForWorkDocLoaded()
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    // 记号一个都不该露出来
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
+  })
+
+  it('.txt 工作文档走纯文本那条路：既不渲染，也不掉字', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.txt',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 同前一条：不等它，老板键可能撞上「工作文档还没进内存」
+    await waitForWorkDocLoaded()
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').textContent).toContain('#'))
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【强的这一条】小说是 `.txt`、正文**确实含 `# 标题`** → 必须原样显示那个 `#`。
+   *
+   * 这才是「.md 判定不会漏到小说身上」的真正判据：夹具里有一个**会被渲染吃掉**的记号，
+   * 所以「显示了」与「被吃了」在页面上是可区分的。旧版那条用例拿一份没有 `#` 的夹具断言
+   * `h1` 为 null，两个世界都通过，是空转的。
+   */
+  it('小说走 .txt：正文里的 `#` 原样显示，没有 h1', async () => {
+    const n = makeHashNovel('/tmp/测试书.txt')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    expect(screen.getByTestId('page-text').textContent).toContain('#')
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【诚实的这一条】小说是 `.md`、正文含 `# 标题` → **会**渲染成 `h1`。
+   *
+   * 这是刻意的、不是漏洞：判定只看**当前显示的那一份**的 `sourcePath` 扩展名，
+   * 与「工作文档」共用同一套渲染机制。小说导入的过滤器只收 txt，但「所有文件」那个入口
+   * 能让人选到 .md——那时它就该按 md 渲染（见 `App.tsx` 里 `mdDoc` 那段说明）。
+   * 这条用例钉的是这个事实，免得将来有人把它当成回归。
+   */
+  it('小说走 .md：同一个渲染机制照样生效，`#` 被吃成 h1（刻意如此）', async () => {
+    const n = makeHashNovel('/tmp/测试书.md')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
   })
 })
 

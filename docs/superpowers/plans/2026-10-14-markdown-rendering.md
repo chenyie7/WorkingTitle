@@ -126,7 +126,7 @@ console.log("切片:", JSON.stringify("# 标题\n\n| a | b |\n| - | - |\n| 1 | 2
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath } from '../../src/renderer/src/markdown/parse'
 
 /**
  * 【这一批用例断言的是**关系**，不是字面数字】
@@ -193,6 +193,15 @@ describe('parseMarkdown', () => {
     expect(() => parseMarkdown('')).not.toThrow()
     expect(parseMarkdown('')!.type).toBe('root')
   })
+
+  it('按扩展名判定：.md / .markdown 才算，大小写不敏感', () => {
+    expect(isMarkdownPath('/Users/某人/周报.md')).toBe(true)
+    expect(isMarkdownPath('/Users/某人/周报.MARKDOWN')).toBe(true)
+    expect(isMarkdownPath('/Users/某人/周报.txt')).toBe(false)
+    // 【这一条是刻意的】内容长得像 md 的 txt 不渲染：导入 txt 的人要的就是原文
+    expect(isMarkdownPath('/Users/某人/周报.md.txt')).toBe(false)
+    expect(isMarkdownPath('/Users/某人/周报')).toBe(false)
+  })
 })
 ```
 
@@ -243,6 +252,21 @@ export function parseMarkdown(text: string): Root | null {
     console.warn('[wt] 解析 markdown 失败，退回纯文本：', err)
     return null
   }
+}
+
+/**
+ * 这份工作文档要不要渲染。
+ *
+ * 【为什么按扩展名而不是按内容嗅探】「内容长得像 md」判不准，而且判错的代价是
+ * 双向的：把一份纯文本当 md 渲染会吃掉里面的 `*` 和 `#`，把一份 md 当纯文本
+ * 又会露出记号。扩展名是用户的意图，也是他后来能自己改回来的东西。
+ *
+ * 【`.md.txt` 判 false 是有意的】`extname` 只看最后一段。用户的意图是 txt。
+ */
+const MARKDOWN_EXT = /\.(md|markdown)$/i
+
+export function isMarkdownPath(filePath: string): boolean {
+  return MARKDOWN_EXT.test(filePath)
 }
 ```
 
