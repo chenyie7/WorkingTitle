@@ -4,6 +4,7 @@ import App from './App'
 import './styles/word.css'
 import './styles/ribbon.css'
 import './styles/page.css'
+import './styles/markdown.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

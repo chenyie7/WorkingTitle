@@ -1,0 +1,183 @@
+/**
+ * 工作文档的 markdown 排版。
+ *
+ * 【配色为什么按 `data-paper` 而不是按 `data-theme` 分叉】这是本文件最容易写错的一处。
+ * 深色主题**不等于**深色纸：`data-theme='dark'` 而 `data-paper` 不是 `dark` 时，
+ * `.wt-page` 仍然是白底（`page.css` 里那条底色写在 `.wt-page` 上，只有
+ * `[data-theme='dark'][data-paper='dark']` 才把它换掉）。所以浅色那一套颜色要挂在
+ * **默认**上，深色那一套只挂在「深色主题 **且** 深色纸」上——挂错了，深色系统下那张
+ * 白纸上的标题会变成暗蓝、代码块变成深灰底，一眼就看出破绽。
+ *
+ * 【对比度】深色那一套的取值比浅色亮一档，是为了在深色纸上有足够对比度。
+ * 这一条只有真机能判，验收清单里有一条专门看它。
+ */
+
+:root {
+  /* Word「标题 1」的默认蓝，以及默认超链接蓝 —— 对着真 Word 取的 */
+  --wt-md-h: #2f5496;
+  --wt-md-link: #0563c1;
+  --wt-md-code-bg: #f3f3f3;
+  --wt-md-code-fg: #24292f;
+  --wt-md-quote-fg: #595959;
+  --wt-md-quote-bar: #d0d0d0;
+  --wt-md-rule: #d8d8d8;
+  --wt-md-grid: #c8c8c8;
+  --wt-md-th-bg: #f7f7f7;
+}
+
+[data-theme='dark'][data-paper='dark'] {
+  --wt-md-h: #7aa7e0;
+  --wt-md-link: #6cb6ff;
+  --wt-md-code-bg: #2a2a2e;
+  --wt-md-code-fg: #d8d8d8;
+  --wt-md-quote-fg: #a8a8a8;
+  --wt-md-quote-bar: #4a4a4a;
+  --wt-md-rule: #3a3a3a;
+  --wt-md-grid: #3f3f3f;
+  --wt-md-th-bg: #26262a;
+}
+
+/* ── 块级 ───────────────────────────────────────────────── */
+
+.wt-md-p {
+  margin: 0 0 0.85em;
+}
+
+.wt-md-h {
+  /* 标题换成无衬线：真 Word 的标题样式用的就是微软雅黑 / 等线那一系，
+     而正文是宋体系（`.wt-page` 上的 Georgia / Songti SC）。这一处差异是伪装的一部分。 */
+  font-family: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  color: var(--wt-md-h);
+  margin: 0.9em 0 0.45em;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.wt-md-h1 { font-size: 26px; }
+.wt-md-h2 { font-size: 21px; }
+.wt-md-h3 { font-size: 18px; }
+.wt-md-h4 { font-size: 16px; }
+.wt-md-h5 { font-size: 15px; }
+.wt-md-h6 { font-size: 15px; font-weight: 500; }
+
+/* 第一个块不带上外边距：铺满一页时顶上多一截空白会让「从纸中间开始」露馅 */
+.wt-page__text > :first-child {
+  margin-top: 0;
+}
+
+.wt-md-list {
+  margin: 0 0 0.85em;
+  padding-left: 2em;
+}
+
+.wt-md-li {
+  margin: 0.15em 0;
+}
+
+.wt-md-li--task {
+  list-style: none;
+  margin-left: -1.4em;
+}
+
+.wt-md-check {
+  display: inline-block;
+  width: 1.5em;
+  color: var(--wt-md-quote-fg);
+}
+
+.wt-md-quote {
+  margin: 0 0 0.85em;
+  padding: 0.1em 0 0.1em 14px;
+  border-left: 3px solid var(--wt-md-quote-bar);
+  color: var(--wt-md-quote-fg);
+}
+
+.wt-md-pre {
+  margin: 0 0 0.85em;
+  padding: 10px 14px;
+  background: var(--wt-md-code-bg);
+  color: var(--wt-md-code-fg);
+  border-radius: 3px;
+  font-family: Consolas, Menlo, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  /* 换行而不是横向滚动：设计第 9.2 节那条「不出现横向滚动条」的口径对代码块同样适用，
+     而纸是固定宽度的，长行溢出会直接盖到纸外面去。代码行被折行在这里是可以接受的。 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wt-md-hr {
+  border: 0;
+  border-top: 1px solid var(--wt-md-rule);
+  margin: 1em 0;
+}
+
+/* ── 表格：固定宽度 + 单元格换行，绝不横向滚动 ────────────── */
+
+.wt-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 0 0 0.85em;
+  font-size: 14px;
+}
+
+.wt-md-cell {
+  border: 1px solid var(--wt-md-grid);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.wt-md-table thead .wt-md-cell {
+  font-weight: 600;
+  background: var(--wt-md-th-bg);
+}
+
+/* ── 行内 ───────────────────────────────────────────────── */
+
+.wt-md-code-inline {
+  font-family: Consolas, Menlo, 'Courier New', monospace;
+  font-size: 0.92em;
+  background: var(--wt-md-code-bg);
+  color: var(--wt-md-code-fg);
+  padding: 0.1em 0.35em;
+  border-radius: 2px;
+}
+
+.wt-md-link {
+  color: var(--wt-md-link);
+  text-decoration: underline;
+}
+
+.wt-md-fn {
+  font-size: 0.75em;
+  color: var(--wt-md-link);
+  vertical-align: super;
+  line-height: 0;
+}
+
+.wt-md-fndef {
+  margin: 0.3em 0;
+  padding-left: 1.8em;
+  text-indent: -1.8em;
+  font-size: 0.9em;
+  color: var(--wt-md-quote-fg);
+}
+
+.wt-md-fndef__label::after {
+  content: '. ';
+}
+
+/* ── 图片占位框（Task 9 会把真图放进来，这个框留着给加载中与加载失败用） ── */
+
+.wt-md-img {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px dashed var(--wt-md-rule);
+  border-radius: 2px;
+  color: var(--wt-md-quote-fg);
+  font-size: 0.9em;
+}
