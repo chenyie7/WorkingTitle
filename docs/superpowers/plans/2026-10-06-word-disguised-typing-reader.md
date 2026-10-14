@@ -10918,6 +10918,8 @@ import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
 import { isMarkdownPath, parseMarkdown } from './markdown/parse'
+import { pickFillCut, type BlockHeight } from './markdown/fill'
+import { measureBlocks } from './markdown/measure'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
@@ -11182,6 +11184,101 @@ export default function App() {
     measureElRef.current = el
   }, [])
 
+  /**
+   * 量好的块高表。
+   *
+   * 【为什么缓存】算铺满切点要用它，而它只跟「文档 + 样式」有关，与铺满百分比无关。
+   * 于是按 ⌘⇧↑/↓ 时只重算切点，不重量。挂 `doc` 一起存，换文档自然失效。
+   */
+  const heightsRef = useRef<{ doc: unknown; heights: BlockHeight[] } | null>(null)
+  /** 有一次「开量高度」在等结果：量完要拿它接着算切点 */
+  const pendingFillRef = useRef<number | null>(null)
+
+  /** 纸张正文区的高度。**量出来的，不是写死的 912**。 */
+  const pageTextHeight = useCallback((): number => {
+    const el = document.querySelector('.wt-page')
+    if (!(el instanceof HTMLElement)) return 0
+    const cs = getComputedStyle(el)
+    const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+    return Number.isFinite(inner) && inner > 0 ? inner : 0
+  }, [])
+
+  /**
+   * 铺满铺的是**工作文档**，所以「要不要量高度」判的也是它，**不是当前显示的那一份**。
+   *
+   * 【为什么不能用 `mdDoc`】`mdDoc` 跟着 `shownNovel = bossActive ? workNovel : novel` 走，
+   * 而按下老板键那一刻 `bossActive` 还是 false——那一下 `mdDoc` 还是**小说**那一份的
+   * （小说是 txt 时为 null）。照 `mdDoc` 分岔，进老板模式就永远进不了量高度那一支，
+   * 铺出来的是按字数估的切点、屏幕底部切在半句话上；只有「已经在老板模式里」再按
+   * ⌘⇧↑/↓ 才会量。实测（Task 11 收尾）：把分岔改回 `mdDoc`，那条「按 ⌘⇧B 会调
+   * `measureBlocks`」的用例当场红。
+   */
+  const workIsMarkdown = workNovel !== null && isMarkdownPath(workNovel.sourcePath)
+
+  /**
+   * 铺满：能算就直接算，算不了就先开量高度、等量完再算。
+   *
+   * 【三条路，顺序不能换】
+   * 1. 有缓存（同一份文档量过）→ 直接算切点；
+   * 2. 没有缓存 → 开 `measuring` 渲染隐藏副本，把百分比记在 `pendingFillRef` 里，
+   *    量完的那个 effect 接着算；
+   * 3. 量不出来（jsdom、或者量出来是 0）→ **退回按字符数**（`fillCharsFor`）。
+   *    这条兜底是设计第 7 节写明的，也是这条路径唯一能在单测里跑到的那一半。
+   */
+  const applyFill = useCallback(
+    (percent: number): void => {
+      const eng = workEngine
+      if (!eng) return
+      const cached = heightsRef.current
+      if (workIsMarkdown && cached && cached.doc === workNovel) {
+        eng.revealTo(pickFillCut(cached.heights, (pageTextHeight() * percent) / 100))
+        return
+      }
+      if (!workIsMarkdown) {
+        // 不是 md：没有结构可量，本来就是按字符数铺
+        eng.revealTo(fillCharsFor(percent))
+        return
+      }
+      pendingFillRef.current = percent
+      setMeasuring(true)
+    },
+    [workEngine, workNovel, workIsMarkdown, pageTextHeight]
+  )
+
+  /**
+   * 隐藏副本渲染完之后：量高度、算切点、把开关关掉。
+   *
+   * 【为什么必须在 effect 里】量的是 DOM 的布局，而布局要等 commit 之后才有。
+   */
+  useEffect(() => {
+    if (!measuring) return
+    const el = measureElRef.current
+    /**
+     * 【为什么整个包在 try 里】设计第 7 节那条兜底写的是「量不出高度（jsdom 里
+     * `offsetHeight` 恒为 0，**或测量抛错**）→ 退回按字符数」。`offsetHeight` 本身
+     * 不抛，但读布局在渲染异常、DOM 已被卸载之类的情况下会抛，而这条 effect 里抛出去
+     * 就是一次未捕获异常。包住它，兜底路径才真的是兜底。
+     *
+     * 【为什么不再传 ends】`measureBlocks` 现在从 DOM 自己的 `data-block-end` 读偏移，
+     * 不再吃一个外部数组。原因是那样是「两处各自决定有几个块」，永远能对不上；
+     * 而对不上的后果是整篇静默退回按字符数铺（见 `MarkdownView` 里那段说明）。
+     */
+    let heights: BlockHeight[] | null = null
+    try {
+      heights = measureBlocks(el)
+    } catch (err) {
+      console.warn('[wt] 量 markdown 块高失败，退回按字符数铺：', err)
+    }
+    const percent = pendingFillRef.current
+    pendingFillRef.current = null
+    if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
+    // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
+    workEngine?.revealTo(
+      heights ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100) : fillCharsFor(percent ?? 0)
+    )
+    setMeasuring(false)
+  }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
+
   const mdSource: MarkdownSource | null =
     mdDoc && state
       ? {
@@ -11295,6 +11392,10 @@ export default function App() {
       notify('这个文件是空的，换一个')
       return
     }
+    // 【表达意图的冗余，不是承重的那道闸】块高表真正的失效判据是**身份**
+    // （`cached.doc === workNovel`），而这里必然换上一个新的 `workNovel`、陈旧表本来就命中
+    // 不了。留着它是「别捏着上一份文档的高度数组不放」。同款一处见 `handleRemoveWorkDoc`。
+    heightsRef.current = null
     setWorkNovel(doc)
     setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
     // 路径就在 Novel 里，不必让 IPC 多返回一个值
@@ -11305,6 +11406,9 @@ export default function App() {
   }, [notify])
 
   const handleRemoveWorkDoc = useCallback((): void => {
+    // 同 `handleImportWorkDoc`：身份（`workNovel` 变成 null）已经足以判失效，这一行是
+    // 「顺手丢掉那份引用」，不是任何用例的判据。
+    heightsRef.current = null
     setWorkNovel(null)
     setWorkEngine(null)
     setWorkDocPath(null)
@@ -11330,7 +11434,7 @@ export default function App() {
       return
     }
     const next = !bossMode
-    if (next) workEngine.revealTo(fillCharsFor(bossFillPercentRef.current))
+    if (next) applyFill(bossFillPercentRef.current)
     /**
      * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
      *
@@ -11346,7 +11450,7 @@ export default function App() {
      */
     setExpanded(false)
     setBossMode(next)
-  }, [workNovel, workEngine, bossMode, workDocPath, notify])
+  }, [workNovel, workEngine, bossMode, workDocPath, notify, applyFill])
 
   /** 老板键铺满 +/-：改设置；正在老板模式时**立刻重铺**，让用户当场看到效果。 */
   const adjustBossFill = useCallback(
@@ -11374,10 +11478,15 @@ export default function App() {
       // 往下走。本任务用 `ChapterList` 的 `collapsed={sidebarCollapsed || bossActive}` 把它
       // 按住——老板模式下强制收起，`jumpToChapter` 在界面上再没有入口。
       // 危害本来也很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
-      if (bossActive) workEngine?.revealTo(fillCharsFor(next))
-      notify(`铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+      if (bossActive) applyFill(next)
+      /**
+       * 【md 那一路不能报字数】它按**渲染后的高度**铺，`fillCharsFor` 只是量不出高度时的
+       * 兜底估算——报出来是个假数字（屏幕上根本不是那么多个字）。那种「看起来精确、
+       * 其实错」的提示比不提示更糟，所以那一路只报档位。
+       */
+      notify(workIsMarkdown ? `铺满 ${next}%` : `铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
     },
-    [bossActive, workEngine, notify]
+    [bossActive, applyFill, notify, workIsMarkdown]
   )
 
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
@@ -12948,6 +13057,84 @@ describe('老板键', () => {
     fireEvent.click(screen.getByTestId('sidebar-toggle'))
     await exitBoss()
     expect(screen.queryByTestId('chapter-list')).toBeNull()
+  })
+
+  /**
+   * 【这两条为什么要「先进老板模式、再按 ⌘⇧↓」，而不是像计划原文那样只按一下老板键】
+   *
+   * `applyFill` 判定「要不要量高度」看的是**当前显示的那一份**的 `mdDoc`，而按老板键那
+   * 一下它看到的还是**小说**那一份（`setBossMode` 还没提交）——小说是 `.txt`，`mdDoc`
+   * 为 null，于是直接走「不是 md：按字符数铺」那一支。**进老板模式那一下从来不开
+   * `measuring`**（实测：把那两处 `revealTo` 从 `applyFill` 里删掉，进老板模式后屏幕
+   * 一个字的没有；量到非空只可能来自别处）。要走到「量高度 → 量不出 → 退回按字符数」
+   * 那条降级路，必须**已经在老板模式里**再动一次铺满量，也就是 ⌘⇧↓。
+   *
+   * 夹具因此必须是 `.md`：`.txt` 的工作文档 `mdDoc` 恒为 null，`applyFill` 永远进不了
+   * 量高度那一支（计划原文用的是 `makeWorkDoc()`，那是 `.txt`）。这里只改 `sourcePath`
+   * 一个字段，正文 / 章节 / 助手全不动——Task 10 那两条 md 用例也是这个写法。
+   *
+   * 【与设计第 7 节「进入老板模式时量一次」的出入】照上一条实测，**进入那一下是按字符
+   * 数铺的**，量高度只发生在 ⌘⇧↑/↓ 上。根因是 `shownNovel = bossActive ? workNovel : novel`
+   * ——按下老板键那一刻 `bossActive` 还是 false，`mdDoc` 于是还是**小说**那一份的（`null`）。
+   * 实测：没有小说、工作文档是 md 时也照样不进量高度那一支（`shownNovel` 那时是 `null`）。
+   * 这条只有真机能判（jsdom 量不出高度，「按字符数」与「量不出所以按字符数」在屏幕上同形），
+   * 判据是计划末尾验收清单第 2 条。**别当成已实现。**
+   */
+  it('量不出块高时按 ⌘⇧↓：退回按字符数铺，屏幕上的字当场变少（不是空白）', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), bossFillPercent: 100, workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+    const before = revealedChars()
+
+    // 此刻真的在老板模式里了：这一发才会进 applyFill 的量高度那一支
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+
+    // 【这条守的是降级路径本身】jsdom 里 `offsetHeight` / `offsetTop` 恒为 0，
+    // `measureBlocks` 返回 null，于是走 `fillCharsFor(90)` = 1197 字那条老路：光标从
+    // 1330 退到 1197，屏幕上的字**变少**（md 渲染吃掉记号，所以只判方向、不判具体字数）。
+    //
+    // 【它同时是「开关真的开过」的证人】md 那一支里 `applyFill` **一个字都不铺**，铺字的
+    // 只有量完的那个 effect——所以「变少」就等于「measuring 开过 + 量不出 + 退回按字符数」
+    // 三件事一起成立。少了其中任何一件，光标都停在 1330、这里量到的是「没变」。下一条
+    // 用例的弱点正是靠这一条补上的（见那里的说明）。
+    await waitFor(() => expect(revealedChars()).toBeLessThan(before))
+  })
+
+  it('量完那次把开关关掉：隐藏副本只在算铺满的那一下存在', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+
+    // 副本只在算铺满那一下存在；量完必须关掉，否则每个按键都在重建整篇 DOM。
+    // 与上一条同样是「已经在老板模式里」再动一次铺满量，那一发才真的开 measuring。
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+    // 【等「那一发跑完」再断言】这一发串起「开 measuring → effect 量完并关掉」，等屏幕上
+    // 的字真变少等于那一串已经走完。少了它，断言可能落在那一串**之前**——那时副本同样不
+    // 存在，这条就是**假绿**（计划 Step 2 警告的正是这个形态）。
+    await waitFor(() => expect(document.querySelector('.wt-md-measure')).toBeNull())
+
+    // 【这条断言单独看是弱的，它由上面那一条补齐】`measuring` 从没打开时副本也不存在，
+    // 这一条照样绿。计划 Step 2 因此要求「先断言它出现过」。**那一句在 jsdom 里写不出来**
+    // （实测：开着它跑就是红的）——副本挂上与摘掉都在**同一次 act 的 flush 里**，
+    // `setMeasuring(true)` 与 effect 里那次 `setMeasuring(false)` 之间那一帧的 DOM
+    // 从来不落到 `waitFor` 轮询得到的世界里。所以「开关真的开过」交给**上一条用例**作证
+    // （它要求量高度那一支真的铺了字），而不是在这里干等一个轮询不到的中间态。
   })
 })
 
