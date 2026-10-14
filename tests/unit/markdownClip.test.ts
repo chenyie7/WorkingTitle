@@ -76,6 +76,9 @@ describe('clipTree —— 结构预知', () => {
     // 光标落在「加粗」的第一个字上：strong 节点已开始（** 在它之前）
     const out = clipTree(t, 0, src.indexOf('加粗'))
     expect(textOf(out.children[0])).toBe('前')
+    // 【结构预知】这条用例的名字承诺了「结构节点在」，所以必须真的断言到结构——
+    // 只断言文字的话，把 strong 整个丢掉这条照样绿（实测）。
+    expect(typesDeep(out.children[0])).toContain('strong')
   })
 
   it('偏移之外的节点原样保留，不会把整棵树丢掉', () => {
