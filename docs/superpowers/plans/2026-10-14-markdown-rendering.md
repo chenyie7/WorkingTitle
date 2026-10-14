@@ -366,6 +366,12 @@ function typesOf(tree: Root): string[] {
   return tree.children.map((n) => n.type)
 }
 
+/** 深度遍历，收集树里出现过的所有节点类型——用来断言某个结构节点到底在不在。 */
+function typesDeep(node: unknown): string[] {
+  const n = node as { type?: string; children?: unknown[] }
+  return [n.type ?? '', ...(n.children ?? []).flatMap((c) => typesDeep(c))]
+}
+
 const doc = parseMarkdown(DOC)!
 
 /** 取某个字符串在 DOC 里的起始下标——用例里要按真实偏移切，不能拍脑袋写数字。 */
@@ -418,11 +424,108 @@ describe('clipTree —— 结构预知', () => {
   it('偏移之外的节点原样保留，不会把整棵树丢掉', () => {
     const out = clipTree(doc, 0, DOC.length)
     expect(typesOf(out)).toEqual(['heading', 'paragraph', 'list'])
-    expect(textOf(out)).toBe(DOC.replace(/\n/g, ''))
+    // 记号（`# ` 与 `- `）是由**结构**生成的，不在任何 text 节点里，所以按 text 节点
+    // 拼出来天然不含它们。期望值要把行首记号去掉，不能拿 DOC 直接删换行。
+    expect(textOf(out)).toBe(
+      DOC.replace(/^(?:#|-)\s/gm, '').replace(/\n/g, '')
+    )
   })
 
   it('光标在 0：整棵树是空的', () => {
     expect(clipTree(doc, 0, 0).children).toHaveLength(0)
+  })
+})
+
+/**
+ * 块内的**叶子**（没有 `value` 可裁、也没有 `children`）——图片、内嵌 HTML、
+ * 脚注引用、硬换行。它们截不出「半个」，所以只能在「留整块」与「丢」之间二选一。
+ *
+ * 二选一的判据是**它自己的字符区间**（与顶层块同一条规则），不是「所在块已经开始」：
+ * 留着没抽到的图片就等于提前去抓图（设计 8.2：只抓已经抽出来的那张），
+ * 留着没抽到的 HTML 就等于把还没有揭示的字画到屏幕上。
+ */
+describe('clipTree —— 块内的叶子节点', () => {
+  const IMG = '前 ![图](a.png) 后\n'
+
+  it('还没抽到的图片不留在树里（留着就等于提前发 IPC 去抓图）', () => {
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.indexOf('前') + 1) // 只抽到「前」
+    expect(textOf(out)).toBe('前')
+    expect(typesDeep(out)).not.toContain('image')
+  })
+
+  it('光标落在图片源码中间：图片整张在树里（设计 8.3，一揭示就整张出现）', () => {
+    // 这条与上一条一起把边界钉死：判据是图片**自己的起始偏移**，不是它的结束偏移
+    // ——路径还没抽完时图就该跳出来，而它一旦开始就整张出现、不做半张。
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.indexOf('a.png'))
+    expect(typesDeep(out)).toContain('image')
+  })
+
+  it('光标推过整张图之后：图片还在（上一条的反面对照）', () => {
+    const out = clipTree(parseMarkdown(IMG)!, 0, IMG.length)
+    expect(typesDeep(out)).toContain('image')
+    expect(textOf(out)).toContain('后')
+  })
+
+  it('还没抽到的内嵌 HTML 标签同样不留在树里', () => {
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('前文') + 2) // 只抽到「前文」
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).toBe('前文')
+  })
+
+  it('折点已经翻过去的图片也丢掉（叶子看的是自己的区间，不是所在块开没开始）', () => {
+    // from 落在块**中间**：`revealStart` 是 jumpToChapter 抬起来的，可以落在任何位置，
+    // 所以「块留着、块里的图在窗口之外」是会发生的。留着它就等于给一张窗口外的图发
+    // IPC 去抓（设计 8.2）。边界是 `end <= from`——这条用例正好卡在 end == from 上。
+    const from = IMG.indexOf(' 后')
+    const out = clipTree(parseMarkdown(IMG)!, from, IMG.length)
+    expect(typesDeep(out)).not.toContain('image')
+    expect(textOf(out)).toContain('后')
+  })
+})
+
+/**
+ * 内嵌 HTML 的 `value` 里**连文字一起**（块级 HTML 是一个整节点：`<div>后面的话</div>`
+ * 是 0..15 的一个 html 节点）。所以它不能像图片那样「一揭示就整体出现」，两条路都堵着：
+ *
+ * - 从中间切开 → 得到 `<di` 这种碎片，`tokenizeHtml` 认不出它是标签、会当普通文字吐出来，
+ *   等于把裸源码字符弄上屏；
+ * - 不切、整块留着 → 未揭示的字跟着一起上屏。
+ *
+ * 于是只有第三条路：**等它整个抽完（`end <= to`）才出现**。图片、脚注引用、硬换行没有这个
+ * 问题（它们没有文字，切不出半个也无所谓），仍然是一开始揭示就整体出现。
+ */
+describe('clipTree —— 内嵌 HTML 等抽完才出现', () => {
+  const BLOCK = '<div>后面的话</div>\n'
+
+  it('块级 HTML 抽到一半：不在树里，未揭示的字也不在', () => {
+    const out = clipTree(parseMarkdown(BLOCK)!, 0, BLOCK.indexOf('后') + 1) // 刚过 `<div>后`
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).not.toContain('面的话')
+  })
+
+  it('块级 HTML 抽完之后：在树里，value 是完整那串（反面对照）', () => {
+    const out = clipTree(parseMarkdown(BLOCK)!, 0, BLOCK.length)
+    expect(typesDeep(out)).toContain('html')
+    expect(textOf(out)).toContain('<div>后面的话</div>')
+  })
+
+  it('行内 HTML 抽到一半（光标在标签中间）：不在树里', () => {
+    // 【为什么单补这一条】上一条「还没抽到的内嵌 HTML 不留在树里」喂的是 to = 2，那时
+    // html 节点**还没开始**，是叶子那条 `start >= to` 把它挡掉的——把 html 这条规则整个
+    // 撤掉，那条用例照样绿。要真正压住 html 规则，光标必须落在**标签中间**（start < to
+    // 而 end > to），也就是这一条。
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('<span>') + 3) // 光标在 `<spa|n>` 里
+    expect(typesDeep(out)).not.toContain('html')
+    expect(textOf(out)).not.toContain('后面')
+  })
+
+  it('行内 HTML 刚好抽完：在树里（边界是 end <= to，取等）', () => {
+    const src = '前文 <span>后面</span>\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('后面')) // `<span>` 的 end 正好是 9
+    expect(textOf(out)).toContain('<span>')
+    expect(textOf(out)).not.toContain('</span>') // 闭合标签还没抽到，不在
   })
 })
 ```
@@ -443,26 +546,46 @@ import type { Content, Root } from 'mdast'
 /**
  * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
  *
- * 【两条规则，合起来就是「结构预知」】
+ * 【三条规则，合起来就是「结构预知」】
  *
- * 1. **起始偏移 ≥ to 的节点整个丢掉**（块与行内一视同仁）。光标还没走到的东西，
- *    屏幕上一点都不该有——这是「还没开始的块不存在」。
+ * 1. **顶层块的起始偏移 ≥ to 的整个丢掉**。光标还没走到的块，屏幕上一点都不该有
+ *    ——这是「还没开始的块不存在」。
  * 2. **跨越 to 的文本被截断**。剩下的部分照常显示。
+ * 3. **块内的叶子（没 `value` 可裁、也没 `children`）按它自己的区间判**：没开始就丢。
+ *    它们截不出「半个」，留着就等于提前把没揭示的东西弄上屏——图片会提前发 IPC 去抓
+ *    （设计 8.2：只抓已经抽出来的那张）。**内嵌 HTML 是其中的特例，要等抽完**，理由见下。
+ *
+ * 【规则 1 只在顶层判，块内的容器结构一个都不丢】这不是省事，是设计 3.2 钉死的口径：
+ * **「块」= `root.children`（mdast 根节点的直接子节点）**，表格的行、列表的项都
+ * **不是**块，而是块的内部结构——「一旦所在的块被保留，它们整体跟着保留」。
  *
  * 于是「已经开始、但没抽完」的块会**保留完整结构**：表格的表头一露头，整张网格
- * 就在树里了，只是后面几行的文字是空的。这正是设计 3.2 那条——看着像「正在填表」，
+ * 就在树里了，只是后面几行的文字是空的；列表的第一项开始揭示时，后面几项也在，
+ * 只是文字是空的。这正是设计 3.2 那条——看着像「正在填表」，
  * 代价是提前泄露「后面还有几行」这类结构信息，这是明确接受的。
+ *
+ * **把规则 1 也用到块内部是错的**（本模块第一版就是这么写的）：那样表格只会画出
+ * 已揭示的那几行，整张网格画不出来，上面那条口径当场失效。判据是设计 3.2 与
+ * 计划末尾验收清单第 9 条，不是任何一条单测。
+ *
+ * 【规则 3 与规则 1 的边界在哪】保留与否一律看**节点自己的区间**，与「它所在的块开没
+ * 开始」无关。差别只在后果：块内容器丢不得（丢了整张网格就没了），块内叶子非丢不可
+ * （留着就是提前抓图 / 提前上屏）。所以两条规则不矛盾，是同一条判据落在两类节点上。
  *
  * 【为什么 from 也要判】它是折点（折叠前文）或 revealStart。折点是按块边界算的，
  * 但 `revealStart` 不是——`jumpToChapter` 抬起来的那个值可能落在块中间，所以两边
- * 都要能切。
+ * 都要能切。`from` 落在块中间时，块本身留着，块内 `from` 之前的那部分文字被截成空。
  *
- * 【哪些节点算「文本」】只有 `text` / `code` / `inlineCode` 三个带可裁的 `value`。
- * 其余的分两类：
- *   - 有 `children` 的（段落、列表、表格…）递归下去裁；
- *   - 没有 `children` 也没有可裁文本的（图片、分隔线、脚注引用、以及**内嵌 HTML**）
- *     只要「已经开始」就**整体出现**。HTML 归这一类是刻意的：标签不是文本，
- *     把它从中间切开只会得到一个不配对的标签。
+ * 【三类节点】只有 `text` / `code` / `inlineCode` 三个带**可裁**的 `value`（截断）；
+ * 有 `children` 的（段落、列表、表格…）递归下去裁（结构不丢）；
+ * 剩下的叶子（图片、分隔线、脚注引用、硬换行、内嵌 HTML）整块留或整个丢。
+ *
+ * 【叶子里的两档时机，别合并】图片、脚注引用、硬换行**没有文字**，从中间「切」没有
+ * 意义，所以「一开始揭示（`start < to`）就整体出现」是自洽的（设计 8.3）。**内嵌 HTML
+ * 不同：它的 `value` 里连文字一起**（块级 HTML 是一个整节点，`<div>后面的话</div>` 的
+ * value 就是那一整串）。切开 → `<di` 这种碎片会被 `tokenizeHtml` 当普通文字吐上屏；
+ * 不切 → 未揭示的字跟着上屏。两条都不可接受，所以它**等整个抽完（`end <= to`）才出现**。
+ * 这一档差别有实测撑着（本文件的用例里有卡在 `end == to` 上的边界）。
  *
  * 【一处近似，要连同条件一起读】文本节点里的转义与 HTML 实体在解码后**比源码短**
  * （`a\*b` 的 value 是 `a*b`）。这里按「解码后第几个字符」近似切，偏差不超过该节点里
@@ -476,25 +599,47 @@ type ClipNode = Content | Root
 const VALUE_TYPES = new Set(['text', 'code', 'inlineCode'])
 
 export function clipTree(root: Root, from: number, to: number): Root {
-  return { ...root, children: clipList(root.children, from, to) as Root['children'] }
+  return { ...root, children: clipBlocks(root.children, from, to) as Root['children'] }
 }
 
-function clipList(nodes: readonly ClipNode[], from: number, to: number): ClipNode[] {
+/**
+ * 顶层块：**保留还是丢掉只在这一层判**（设计 3.2）。
+ * 留下来的块交给 `clipInside`，那里只截断、不丢。
+ */
+function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): ClipNode[] {
   const out: ClipNode[] = []
   for (const node of nodes) {
-    const kept = clipNode(node, from, to)
+    const position = positionOf(node)
+    // 没有偏移的节点（本仓库用到的 md 语法里不该有）原样保留，交给下游按「无文本」处理
+    if (position === null) {
+      out.push(node)
+      continue
+    }
+    if (position.start >= to) continue // 还没开始揭示
+    if (position.end <= from) continue // 已经翻过去了
+    // 上面两条已经判过这个块的窗口，所以 `clipInside` 在这里实际不会返回 null
+    // （叶子那一支重判的是同一对边界）。这一下过滤只为把类型收干净。
+    const kept = clipInside(node, from, to)
     if (kept) out.push(kept)
   }
   return out
 }
 
-function clipNode(node: ClipNode, from: number, to: number): ClipNode | null {
-  /**
-   * 【为什么要这层 cast】mdast 的节点是几十个 interface 的联合，`value` 与 `children`
-   * 各自只在其中一部分上存在。逐类型窄化的写法在这里会变成几十行只做类型收窄、
-   * 不做任何事的代码，所以退一步：按「有没有这两个字段」在运行期分派，
-   * 类型上留一处显式断言。
-   */
+/**
+ * 已经开始揭示的块**内部**：容器结构一个都不丢，块内三类节点各按各的规则裁。
+ *
+ * 【为什么返回值可以是 null】块内的**叶子**（图片、内嵌 HTML、脚注引用、硬换行）
+ * 截不出「半个」，只能在「留整块」与「丢」之间二选一，二选一的判据是它**自己的**
+ * 字符区间。于是这里也会丢节点，调用方必须过滤。
+ *
+ * 【为什么叶子也要按窗口判，而不是「所在块已经开始就留着」】留着没抽到的图片 = 提前
+ * 发 IPC 去抓图（设计 8.2：只抓已经抽出来的那张）；留着没抽到的 HTML = 把还没有揭示的
+ * 字画到屏幕上（内嵌 HTML 的 `value` 里连文字一起，见下面第三支）。两条都破契约。
+ *
+ * 三支的分派依据是「有没有可裁的 `value` / 有没有 `children`」，不是节点类型：
+ * 类型逐个窄化在这里会变成几十行只做类型收窄、不做任何事的代码。
+ */
+function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
   const n = node as unknown as {
     type: string
     value?: string
@@ -502,20 +647,41 @@ function clipNode(node: ClipNode, from: number, to: number): ClipNode | null {
     position?: { start: { offset?: number }; end: { offset?: number } }
   }
   const start = n.position?.start.offset
-  const end = n.position?.end.offset
-  // 没有偏移的节点（本仓库用到的 md 语法里不该有）原样保留，交给下游按「无文本」处理
-  if (start === undefined || end === undefined) return node
-  if (start >= to) return null // 还没开始揭示
-  if (end <= from) return null // 已经翻过去了
+  // 第一支：可裁文本（text / code / inlineCode）——截到 [from, to) 那个窗口
   if (VALUE_TYPES.has(n.type) && typeof n.value === 'string') {
+    // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
+    if (start === undefined) return node
     const head = Math.max(0, from - start)
     const tail = Math.max(head, to - start)
     return { ...n, value: n.value.slice(head, tail) } as unknown as ClipNode
   }
+  // 第二支：容器——递归下去裁，**结构本身不丢**（设计 3.2：块内的行、项整体跟着保留）
   if (Array.isArray(n.children)) {
-    return { ...n, children: clipList(n.children, from, to) } as unknown as ClipNode
+    const children = n.children
+      .map((child) => clipInside(child, from, to))
+      .filter((child): child is ClipNode => child !== null)
+    return { ...n, children } as unknown as ClipNode
   }
+  // 第三支：叶子——没有可裁的文本，整块留或整个丢，按它自己的区间判
+  const position = positionOf(node)
+  if (position === null) return node
+  if (position.start >= to) return null // 还没开始揭示
+  if (position.end <= from) return null // 已经翻过去了
+  // 内嵌 HTML 是叶子里的**特例**：它的 `value` 里连文字一起（块级 HTML 是一个整节点，
+  // `<div>后面的话</div>` 的 value 就是那一整串），所以不能像图片那样「一揭示就整体
+  // 出现」——从中间切开只会得到 `<di` 这种碎片，`tokenizeHtml` 会把它当普通文字吐上屏。
+  // 两条路都堵着，只剩第三条：**等它整个抽完才出现**（边界取等：end == to 就算抽完）。
+  if (n.type === 'html') return position.end <= to ? node : null
   return node
+}
+
+/** 取节点的字符区间；两端偏移缺一不可，缺了就当「没有偏移」。 */
+function positionOf(node: ClipNode): { start: number; end: number } | null {
+  const p = (node as unknown as { position?: { start: { offset?: number }; end: { offset?: number } } })
+    .position
+  const start = p?.start.offset
+  const end = p?.end.offset
+  return start === undefined || end === undefined ? null : { start, end }
 }
 ```
 
@@ -528,7 +694,12 @@ pnpm typecheck
 
 期望：全过，exit 0。
 
-**若「跨越光标的文本节点被截断」那条没过**，先看夹具：`DOC` 里第一段与第二段之间有空行，`at('本季度共归档')` 取的是第二段的起始下标，而 `to` 是它 + 3。如果 remark 把两段并成了一段（说明夹具里空行没写对），是夹具的问题，不是实现的问题——**别改实现去迁就夹具**。
+**这一节在实施时被实测改掉了两处，都在计划作者这边**（实施者把片段原样跑了一遍，7 条里红 2 条）：
+
+1. **规则写错了一处。** Step 3 那个片段把「起始偏移 ≥ to 就丢掉」也用在**块内部**，于是列表的第二项、表格的后面几行会被整条丢掉——而设计 3.2 要的是「块一旦保留，它的内部结构整体跟着保留、只有文字是空的」。**丢弃只在顶层判，块内只截断。** 交付的 `clip.ts` 已按后者实现。
+2. **夹具断言写错了一条。** 「偏移之外的节点原样保留」原本期望 `DOC.replace(/\n/g, '')`，但 `# ` 与 `- ` 这两个记号**不由任何 text 节点承载**（它们是结构），所以期望值要按结构记号去掉。交付的用例已按后者写。
+
+同一条规则在实施中还补了一条**只有跑起来才看得见**的：**内嵌 HTML 的节点按「抽完才出现」判**（`end <= to`），而不是像图片那样「一揭示就整体出现」。原因是块级 HTML 的 `value` 里**连标签内的文字一起**，从中间切开只会得到 `<di` 这种碎片。设计文档 3.2 已补上这条。
 
 - [ ] **Step 5: 提交**
 
