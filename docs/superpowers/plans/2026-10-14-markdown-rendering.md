@@ -330,7 +330,7 @@ git commit -F /tmp/msg.txt
 
 ## Task 2: `markdown/clip.ts` —— 决定「什么该显示」的纯函数
 
-对应设计文档第 3.2 节（结构预知）、第 5 节、第 12 节（折叠）。
+对应设计文档第 3.2 节（结构预知）、第 5 节，以及第 12 节里**折叠的边界这一半**（`from` 参数）。**折点的计算不在这个 Task**，在 Task 3 的 `pickFoldStart`。
 
 **这是整个功能里唯一决定「什么该显示」的地方。** 它上面的组件只管把拿到的树画出来。这条边界是刻意的：它是唯一能被逐字钉死的部分，也是唯一会随口径变化的部分。
 
@@ -712,7 +712,8 @@ clipTree(树, from, to) 是纯函数：起始偏移 >= to 的节点整个丢掉�
 就是设计里那条「一露头就画全、像正在填表」。
 
 只有 text / code / inlineCode 三个类型算可裁文本；图片、分隔线、脚注引用、
-内嵌 HTML 只要开始揭示就整体出现（HTML 切开只会得到不配对的标签）。
+内嵌 HTML **等整个抽完才出现**（`end <= to`）—— 它不能像图片那样一揭示就整体
+出现，因为块级 HTML 的 value 里连标签内的文字一起，切开只会得到 `<di` 这种碎片。
 
 文本节点里的转义与实体解码后比源码短，这里按解码后的字符近似切，
 偏差不超过转义个数且不越过节点边界；无转义时精确。
@@ -3272,4 +3273,4 @@ git commit -F /tmp/msg.txt
 | 14 测试策略 | 各 Task 的用例 + 末尾的验收清单 |
 | 16 明确不做 | 无人认领是**对的**——那一节列的就是不做的东西 |
 
-**类型一致性：** `clipTree` / `pickFillCut` / `pickFoldStart` / `measureBlocks` / `renderMarkdown` / `tokenizeHtml` / `isMarkdownPath` / `loadWorkDocImage` 八个名字在各自 Task 定义，后续 Task 按同名调用；`BlockHeight` 在 Task 3 定义，Task 7 返回它、Task 11 消费它；`BlockSpan` 在 Task 3 定义，Task 8 用它；`MarkdownSource` 在 Task 8 定义、Task 10 构造它；`measuring` / `onMeasureNode` 两个名字在 Task 8 的 `MarkdownViewProps`、`MarkdownSource` 与 Task 10 的 `App` 三处同名。
+**类型一致性：** `parseMarkdown` / `clipTree` / `pickFillCut` / `pickFoldStart` / `measureBlocks` / `renderMarkdown` / `tokenizeHtml` / `isMarkdownPath` / `loadWorkDocImage` 九个名字在各自 Task 定义，后续 Task 按同名调用（`parseMarkdown` 被 Task 2、Task 8、Task 10 引用；`clipTree` 的调用是 `clipTree(doc, foldStart, cursor)`）；`BlockHeight` 在 Task 3 定义，Task 7 返回它、Task 11 消费它；`BlockSpan` 在 Task 3 定义，Task 8 用它；`MarkdownSource` 在 Task 8 定义、Task 10 构造它；`measuring` / `onMeasureNode` 两个名字在 Task 8 的 `MarkdownViewProps`、`MarkdownSource` 与 Task 10 的 `App` 三处同名。
