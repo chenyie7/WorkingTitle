@@ -1035,7 +1035,11 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
   const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\n末段\n'
 
   it('表格：光标落在占位**之前**，不是之后', () => {
-    const to = TABLE.indexOf('| 1 |') + 5 // 揭示偏移落在第一行正文行里，其后几行还没走到
+    // 【这个 `to` 是量出来的，不是推的】实施者逐偏移扫过：坏区是 **8–20 与 28–30**
+    // （整段表格行全被丢掉、只剩表头，于是没有任何节点接得住光标）。表头那一行的换行
+    // 正好在 9，落在坏区里。原先计划用的 `indexOf('| 1 |') + 5 = 25` 落在**好区**
+    // （21–27 都好），所以那条用例红不了。
+    const to = TABLE.indexOf('\n')
     const c = at(TABLE, to)
     const caret = c.querySelector('[data-testid="caret"]')
     const blank = c.querySelector('.wt-md-table-blank')
@@ -1063,6 +1067,17 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
     expect(caret).not.toBeNull()
     expect(img).not.toBeNull()
     expect(caret!.compareDocumentPosition(img!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('代码块：光标落在占位**之前**，不是之后', () => {
+    // 坏区是 **1–3**（光标还在围栏里那几格）：整块只剩一个空框，没有任何文字节点接得住。
+    const src = '```\n甲\n乙\n丙\n```\n'
+    const c = at(src, 1)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const blank = c.querySelector('.wt-md-pre-blank')
+    expect(caret).not.toBeNull()
+    expect(blank).not.toBeNull()
+    expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('量高度那一份**永远**不带光标（`caret: null` 那条闸）', () => {
@@ -1287,13 +1302,12 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               )}
             </code>
           </pre>
-          {/* 占位代表「还没揭示的行」——光标必须在它**前面**（设计 3.5） */}
-          {caretBefore(node, ctx)}
           <BlankSpace
             node={node}
             field={WT_BLANK_LINES}
             className="wt-md-pre-blank"
             cssVar="--wt-md-blank-lines"
+            ctx={ctx}
           />
         </>
       )
@@ -1315,13 +1329,12 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               </tbody>
             )}
           </table>
-          {/* 占位代表「还没走到的行」——光标必须在它**前面**（设计 3.5） */}
-          {caretBefore(node, ctx)}
           <BlankSpace
             node={node}
             field={WT_BLANK_ROWS}
             className="wt-md-table-blank"
             cssVar="--wt-md-blank-rows"
+            ctx={ctx}
           />
         </>
       )
@@ -1445,7 +1458,8 @@ function BlankSpace({
   node,
   field,
   className,
-  cssVar
+  cssVar,
+  ctx
 }: {
   node: MdNode
   /**
@@ -1456,10 +1470,32 @@ function BlankSpace({
   field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
   className: string
   cssVar: string
+  ctx: Ctx
 }): ReactNode {
   const count = readBlankCount(node, field)
   if (count <= 0) return null
-  return <div className={className} style={{ [cssVar]: String(count) } as CSSProperties} />
+  /*
+    【占位自己接住光标】占位代表「还没走到的东西」，一个还没落地的光标本来就该落在它
+    **前面**。这一格是实测出来的：**整段节点全被丢掉、只剩占位代表它**时（表格 8–20、
+    代码块 1–3 这些位置），光标原本一路掉到末尾兜底、落在占位**之后**。
+
+    推论也成立，所以不必再判别的：`count > 0` 蕴含「有不小于揭示偏移的行 / 行数」
+    （`clip.ts` 就是按这个算出来的），所以那一刻光标**必然**属于这个块内部——不存在
+    「本该由后面某个块接住」的情况。
+
+    【为什么不能靠 `caretBefore` 在这一层接】它那条「整个在揭示偏移之后」的判据是
+    `start >= caret.at`，而被渲染出来的块恒有 `start < to`（`clipBlocks` 早把
+    `start >= to` 的整块丢了），两个条件互斥——实施者实测过，那样写是**死代码**。
+  */
+  const caret = ctx.caret
+  const takesCaret = caret !== null && !caret.placed
+  if (takesCaret) caret.placed = true
+  return (
+    <>
+      {takesCaret && <CaretSpan />}
+      <div className={className} style={{ [cssVar]: String(count) } as CSSProperties} />
+    </>
+  )
 }
 ```
 
@@ -1476,6 +1512,9 @@ Run: `pnpm typecheck` → exit 0
 
 - 变异甲：把 `BlankSpace` 里的 `if (count <= 0) return null` 改成 `if (false) return null`。预期红：**「表格一行不缺时：一个占位元素都不多出」这一条**，其余两条不该红。
 - 变异乙：把 `splitAtCaret` 里的 `if (origin + value.length < caret.at) return null` 改成 `if (value.length < caret.at) return null`（**把 `origin` 整个丢掉**）。预期红：**「光标落在空节点上也算命中」与「光标插进代码框里」两条**。
+- 变异丙：把 `BlankSpace` 里的 `const takesCaret = caret !== null && !caret.placed` 改成 `const takesCaret = false`（占位不再接光标）。预期红：**真管线那组里的「表格」与「代码块」两条**——它们正是坏区（表格 8–20、代码块 1–3）。
+
+  **这条是本 Task 的头条机制**：实施者实测过，**靠 `caretBefore` 在那两个分支里接是死代码**（它的判据与被渲染块的 `start < to` 互斥），所以这个缺陷只有「占位自己接」这一条路能修。
 
   **别用「`origin + 长度 < at` → `长度 < at − origin`」那种写法**——那是**同一个不等式**（两边同减 `origin`），恒等价、任何用例都区分不了。实施者实测 Δ = 0，并据此指出原计划里「`origin` 非 0 时不等价」那句话是错的。
 
