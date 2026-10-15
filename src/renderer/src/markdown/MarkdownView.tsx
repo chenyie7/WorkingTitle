@@ -31,6 +31,10 @@ export interface MarkdownViewProps {
  * 【隐藏副本为什么排在可见内容之后】它在 CSS 上是绝对定位、不参与流，位置在哪都不影响
  * 布局；但 `markdown.css` 有一条 `.wt-page__text > :first-child { margin-top: 0 }`，
  * 那条规则是给**第一个内容块**写的。副本排在前面就会把它顶掉。
+ *
+ * 【阅读光标由 `renderMarkdown` 插进树里，`Page` 不再追加】光标画在「揭示到哪」那个字
+ * 后面，而不是内容的末尾（设计 3.5）：这条路的内容是块级元素的树，追加在末尾的 span
+ * 只落得到最后一个块**下方**，而隐形输入框与输入法候选框都按这个坐标摆。
  */
 export function MarkdownView({
   doc,
@@ -42,7 +46,13 @@ export function MarkdownView({
   const visible = useMemo(() => clipTree(doc, foldStart, cursor), [doc, foldStart, cursor])
   return (
     <>
-      {renderMarkdown(visible)}
+      {/*
+        【`caretAt` 只给可见那一份】它是「揭示到哪个偏移」，光标据此插进树里
+        （设计 3.5）。下面那份整篇副本永远不传——它只是拿来量高度的，多一个光标
+        不但没用，还会让 `[data-testid="caret"]` 在文档里出现两次，
+        而 `InputCapture` 取的是**第一个**。
+      */}
+      {renderMarkdown(visible, { caretAt: cursor })}
       {measuring && (
         <div className="wt-md-measure" ref={onMeasureNode} aria-hidden="true">
           {/*

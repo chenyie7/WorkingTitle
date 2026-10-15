@@ -107,3 +107,31 @@ describe('Page —— md 分支', () => {
     }
   })
 })
+
+/**
+ * 阅读光标（设计 3.5）。
+ *
+ * 【判据：`closest` 查的是它在不在内容里】光标原来由 `Page` 追加在 `.wt-page__text`
+ * 的末尾，落在最后一个块**下方**。修好之后它必须落在**块里面**——这一条用
+ * `closest('p')` 钉住，光数个数钉不住。
+ */
+describe('Page —— 阅读光标', () => {
+  it('md 那条路：光标恰好一个，且插在内容里面', () => {
+    const c = page(source({ cursor: DOC.indexOf('本季度') + 2 })).container
+    const carets = c.querySelectorAll('[data-testid="caret"]')
+    expect(carets).toHaveLength(1)
+    expect(carets[0].closest('p')).not.toBeNull()
+  })
+
+  it('纯文本那条路照旧：末尾那个光标还在', () => {
+    const c = page(null, '第一章 甲').container
+    const carets = c.querySelectorAll('[data-testid="caret"]')
+    expect(carets).toHaveLength(1)
+    expect(carets[0].closest('.wt-page__text')).not.toBeNull()
+  })
+
+  it('量高度那份副本里没有光标（找不着光标会让输入框退回纸张角上）', () => {
+    const c = page(source({ cursor: 5, measuring: true })).container
+    expect(c.querySelector('.wt-md-measure')!.querySelector('[data-testid="caret"]')).toBeNull()
+  })
+})

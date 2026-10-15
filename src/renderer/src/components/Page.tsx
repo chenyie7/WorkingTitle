@@ -101,9 +101,17 @@ export function Page({
                 onMeasureNode={md.onMeasureNode}
               />
             ) : (
-              shown
+              <>
+                {shown}
+                {/*
+                  【这个光标只属于纯文本那条路】md 那条路的光标由 `MarkdownView`
+                  里的 `renderMarkdown` 插进语法树（设计 3.5）——内容是块级元素的树，
+                  追加在末尾只会落在最后一个块**下方**，而隐形输入框与输入法候选框
+                  都按这个坐标摆。
+                */}
+                <span className="wt-caret" data-testid="caret" />
+              </>
             )}
-            <span className="wt-caret" data-testid="caret" />
           </div>
         </>
       )}
