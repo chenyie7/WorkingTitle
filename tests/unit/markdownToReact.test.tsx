@@ -362,3 +362,96 @@ describe('renderMarkdown —— 阅读光标', () => {
     expect(caret!.nextSibling!.textContent).toBe('行')
   })
 })
+
+/**
+ * 光标的落点必须与「揭示到哪」重合 —— 这三条是量出来的真缺陷，不是假想的。
+ *
+ * 旧判据（「第一个**结束偏移 ≥ 揭示偏移**的**带文本**节点」）会被「命中节点之后的空文本
+ * 节点」接走，而它前面/中间站着**提前渲染的非文本节点**：占位、硬换行、图片。于是光标
+ * 落到占位之后、下一行、或图的右边——而**隐形输入框与输入法候选框都按这个坐标摆**。
+ *
+ * 【为什么必须走真管线】缺陷正出在 `clip` 与 `toReact` 的**接缝**上：手工造树造不出
+ * `clip` 写的 `wtValueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
+ *
+ * 【实现者注意】下面每个 `to` 都要**先确认它在旧代码上真的红**（Step 2 那一步），
+ * 落点不对就自己找一个能复现的偏移并**在报告里写清实测数**——别为了让用例变绿去改断言。
+ */
+describe('renderMarkdown —— 光标的落点（真管线）', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\n末段\n'
+
+  it('表格：光标落在占位**之前**，不是之后', () => {
+    // 【这个 `to` 是量出来的，不是推的】实施者逐偏移扫过：坏区是 **8–20 与 28–30**
+    // （整段表格行全被丢掉、只剩表头，于是没有任何节点接得住光标）。表头那一行的换行
+    // 正好在 9，落在坏区里。原先计划用的 `indexOf('| 1 |') + 5 = 25` 落在**好区**
+    // （21–27 都好），所以那条用例红不了。
+    const to = TABLE.indexOf('\n')
+    const c = at(TABLE, to)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const blank = c.querySelector('.wt-md-table-blank')
+    expect(caret).not.toBeNull()
+    expect(blank).not.toBeNull()
+    // 光标在占位**前面**：从光标看，占位是 FOLLOWING
+    expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('硬换行：光标落在 `<br>` **之前**（还在第一行），不是之后', () => {
+    const src = '甲  \n乙\n'
+    const c = at(src, src.indexOf('乙') - 1) // 揭示偏移正好落在行尾那个换行上
+    const caret = c.querySelector('[data-testid="caret"]')
+    const br = c.querySelector('br')
+    expect(caret).not.toBeNull()
+    expect(br).not.toBeNull()
+    expect(caret!.compareDocumentPosition(br!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('图片：光标落在图**之前**，不是图的右边', () => {
+    const src = '甲 ![图](a.png) 乙\n'
+    const c = at(src, src.indexOf('![') + 1)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const img = c.querySelector('.wt-md-img')
+    expect(caret).not.toBeNull()
+    expect(img).not.toBeNull()
+    expect(caret!.compareDocumentPosition(img!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('代码块：光标落在占位**之前**，不是之后', () => {
+    // 坏区是 **1–3**（光标还在围栏里那几格）：整块只剩一个空框，没有任何文字节点接得住。
+    const src = '```\n甲\n乙\n丙\n```\n'
+    const c = at(src, 1)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const blank = c.querySelector('.wt-md-pre-blank')
+    expect(caret).not.toBeNull()
+    expect(blank).not.toBeNull()
+    expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('量高度那一份**永远**不带光标（`caret: null` 那条闸）', () => {
+    const doc = parseMarkdown('甲乙丙\n')!
+    const c = render(<>{renderMarkdown(doc, { withBlockEnds: true, caretAt: 2 })}</>).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(0)
+  })
+
+  /**
+   * 行内 HTML 的**接受的近似**：连续的 text / html 合成一段 token 流之后，光标放在
+   * **这一串的末尾**（设计 3.5 末段、`renderAll` 的 `caretHere`）。
+   *
+   * 【为什么非要钉它】这个近似原先一条用例都没有——把它从「串尾」挪到「串首」是**零红**
+   * 的。而两处不是一回事：串首时，`前 <b>甲</b>后` 在「后」还没揭示的那一刻，光标会跑到
+   * 「前」**前面**去，而隐形输入框与候选框都按这个坐标摆。
+   */
+  it('行内 HTML：光标落在这一串的**末尾**（紧贴 `</b>`），不是跑到串首', () => {
+    const c = at('前 <b>甲</b>后\n', 6)
+    const p = c.querySelector('p')!
+    expect(p.textContent).toBe('前 甲') // 「后」还没揭示出来
+    const caret = p.querySelector('[data-testid="caret"]')!
+    expect(caret).not.toBeNull()
+    // 串的末尾：光标的前一个兄弟就是那个 `<b>`，不是「前 」那个文本节点
+    expect(caret.previousSibling).toBe(c.querySelector('b'))
+    expect(p.firstChild!.textContent).toBe('前 ')
+  })
+})

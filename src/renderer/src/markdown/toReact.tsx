@@ -11,7 +11,13 @@ type MdNode = Root['children'][number]
 /** 表头单元格与普通单元格的唯一区别，外加阅读光标那一份状态。 */
 interface Ctx {
   readonly header: boolean
-  /** 阅读光标。`null` 表示不插（量高度那份副本用） */
+  /**
+   * 阅读光标。`null` 表示不插，有**两条**路走到这里：
+   * 1. **没传 `caretAt`**——`renderMarkdown(tree)` 不带 opts 的整篇渲染，量高度那份副本
+   *    与一切「只想要排版、不要光标」的调用都走这条；
+   * 2. `withBlockEnds` 那条支路**显式写死 `caret: null`**（见那里的注释），与调用方传没传
+   *    `caretAt` 无关——那是「机器保证」，不是「靠自觉」。
+   */
   readonly caret: Caret | null
 }
 
@@ -87,8 +93,17 @@ export function renderMarkdown(
     ))
   }
   const out = renderAll(root.children, { header: false, caret })
-  // 【一个都没命中就退回老位置】揭示偏移落在文档末尾的换行之后、或者整篇都还没开始揭示
-  // 时会走到这里。那时内容本来也到头了，追加在末尾与插在中间看不出差别。
+  // 【一个都没命中就退回老位置】**实测**它走到的时候只有两类（真管线逐偏移扫过表格 /
+  // 代码块 / 行内 HTML / 纯文字四份文档，判据是「光标是不是容器最后一个子节点」）：
+  //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
+  //     树是空的，一个节点都没有——本来也没有别的位置可放。
+  //  2. 揭示偏移落在**所有已揭示文字的后面**（文档末尾那个换行之后、或更远）：那是真的
+  //     「内容到头了」，追加在末尾与插在中间看不出差别。实测落点：表格 `to = 38–41` 与
+  //     `44`、代码块 `to = 10–14`、行内 HTML `to = 12`、纯文字 `'甲乙丙\n'` 的 `to = 4`。
+  //  **中间那段曾经也走这里，那不是兜底而是缺陷**：揭示偏移落在「整段节点都被丢掉、只剩
+  //  占位代表它」的那一格时（表格 `to = 8–20` / `28–30`、代码块 `to = 1–3`），光标被甩到
+  //  占位**后面**。已经由「占位自己接光标」修掉（见 `BlankSpace`）——**这条口径要保住：
+  //  兜底不该在文档中间开火**。
   // 外面套一层 Fragment 只为挂 `key`——`CaretSpan` 没有 props，别给它传。
   if (caret && !caret.placed) out.push(<Fragment key="caret-fallback"><CaretSpan /></Fragment>)
   return out
@@ -127,7 +142,12 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
   while (i < nodes.length) {
     const node = nodes[i]
     if (node.type !== 'text' && node.type !== 'html') {
-      out.push(<Fragment key={i}>{renderNode(node, ctx)}</Fragment>)
+      out.push(
+        <Fragment key={i}>
+          {caretBefore(node, ctx)}
+          {renderNode(node, ctx)}
+        </Fragment>
+      )
       i++
       continue
     }
@@ -147,7 +167,14 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
     }
     if (!hasHtml) {
       // 没有 html 时每个节点各成一个 Fragment——这条路上光标能精确落进某一个文本节点
-      for (let k = start; k < i; k++) out.push(<Fragment key={k}>{renderNode(nodes[k], ctx)}</Fragment>)
+      for (let k = start; k < i; k++) {
+        out.push(
+          <Fragment key={k}>
+            {caretBefore(nodes[k], ctx)}
+            {renderNode(nodes[k], ctx)}
+          </Fragment>
+        )
+      }
       continue
     }
     const tokens: HtmlToken[] = []
@@ -231,6 +258,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
             field={WT_BLANK_LINES}
             className="wt-md-pre-blank"
             cssVar="--wt-md-blank-lines"
+            ctx={ctx}
           />
         </>
       )
@@ -301,6 +329,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
             field={WT_BLANK_ROWS}
             className="wt-md-table-blank"
             cssVar="--wt-md-blank-rows"
+            ctx={ctx}
           />
         </>
       )
@@ -356,10 +385,14 @@ function originOf(node: MdNode): number {
 /**
  * 把一个带文本的节点的 `value` 按光标切成两段；没命中给 `null`（调用方原样渲染）。
  *
- * 【判据】**内容结束偏移 ≥ 揭示偏移**就算命中，而不是「起点 ≤ 揭示偏移 ≤ 结束」。
- * 前者让**空节点**也能接住光标——列表项刚开始、文字还没出来时，那个空文本节点正好
- * 命中，光标于是落在序号后面，而不是掉到列表下面。后者会漏掉这一格。设计 3.5 是
- * 这条规则的正本。
+ * 【判据是**区间包含**】`起点 ≤ 揭示偏移 ≤ 起点 + 长度` 才接得住，与 `holdsCaret` 同一套。
+ * 它同时管住两件事，少任何一边都不行：
+ * - **空节点照样接得住**：列表项刚开始、文字还没出来时，那个空文本节点的起点 = 结束 =
+ *   揭示偏移，区间退化成一点、仍然包含它，光标于是落在序号后面而不是掉到列表下面；
+ * - **值节点不抢它前面的光标**：只判「结束偏移 ≥ 揭示偏移」的话，一个**起点在揭示偏移
+ *   之后**的值节点也会命中（它的结束当然不小于揭示偏移），于是把本该落在它**前面**的光标
+ *   吸进它里面。实测过这个形态：表格里那一串空单元格文字节点就是这么把光标接走的。
+ *   `caretBefore` 靠 `holdsCaret` 让路，走的正是同一套判据。设计 3.5 是这条规则的正本。
  *
  * 【为什么切的是**裁后**的 `value`】树上已经没有未揭示的字了，所以
  * 「内容结束偏移」= 内容起点 + 裁后的长度 = 光标该在的位置。
@@ -367,11 +400,62 @@ function originOf(node: MdNode): number {
 function splitAtCaret(value: string, origin: number, ctx: Ctx): [string, string] | null {
   const caret = ctx.caret
   if (!caret || caret.placed) return null
-  if (origin + value.length < caret.at) return null
+  // 判据与 `holdsCaret` 一致：**区间包含**揭示偏移才算接得住
+  if (caret.at < origin || caret.at > origin + value.length) return null
   const at = Math.max(0, Math.min(caret.at - origin, value.length))
   // 【先置位再返回】置位是「整棵树只插一个」的闸，必须在返回前落下
   caret.placed = true
   return [value.slice(0, at), value.slice(at)]
+}
+
+/** 这个节点能不能**自己**接住光标：它带可裁文本，且区间 `[起点, 起点 + 长度]` 包含揭示偏移。 */
+function holdsCaret(node: MdNode, ctx: Ctx): boolean {
+  const caret = ctx.caret
+  if (!caret) return false
+  if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return false
+  const origin = originOf(node)
+  return origin <= caret.at && caret.at <= origin + node.value.length
+}
+
+/** 节点的源码结束偏移。**没有位置的一律算「在揭示偏移之后」**。 */
+function endOf(node: MdNode): number {
+  return node.position?.end.offset ?? Number.POSITIVE_INFINITY
+}
+
+/** 没有 `children`、也不是可裁文本的叶子：硬换行、分隔线、图片、内嵌 HTML、脚注引用。 */
+function isLeaf(node: MdNode): boolean {
+  if (node.type === 'text' || node.type === 'code' || node.type === 'inlineCode') return false
+  return !('children' in node)
+}
+
+/**
+ * 渲染一个子节点**之前**，先看光标该不该落在它前面（设计 3.5 那条规则的正本）。
+ *
+ * 【判据一：这个节点整个在揭示偏移之后】起点 ≥ 揭示偏移 → 光标落在它前面。
+ *
+ * 【判据二：提前渲染的叶子跨过了揭示偏移】硬换行与图片的**起点在揭示偏移之前**、结束
+ * 在之后（理由见设计 3.5）。只看起点会跳过它们，光标于是落到**下一行或图的右边**——
+ * 实测过（`甲  ␊乙` 在 2–4、`甲 ![图](…) 乙` 在 3–19）。所以对「没有 children、也不是
+ * 可裁文本」的叶子再判一次**结束偏移**。
+ *
+ * 【为什么值节点不在这里处理】它能自己把文本**劈开**（`splitAtCaret`），那样光标落在
+ * 它**里面**那个正确的字符上，比落在它前面准。上面 `holdsCaret` 那一句就是把这个机会
+ * 让给它。
+ *
+ * 【未揭示的占位也走这一条】`BlankSpace` 不是语法树里的节点，所以它由 `code` / `table`
+ * 两个分支在渲染它之前显式调一次本函数——占位代表「还没到的东西」，光标永远在它**前面**。
+ * 不这么做的话，实测一张表在揭示偏移 8–20 这连续 13 个位置上，光标会被一路甩到占位之后。
+ */
+function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
+  const caret = ctx.caret
+  if (!caret || caret.placed) return null
+  if (holdsCaret(node, ctx)) return null
+  const start = node.position?.start.offset
+  const after = start !== undefined && start >= caret.at
+  const leafAcross = isLeaf(node) && endOf(node) >= caret.at
+  if (!after && !leafAcross) return null
+  caret.placed = true
+  return <CaretSpan />
 }
 
 /**
@@ -387,15 +471,18 @@ function splitAtCaret(value: string, origin: number, ctx: Ctx): [string, string]
  * 【行数从哪来】`clip.ts` 挂在节点上的（见那里的 `readBlankCount`）。它返回 0 时
  * 整个元素都不渲染——已经全部揭示的块不该在 DOM 里多出一样东西。
  *
- * 【为什么值要转成字符串】内联到 CSS 自定义属性上时，数字会不会被 React 补一个 `px`
- * 取决于版本行为；补了的话 `calc(2px * 20.8px)` 是无效值，高度会静默变成 0——占位
- * 凭空消失而且**不报错**。写成字符串就没有这一层不确定性。
+ * 【为什么值要转成字符串 —— 理由已按实测更正】原来那句「取决于 React 版本行为、可能补
+ * 一个 `px`」**在本仓库不成立**：实测 React 19.3.0 对 `--*` 自定义属性走 `setProperty`，
+ * **不补**单位（`style={{ '--x': 2 }}` 渲染出来就是 `--x: 2;`）。所以 `String(count)` 留着
+ * 只是把类型收干净（`CSSProperties` 的值允许 `number`），它**不再**承担「防补 `px`、
+ * 防高度静默归零」那层理由——下一个人动它时不必以为去掉就有风险。
  */
 function BlankSpace({
   node,
   field,
   className,
-  cssVar
+  cssVar,
+  ctx
 }: {
   node: MdNode
   /**
@@ -406,10 +493,32 @@ function BlankSpace({
   field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
   className: string
   cssVar: string
+  ctx: Ctx
 }): ReactNode {
   const count = readBlankCount(node, field)
   if (count <= 0) return null
-  return <div className={className} style={{ [cssVar]: String(count) } as CSSProperties} />
+  /*
+    【占位自己接住光标】占位代表「还没走到的东西」，一个还没落地的光标本来就该落在它
+    **前面**。这一格是实测出来的：**整段节点全被丢掉、只剩占位代表它**时（表格 8–20、
+    代码块 1–3 这些位置），光标原本一路掉到末尾兜底、落在占位**之后**。
+
+    推论也成立，所以不必再判别的：`count > 0` 蕴含「有不小于揭示偏移的行 / 行数」
+    （`clip.ts` 就是按这个算出来的），所以那一刻光标**必然**属于这个块内部——不存在
+    「本该由后面某个块接住」的情况。
+
+    【为什么不能靠 `caretBefore` 在这一层接】它那条「整个在揭示偏移之后」的判据是
+    `start >= caret.at`，而被渲染出来的块恒有 `start < to`（`clipBlocks` 早把
+    `start >= to` 的整块丢了），两个条件互斥——实施者实测过，那样写是**死代码**。
+  */
+  const caret = ctx.caret
+  const takesCaret = caret !== null && !caret.placed
+  if (takesCaret) caret.placed = true
+  return (
+    <>
+      {takesCaret && <CaretSpan />}
+      <div className={className} style={{ [cssVar]: String(count) } as CSSProperties} />
+    </>
+  )
 }
 
 /**
