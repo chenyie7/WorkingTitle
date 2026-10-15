@@ -2747,6 +2747,15 @@ git commit -F /tmp/wt-msg.txt
 
 - [ ] **Step 1: 先量出要回写哪几面围栏，别照抄这份清单**
 
+**本次实测量到的工作清单**（lead 在 `c9b325b` 上跑的；**Step 2 冻结源码之后必须重测一遍**，别照抄——源码一动这张表就陈旧）：
+
+- **正向判据**（遍历 `git ls-files src tests` 的 79 个 `.ts/.tsx/.css`，逐文件与**六份计划**的全部围栏比 md5，原样含末尾换行）：**没有逐字节围栏的恰好 10 个**，全是这一批改过的：
+  `components/Page.tsx`、`markdown/MarkdownView.tsx`、`markdown/clip.ts`、`markdown/parse.ts`、`markdown/toReact.tsx`、`styles/markdown.css`、以及 `tests/unit/` 下的 `markdownClip.test.ts`、`markdownParse.test.ts`、`markdownToReact.test.tsx`、`markdownView.test.tsx`。
+  （更早那批的 `shortcuts.ts` / `shortcutDispatch.test.ts` / `shortcuts.test.ts` **不在**这个集合里——它们由 `2026-10-11-*` 两份计划承载，说明扫计划时**必须六份全扫**，只扫本批四份会把这 4 个误报成缺口。）
+- **路由**（按「这份计划里提到该文件名的行数」粗判）：markdown 模块那几个文件（`parse.ts` / `clip.ts` / `toReact.tsx` / `MarkdownView.tsx` / `markdown.css` / 四个测试）只在 **10-14** 与 **10-15** 里出现——它们**是 10-14 那批新建的**，所以回写目标是 **10-14**（外加 10-15 里那些片段）；而 **`Page.tsx` 在 06 里出现**——它是**早就存在的文件**，按仓库口径「改动已有文件一律写进 06」。
+- **围栏取法**必须用「任意标签」`^[ \t]*```[^\n]*$`：`06` 那份里有 16 个 `bash` 围栏，窄枚举（只认 `ts`/`tsx`/`css`）会把配对带错。
+
+
 本仓库的硬约定：改了源码（含只改注释）就要把 `docs/superpowers/plans/` 里对应的围栏同步回写，口径 `md5(围栏原始内容) == md5(文件)`。
 
 **上一次量过**（2026-10-15，改这一批之前）：`clip.ts` / `toReact.tsx` / `markdown.css` / `MarkdownView.tsx` / `markdownClip.test.ts` / `markdownToReact.test.tsx` / `markdownView.test.tsx` 各有一面逐字节围栏，**全部在 10-14 那份计划里**；`CLAUDE.md` 没有任何围栏。本批还多动了 `parse.ts`、`markdownParse.test.ts`、`Page.tsx` 三个——**它们有没有围栏要先量**（`Page.tsx` 可能落在 06 那份正本里）。
