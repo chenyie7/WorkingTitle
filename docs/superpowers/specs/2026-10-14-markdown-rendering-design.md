@@ -114,6 +114,8 @@
 
 **修法**：在 `parse.ts` 里为每个 `code` / `inlineCode` 节点记下 `value` 的**真实源码起点**。算法**不是「跳过定界符」，而是「`value` 首行所对应的那一源码行的行尾，往前退 `value` 首行的长度」**——容器前缀（引用块的 `> `、列表项的缩进）、围栏自身的缩进、代码块的缩进，全都只是「更靠左的前缀」，被这一步一并盖住。`clip.ts` 用它当裁剪原点，3.5 的光标也用它。**`parse.ts` 是全仓唯一手上有源码的地方**，所以这个映射由它算一次、挂在节点上。
 
+**标注的语义是「这个节点当前的 `value` 的第一个字符在源码里的偏移」，所以裁剪之后要跟着挪。** `clip.ts` 切片时把起点后移切掉的那一段（`head`）。不挪的话，裁剪后的树上会带着一个**失真**的起点——而设计 3.5 的光标正是按「揭示偏移 − 内容起点」算位置的，那种错**不报错**，只是光标差几个字符。（Task 2 的质量评审量出来的：切过之后读到的是原始的 4，而 `value` 已经后移。）
+
 （这一版是返工后的。第一版按形态跳前缀——「围栏 = 首行换行之后、缩进块 = 首行缩进之后」——只对**顶格**围栏精确：容器里的代码块会让内容**提前** 2–4 个字符（引用块 −2、列表项 −2/−3、两层嵌套 −4），五格以上缩进的块会让它**晚** 4 个字符，两个方向都错。是质量评审判为「必须改」才换掉的，换完 28 组输入全部归零。）
 
 **一处残留，记在这里而不是假装做到了**：**带前缀的代码块（放在容器里，或缩进四格及以上），内部各行仍差一个前缀宽度**——remark 对容器前缀与缩进是**逐行**剥的，不是常量偏移。实测引用块内差 2、缩进块差 4；**首行是精确的**。这类写法在工作文档里不算罕见，偏差是个位数个字符、方向朝**滞后**（不会提前显示未揭示的字），所以不为它做逐行映射。**它有一条用例专门钉着**（测试名里直接写「已知偏差」）——接受的偏差也要有机器可读的记录，否则将来谁无意改了这里不会有任何东西出声。那条用例钉的是「偏差等于前缀宽度」这个字面关系，所以**哪天逐行前缀也被剥了、算法变精确，它会假红**（行为变好而测试变红）；用例注释里已写明这一点，读到红别当成回归。
@@ -173,11 +175,15 @@ flatText ──remark-parse + remark-gfm──▶ mdast（带 position.offset）
 | 文件 | 职责 | 依赖 |
 |---|---|---|
 | `src/renderer/src/markdown/parse.ts` | md 文本 → mdast，并给 `code` / `inlineCode` 记下 `value` 的真实源码起点（3.6）。**全仓唯一 import remark、也是全仓唯一手上有源码的地方** | `remark-parse` / `remark-gfm` |
-| `src/renderer/src/markdown/clip.ts` | `(mdast, revealStart, cursor) → mdast`。纯函数 | 只有 `import type` |
+| `src/renderer/src/markdown/clip.ts` | `(mdast, revealStart, cursor) → mdast`。纯函数 | 一个纯读口（`./parse` 的 `valueStartOf` / `WT_VALUE_START`）——**不再是「只有 `import type`」**，见下面那条 |
 | `src/renderer/src/markdown/fill.ts` | `(块高表, 目标高度) → 字符偏移`。纯函数 | 无 |
 | `src/renderer/src/markdown/toReact.tsx` | clipped mdast → React 元素（管线后半段） | `mdast-util-to-hast` / `rehype-sanitize` / `rehype-react` |
 | `src/renderer/src/markdown/measure.ts` | 离屏量各顶层块的高度（DOM 侧） | DOM |
 | `src/renderer/src/markdown/MarkdownView.tsx` | 把上面几步串起来的组件 | React |
+
+**`clip.ts` 那一格的依赖变了（2026-10-15）。** 它原先写着「只有 `import type`」——那时它是彻底的叶子模块。现在它要读 `parse.ts` 挂在节点上的 `value` 真实起点（3.6），于是有了一条**运行时** import，而 `parse.ts` 在模块级 import 了 remark 三件套。质量评审实测过这件事：改动前只 import `clip.ts`，`unified` / `remark-parse` / `remark-gfm` **一个都不加载**；改动后**三个全加载**。
+
+**影响判为可忽略**：`clip.ts` 全仓只有 `MarkdownView.tsx` 与测试 import，而 `MarkdownView` 的 `doc` 必然来自 `App.tsx` 的 `parseMarkdown`——渲染层本来就要加载 remark，边际成本是 0；测试里也没有哪个文件只 import `clip.ts`。**而「什么该显示只有 `clip.ts` 一处决定」那条边界没有变**：依赖是单向的 `clip → parse`，它取的只是一个**已经算好的坐标**。真要让 `clip.ts` 回到零依赖，得把字段名与读口挪进一个不拉 remark 的小模块——眼下不值得，记在这里而不是假装那一格还对。
 
 **类型不另造一套。** `import type { Root } from 'mdast'` 是编译期擦除的，`@types/mdast` 只是个 devDependency，运行时零成本。这样 `clip.ts` 既是纯函数，又不用维护一套平行的节点类型。
 

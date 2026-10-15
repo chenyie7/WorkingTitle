@@ -362,7 +362,26 @@ git commit -F /tmp/wt-msg.txt
 
 **Files:**
 - Modify: `src/renderer/src/markdown/clip.ts`（整个文件重写，见 Step 3）
+- Modify: `src/renderer/src/markdown/parse.ts`（**只加一个词**：`WT_VALUE_START` 的 `export` 放回去，见 Step 0）
 - Modify: `tests/unit/markdownClip.test.ts`
+
+- [ ] **Step 0: 先把 `parse.ts` 那个 `export` 放回去**
+
+Task 1 的质量评审把 `WT_VALUE_START` 的 `export` 收掉了，理由是「只有同文件的 `valueStartOf` 读它」。**那个前提现在不成立了**：本 Task 让 `clip.ts` 成为第二个写者（切完要把起点跟着挪），字段名必须只在一处定义。
+
+把 `src/renderer/src/markdown/parse.ts` 里
+
+```ts
+const WT_VALUE_START = 'wtValueStart'
+```
+
+改成
+
+```ts
+export const WT_VALUE_START = 'wtValueStart'
+```
+
+并把它上面那句注释里「只有本文件用」的意思改掉（它现在有两个使用者）。**其余一个字节不改。**
 
 - [ ] **Step 1: 改那条断言旧规则的用例，并补上新的**
 
@@ -491,10 +510,43 @@ describe('clipTree —— 代码块的占位行数', () => {
 })
 ```
 
-最后把文件头部的 import 那一行改成：
+最后把文件头部那两行 import 改成：
 
 ```ts
 import { clipTree, readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { parseMarkdown, valueStartOf } from '../../src/renderer/src/markdown/parse'
+```
+
+（第二行本来就有 `parseMarkdown`，只加 `valueStartOf`。）
+
+再追加一组用例——它守的是 Task 2 的质量评审量出来的那件事：
+
+```ts
+/**
+ * 裁剪之后起点要跟着挪（Task 2 的质量评审量出来的）。
+ *
+ * `wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个字符在源码里的偏移」。
+ * 切片换了 `value` 却不挪它，这棵树上的节点就带着一个**失真**的起点——而下游
+ * （设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）拿到它**不报错**，只是光标
+ * 差几个字符。修之前这条会红：它报的是原来那一段的起点。
+ */
+describe('clipTree —— 裁剪后起点跟着挪', () => {
+  const SRC = '```\n第一行\n第二行\n```\n'
+
+  it('从中间切进去：报的是自己那一段的起点', () => {
+    const out = clipTree(parseMarkdown(SRC)!, SRC.indexOf('第一行') + 1, SRC.indexOf('第二行') + 1)
+    const code = out.children[0]
+    // 前面那个「第」被切掉了，剩下的是「一行」加换行再加「第」
+    expect((code as unknown as { value: string }).value).toBe('一行\n第')
+    // 起点必须是「一行」里那个「一」的位置，不是围栏之后那个「第」
+    expect(valueStartOf(code)).toBe(SRC.indexOf('一行'))
+  })
+
+  it('一个字都没切掉时：起点没有变化（反面对照）', () => {
+    const out = clipTree(parseMarkdown(SRC)!, 0, SRC.indexOf('第一行') + 3)
+    expect(valueStartOf(out.children[0])).toBe(SRC.indexOf('第一行'))
+  })
+})
 ```
 
 - [ ] **Step 2: 跑测试，确认它红**
@@ -510,7 +562,7 @@ Expected: **红**——编译不过（`readBlankCount` 等还没导出），加�
 
 ```ts
 import type { Content, Root } from 'mdast'
-import { valueStartOf } from './parse'
+import { valueStartOf, WT_VALUE_START } from './parse'
 
 /**
  * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
@@ -657,23 +709,36 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
   // 第一支：可裁文本（text / code / inlineCode）——截到 [from, to) 那个窗口
   if (VALUE_TYPES.has(n.type) && typeof n.value === 'string') {
     // 【原点不是 position.start.offset】`code` / `inlineCode` 的 `value` 里不含定界符
-    // （围栏、反引号），而 `position` 从定界符起算——两套坐标差着一个定界符的长度。
-    // 真实起点由 `parse.ts` 在解析时算好挂在节点上（设计 3.6），这里只是取用。
+    // （围栏、反引号），而 `position` 从定界符起算。真实起点由 `parse.ts` 在解析时算好
+    // 挂在节点上（设计 3.6），这里取用。
+    // **别把它读成「差一个定界符的长度」**：围栏块差的是「定界符 + 换行」（4 或 6），
+    // 缩进块根本没有定界符（差一段缩进），容器里的还会逐行变。设计 3.6 的残留那一段
+    // 讲了哪些形态是精确的、哪些不是。
     const origin = valueStartOf(n) ?? start
     // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
     if (origin === undefined) return node
     const head = Math.max(0, from - origin)
     const tail = Math.max(head, to - origin)
     const value = n.value.slice(head, tail)
+    // 【切完之后起点要跟着挪】`wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个
+    // 字符在源码里的偏移」。切掉了前 `head` 个字符，起点就后移 `head`——不挪的话这棵树上的
+    // 节点会带着一个**失真**的起点，而下游（设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）
+    // 拿到它就是静默差几个字符，**不报错**。
+    const shiftedStart = origin + head
     // 【代码块多挂一个占位行数】它的框只包住已揭示的行，没揭示的行由渲染层按「默认一行高」
     // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数 ——
     // 当前这一行的余下部分不另算一行（它已经由框里那半行占着了）。
     if (n.type === 'code') {
       const rest = n.value.slice(tail)
       const blankLines = rest === '' ? 0 : rest.split('\n').length - 1
-      return { ...n, value, [WT_BLANK_LINES]: blankLines } as unknown as ClipNode
+      return {
+        ...n,
+        value,
+        [WT_VALUE_START]: shiftedStart,
+        [WT_BLANK_LINES]: blankLines
+      } as unknown as ClipNode
     }
-    return { ...n, value } as unknown as ClipNode
+    return { ...n, value, [WT_VALUE_START]: shiftedStart } as unknown as ClipNode
   }
   // 第二支：容器——递归下去裁。重复单元按自己的区间判（规则 2），其余结构不丢
   if (Array.isArray(n.children)) {
@@ -1177,9 +1242,14 @@ function CaretSpan(): ReactNode {
 /**
  * 这个节点的 `value` 在源码里的起点。
  *
- * 普通 `text` 节点就是 `position.start.offset`；`code` / `inlineCode` 不是——它们的
- * `value` 里不含定界符，真实起点由 `parse.ts` 挂着（设计 3.6）。没有位置也没有标注时
- * 给 0：那种树只出现在单测里，且那时不会传 `caretAt`。
+ * 【它在这棵树上是准的】`parse.ts` 解析时挂上原始起点，`clip.ts` 每次切片都把起点
+ * 跟着挪 `head`——所以「节点**当前的** `value` 的第一个字符在源码里的偏移」这个语义
+ * 在裁剪后的树上照样成立，下面 `splitAtCaret` 的 `clamp(揭示偏移 − 起点, 0, 长度)`
+ * 才算得对。**在裁剪后的树上读到失真的起点是静默的**（光标差几个字符、不报错），
+ * 所以这条链路两侧的注释都点名了它。
+ *
+ * 普通 `text` 节点原本没有这个标注、用 `position.start.offset` 兜；切片之后 `clip.ts`
+ * 也给它们写上了。两者都没有（手工造的单测树）时给 0——那时不会传 `caretAt`。
  */
 function originOf(node: MdNode): number {
   return valueStartOf(node) ?? node.position?.start.offset ?? 0
