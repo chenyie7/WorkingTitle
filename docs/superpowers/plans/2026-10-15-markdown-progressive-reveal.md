@@ -786,7 +786,7 @@ function positionOf(node: ClipNode): { start: number; end: number } | null {
 
 - [ ] **Step 4: 跑测试，确认它绿**
 
-Run: `pnpm vitest run tests/unit/markdownClip.test.ts` → PASS，且原有 12 条一条不少
+Run: `pnpm vitest run tests/unit/markdownClip.test.ts` → PASS，且原有 **21** 条一条不少
 Run: `pnpm test` → exit 0
 Run: `pnpm typecheck` → exit 0
 
@@ -797,7 +797,9 @@ Run: `pnpm typecheck` → exit 0
 **先写下预期**，再逐条回退：
 
 - 变异甲：把 `if (REPEAT_UNITS.has(child.type) && !inWindow(child, from, to)) continue` 改成 `if (false) continue`。预期红：`块内的重复单元` 里的**列表两条** + `结构预知` 里改写的那条「光标没走到的项不画」+ 表格那条「剩余行数报得出来」（行数差恒为 0）。**不该红**：表格「整行一起出现」那条（它数的是列数）。
-- 变异乙：把 `const blankLines = rest === '' ? 0 : rest.split('\n').length - 1` 改成 `const blankLines = 5`。预期红：`代码块的占位行数` 里**前两条**，第三条（抽完 → 0）**不该红**。
+- 变异乙：把 `const blankLines = rest === '' ? 0 : rest.split('\n').length - 1` 改成 `const blankLines = rest === '' ? 0 : 5`（**保留空串那一支**）。预期红：`代码块的占位行数` 里**前两条**，第三条（抽完 → 0）**不该红**。
+
+  **别把它写成整行常量** `const blankLines = 5`——那样第三条**也会红**（`5` 是常量，`to = CODE.length` 时照样读到 5，而它断言 0）。那不是同一个变异。这一条是实施者量出来的：计划原先的写法与预期自相矛盾。
 
 红得比预期多或少都要查清楚再往下走。
 
@@ -820,7 +822,7 @@ git commit -F /tmp/wt-msg.txt
 export function valueStartOf(node: unknown): number | null          // parse.ts
 export const WT_BLANK_LINES = 'wtBlankLines'                        // clip.ts
 export const WT_BLANK_ROWS = 'wtBlankRows'                          // clip.ts
-export function readBlankCount(node: unknown, field: string): number // clip.ts
+export function readBlankCount(node: unknown, field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS): number // clip.ts
 ```
 
 **Files:**
@@ -1300,7 +1302,12 @@ function BlankSpace({
   cssVar
 }: {
   node: MdNode
-  field: string
+  /**
+   * 【为什么不是裸 `string`】`clip.ts` 把 `readBlankCount` 的参数收成了那两个常量的联合，
+   * 传 `WT_VALUE_START` 之类会**编译不过**。这里必须跟它一致，否则本 Task 一落地就红。
+   * 用 `typeof` 取那两个常量的类型，不必让 `clip.ts` 再多导出一个类型别名。
+   */
+  field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
   className: string
   cssVar: string
 }): ReactNode {
@@ -1538,6 +1545,22 @@ git commit -F /tmp/wt-msg.txt
   height: calc(var(--wt-md-blank-rows, 0) * var(--wt-md-row-h));
 }
 ```
+
+- [ ] **Step 3b: 给代码框一个最小高度**
+
+在 `.wt-md-pre` 那条规则里补一行。**这行不是可选的**——它盖住 `clip.ts` 里那段注释点名的缺口：
+
+```css
+  /* 【为什么必须有一行的高度】光标还在围栏里、框里一个字都没抽出来时，`<pre>` 没有
+     line box，高度只剩上下 padding——而 `clip.ts` 按「未揭示文本里的换行个数」报占位行数，
+     它**假设当前这一行已经由框里那半行占着了**；框是空的，这个前提就不成立，于是少报一行。
+     把它撑到恰好一行高，「框内行数 + 占位行数 == 总行数」这条在**每个**光标位置都成立
+     （设计 3.2 那一轮量过 6 个位置）。`min-height` 是**下限**：非空的框自己 ≥ 一行，
+     永远不会多算，两种机制也不会叠加。表格那侧的 `.wt-md-cell { height }` 是同一条口径。 */
+  min-height: var(--wt-md-code-line);
+```
+
+**为什么不在 `clip.ts` 里补那一行**：`blankLines` 的判据要保持单一（「未揭示文本里的换行个数」）。补 +1 会让「光标正好压在第一行行尾」那两条边界用例变红——那是判据被破坏，不是缺口被修好。
 
 - [ ] **Step 4: 跑门禁**
 
