@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
+import type { Root } from 'mdast'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
-import { clipTree } from '../../src/renderer/src/markdown/clip'
+import { clipTree, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
 import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
 
 /** 把 md 渲染进一个容器，返回容器本身——断言一律用 querySelector / textContent。 */
@@ -184,5 +185,180 @@ describe('renderMarkdown —— 行内 HTML（合并兄弟节点）', () => {
     const c = domAt('前文 <b>加粗</b> 后文\n', 8)
     expect(c.querySelector('b')!.textContent).toBe('加粗')
     expect(c.textContent).toBe('前文 加粗')
+  })
+})
+
+/**
+ * 未揭示部分的占位（设计 3.2 修订）。
+ *
+ * 【为什么这一层要测】`clip.ts` 只报「还有几行没到」，**留多少高度是这里的事**。
+ * 判据是设计 3.2 那张表的表格行与代码块两行：占位只占高度，什么都不画。
+ *
+ * 【为什么要手工造树】占位字段是 `clipTree` 在裁剪时挂上去的，直接 `parseMarkdown`
+ * 出来的树里没有。这里手工造最小树，把「有占位 / 没占位」两种输入都喂进去——
+ * 比串起 clipTree 更小、也更能指名道姓。
+ */
+describe('renderMarkdown —— 未揭示部分的占位', () => {
+  function withBlank(node: Record<string, unknown>, field: string, n: number): Root {
+    return {
+      type: 'root',
+      children: [{ position: { start: { offset: 0 }, end: { offset: 10 } }, ...node, [field]: n }]
+    } as unknown as Root
+  }
+
+  it('表格有剩余行时：表格之后多出一块空白，且不带任何网格线', () => {
+    const doc = withBlank(
+      {
+        type: 'table',
+        children: [
+          {
+            type: 'tableRow',
+            children: [{ type: 'tableCell', children: [{ type: 'text', value: '甲' }] }]
+          }
+        ]
+      },
+      WT_BLANK_ROWS,
+      2
+    )
+    const c = render(<>{renderMarkdown(doc)}</>).container
+    const blank = c.querySelector('.wt-md-table-blank')
+    expect(blank).not.toBeNull()
+    // 空白里什么都没有 —— 不画空网格线、不画占位文字
+    expect(blank!.textContent).toBe('')
+    expect(blank!.querySelector('table')).toBeNull()
+    // 行数进了 CSS 变量；换算成像素是 CSS 的事
+    expect(blank!.getAttribute('style')).toContain('--wt-md-blank-rows: 2')
+  })
+
+  it('表格一行不缺时：一个占位元素都不多出', () => {
+    const doc = withBlank(
+      {
+        type: 'table',
+        children: [
+          {
+            type: 'tableRow',
+            children: [{ type: 'tableCell', children: [{ type: 'text', value: '甲' }] }]
+          }
+        ]
+      },
+      WT_BLANK_ROWS,
+      0
+    )
+    const c = render(<>{renderMarkdown(doc)}</>).container
+    expect(c.querySelector('.wt-md-table-blank')).toBeNull()
+  })
+
+  it('代码块有未揭示的行时：代码框之后多出一块空白', () => {
+    const doc = withBlank({ type: 'code', value: '第一行' }, WT_BLANK_LINES, 2)
+    const c = render(<>{renderMarkdown(doc)}</>).container
+    const blank = c.querySelector('.wt-md-pre-blank')
+    expect(blank).not.toBeNull()
+    expect(blank!.textContent).toBe('')
+    expect(blank!.getAttribute('style')).toContain('--wt-md-blank-lines: 2')
+    // 框里只有已揭示的那一行
+    expect(c.querySelector('.wt-md-pre')!.textContent).toBe('第一行')
+  })
+})
+
+/**
+ * 阅读光标插在树里（设计 3.5）。
+ *
+ * 【为什么要测这一层】光标原来是 `Page` 追加在内容末尾的，而 md 那条路的内容是块级
+ * 元素的树——末尾那个 span 只会落在最后一个块**下方**。而隐形输入框与输入法候选框
+ * 都按这个坐标摆，所以这不是观感问题。
+ */
+describe('renderMarkdown —— 阅读光标', () => {
+  /** 造一棵「一个段落、里面一串文字」的最小树，文字起点给在 0。 */
+  function para(text: string): Root {
+    return {
+      type: 'root',
+      children: [
+        {
+          type: 'paragraph',
+          position: { start: { offset: 0 }, end: { offset: text.length } },
+          children: [
+            {
+              type: 'text',
+              value: text,
+              position: { start: { offset: 0 }, end: { offset: text.length } }
+            }
+          ]
+        }
+      ]
+    } as unknown as Root
+  }
+
+  it('光标插在文字中间，而不是段落下方的末尾', () => {
+    const c = render(<>{renderMarkdown(para('甲乙丙'), { caretAt: 2 })}</>).container
+    const p = c.querySelector('p')!
+    expect(p.textContent).toBe('甲乙丙')
+    // 段落的子节点顺序必须是 [文字, 光标, 文字] —— 光标在段落**里面**
+    const caret = p.querySelector('[data-testid="caret"]')
+    expect(caret).not.toBeNull()
+    // `caretAt: 2` ⇒ `at = clamp(2 − 0, 0, 3) = 2` ⇒ 切成 ['甲乙', '丙']
+    expect(caret!.previousSibling!.textContent).toBe('甲乙')
+    expect(caret!.nextSibling!.textContent).toBe('丙')
+  })
+
+  it('光标落在空节点上也算命中（列表项刚开头、文字还没出来那一格）', () => {
+    const doc = {
+      type: 'root',
+      children: [
+        {
+          type: 'list',
+          children: [
+            {
+              type: 'listItem',
+              position: { start: { offset: 0 }, end: { offset: 4 } },
+              children: [
+                {
+                  type: 'paragraph',
+                  position: { start: { offset: 2 }, end: { offset: 4 } },
+                  children: [{ type: 'text', value: '', position: { start: { offset: 2 }, end: { offset: 4 } } }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    } as unknown as Root
+    const c = render(<>{renderMarkdown(doc, { caretAt: 2 })}</>).container
+    const li = c.querySelector('li')!
+    expect(li.querySelector('[data-testid="caret"]')).not.toBeNull()
+  })
+
+  it('给的光标偏移超出全部文字时：退回追加在末尾（内容本来也到头了）', () => {
+    const c = render(<>{renderMarkdown(para('甲乙丙'), { caretAt: 99 })}</>).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(1)
+    expect(c.querySelector('p')!.querySelector('[data-testid="caret"]')).toBeNull()
+  })
+
+  it('不传光标（量高度那份副本）：一个光标都不该有', () => {
+    const c = render(<>{renderMarkdown(para('甲乙丙'))}</>).container
+    expect(c.querySelector('[data-testid="caret"]')).toBeNull()
+  })
+
+  it('光标插进代码框里，而不是掉到框下面', () => {
+    const doc = {
+      type: 'root',
+      children: [
+        {
+          type: 'code',
+          value: '第一行',
+          position: { start: { offset: 0 }, end: { offset: 10 } },
+          wtValueStart: 4
+        }
+      ]
+    } as unknown as Root
+    const c = render(<>{renderMarkdown(doc, { caretAt: 6 })}</>).container
+    const pre = c.querySelector('pre')!
+    expect(pre.textContent).toBe('第一行')
+    const caret = pre.querySelector('[data-testid="caret"]')
+    expect(caret).not.toBeNull()
+    // `caretAt: 6`、`wtValueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
+    // 【这两个字面量差一个字符就整条失效】原计划写的是 `'第'` / `'一行'`，
+    // 那与实现自相矛盾——实施者量出来了。这条用例的真正作用是**守住 `origin`**。
+    expect(caret!.previousSibling!.textContent).toBe('第一')
+    expect(caret!.nextSibling!.textContent).toBe('行')
   })
 })
