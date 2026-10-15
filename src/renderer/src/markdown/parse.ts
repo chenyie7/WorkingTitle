@@ -31,10 +31,11 @@ const processor = unified().use(remarkParse).use(remarkGfm)
 /**
  * 挂在 `code` / `inlineCode` 上的字段：`value` 的第一个字符在源码里的偏移。
  *
- * 【为什么不出这个口】只有同文件的 `valueStartOf` 读它。导出等于给下游开一条绕过
- * 校验的路（那边拿到裸字段就会绕过「不是有限数一律 null」那一步）。
+ * 【为什么出这个口】它有两个使用者：同文件的 `valueStartOf` 读它，`clip.ts` 裁剪时
+ * **写**它（`value` 切掉一段，起点要跟着后移）。两个写者意味着字段名必须只在一处定义
+ * ——下游各自拼字符串的话，两侧对不上是**静默**的。
  */
-const WT_VALUE_START = 'wtValueStart'
+export const WT_VALUE_START = 'wtValueStart'
 
 /**
  * 读 `value` 的真实源码起点。没标注、标注不是有限数一律给 `null`——调用方据此退回

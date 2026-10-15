@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
-import { clipTree } from '../../src/renderer/src/markdown/clip'
+import { clipTree, readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { parseMarkdown, valueStartOf } from '../../src/renderer/src/markdown/parse'
 import type { Root } from 'mdast'
 
 const DOC = [
@@ -45,17 +45,17 @@ describe('clipTree —— 结构预知', () => {
     expect(typesOf(out)).toEqual(['heading'])
   })
 
-  it('已经开始、但只抽到一半的块：结构保留，没抽到的文字留空', () => {
-    // 抽到「- 归档流」——列表这个块已经开始了
+  it('块内的重复单元按自己的区间判：光标没走到的项不画', () => {
+    // 抽到「归档流」——列表这个块已经开始了，但第二项还没开始
     const cut = at('归档流') + 3
     const out = clipTree(doc, 0, cut)
     // 三个块都在：标题、段落、列表（列表开始了）
     expect(typesOf(out)).toEqual(['heading', 'paragraph', 'list'])
-    // 列表的第二项整个在光标之后 —— 它的文字是空的，但项本身还在（结构预知）
+    // 【2026-10-15 修订】第二项整个在光标之后 —— 它**不在树里**。
+    // 旧口径是「项还在、只是文字空」，那正是真机上「块一露头全铺出来」的来源。
     const list = out.children[2] as unknown as { children: unknown[] }
-    expect(list.children).toHaveLength(2)
+    expect(list.children).toHaveLength(1)
     expect(textOf(list.children[0])).toBe('归档流')
-    expect(textOf(list.children[1])).toBe('')
   })
 
   it('跨越光标的文本节点被截断，而不是整段出现或整段消失', () => {
@@ -227,5 +227,116 @@ describe('clipTree —— 代码类节点的坐标系', () => {
     const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('`') + 1)
     const para = out.children[0] as unknown as { children: { type: string; value?: string }[] }
     expect(para.children.find((c) => c.type === 'inlineCode')?.value).toBe('')
+  })
+})
+
+/**
+ * 块内的**重复单元**——表格的行、列表的项（设计 3.2，2026-10-15 修订）。
+ *
+ * 判据与顶层块、叶子是同一条：**按它自己的字符区间**。三条用例各守一面：
+ * 没走到的丢掉、走到了就整体出现（表格整行含全部单元格）、打到了但文字没出来时
+ * 结构在而文字空。
+ */
+describe('clipTree —— 块内的重复单元', () => {
+  const LIST = '- 甲项\n- 乙项\n- 丙项\n'
+
+  it('列表：光标只走到第二项，第三项整个不在树里', () => {
+    const src = LIST
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('乙项') + 1)
+    const list = out.children[0] as unknown as { children: unknown[] }
+    expect(list.children).toHaveLength(2) // 甲、乙
+    expect(textOf(list.children[1])).toBe('乙')
+  })
+
+  it('列表：打到了但文字还没出来 —— 项在、文字空（屏幕上先出一个项目符号）', () => {
+    // 光标停在第二项的行首记号 `-` 上：项已开始，它的段落与文字都还在后面
+    const src = LIST
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('- 乙项') + 1)
+    const list = out.children[0] as unknown as { children: unknown[] }
+    expect(list.children).toHaveLength(2)
+    expect(textOf(list.children[1])).toBe('')
+  })
+
+  it('表格：整行一起出现，不会缺列', () => {
+    // 光标只走到第一格的中间，第二格还没开始 —— 两格都必须画出来
+    const src = '| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('| 1 |') + 3)
+    const table = out.children[0] as unknown as { children: unknown[] }
+    const row = table.children[1] as unknown as { children: unknown[] }
+    expect(row.children).toHaveLength(2)
+    expect(textOf(row.children[1])).toBe('')
+  })
+
+  it('表格：光标只走到第二行，后面的行不在树里，剩余行数报得出来', () => {
+    const src = '| 季度 | 收入 |\n| --- | --- |\n| Q1 | 120 |\n| Q2 | 240 |\n| Q3 | 360 |\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('Q2') + 2)
+    const table = out.children[0] as unknown as { children: unknown[] }
+    // 表头 + Q1 + Q2 三行在（Q2 已开始、整行画出来），Q3 不在
+    expect(table.children).toHaveLength(3)
+    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(1)
+  })
+
+  it('全部揭示完之后：一行都不少，占位计数是 0', () => {
+    const src = '| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.length)
+    const table = out.children[0] as unknown as { children: unknown[] }
+    expect(table.children).toHaveLength(2)
+    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(0)
+  })
+})
+
+/**
+ * 代码块的占位行数（设计 3.2 修订）。它的框只包住**已揭示的行**，没揭示的行由渲染层
+ * 按「默认一行高」留白——留几行就是这里算的。
+ *
+ * 【数的口径】未揭示那一段里**换行符的个数**。当前这一行的余下部分不另算一行：它已经
+ * 由框里那半行占着了。所以「光标停在同一行中间」时占位行数是 0，这是对的。
+ */
+describe('clipTree —— 代码块的占位行数', () => {
+  const CODE = '```\n第一行\n第二行\n第三行\n```\n'
+
+  it('只揭示到第一行中间：占位 2 行', () => {
+    const out = clipTree(parseMarkdown(CODE)!, 0, CODE.indexOf('第一行') + 2)
+    const code = out.children[0]
+    expect((code as unknown as { value: string }).value).toBe('第一')
+    expect(readBlankCount(code, WT_BLANK_LINES)).toBe(2)
+  })
+
+  it('光标正好压在第一行行尾：占位 2 行（那个换行还没揭示，它属于后一行）', () => {
+    const out = clipTree(parseMarkdown(CODE)!, 0, CODE.indexOf('第一行') + 3)
+    const code = out.children[0]
+    expect((code as unknown as { value: string }).value).toBe('第一行')
+    expect(readBlankCount(code, WT_BLANK_LINES)).toBe(2)
+  })
+
+  it('整个抽完：占位 0 行', () => {
+    const out = clipTree(parseMarkdown(CODE)!, 0, CODE.length)
+    expect(readBlankCount(out.children[0], WT_BLANK_LINES)).toBe(0)
+  })
+})
+
+/**
+ * 裁剪之后起点要跟着挪（Task 2 的质量评审量出来的）。
+ *
+ * `wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个字符在源码里的偏移」。
+ * 切片换了 `value` 却不挪它，这棵树上的节点就带着一个**失真**的起点——而下游
+ * （设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）拿到它**不报错**，只是光标
+ * 差几个字符。修之前这条会红：它报的是原来那一段的起点。
+ */
+describe('clipTree —— 裁剪后起点跟着挪', () => {
+  const SRC = '```\n第一行\n第二行\n```\n'
+
+  it('从中间切进去：报的是自己那一段的起点', () => {
+    const out = clipTree(parseMarkdown(SRC)!, SRC.indexOf('第一行') + 1, SRC.indexOf('第二行') + 1)
+    const code = out.children[0]
+    // 前面那个「第」被切掉了，剩下的是「一行」加换行再加「第」
+    expect((code as unknown as { value: string }).value).toBe('一行\n第')
+    // 起点必须是「一行」里那个「一」的位置，不是围栏之后那个「第」
+    expect(valueStartOf(code)).toBe(SRC.indexOf('一行'))
+  })
+
+  it('一个字都没切掉时：起点没有变化（反面对照）', () => {
+    const out = clipTree(parseMarkdown(SRC)!, 0, SRC.indexOf('第一行') + 3)
+    expect(valueStartOf(out.children[0])).toBe(SRC.indexOf('第一行'))
   })
 })

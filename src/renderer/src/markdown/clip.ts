@@ -1,42 +1,49 @@
 import type { Content, Root } from 'mdast'
-import { valueStartOf } from './parse'
+import { valueStartOf, WT_VALUE_START } from './parse'
 
 /**
  * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
  *
- * 【三条规则，合起来就是「结构预知」】
+ * 【四条规则，合起来就是「结构预知」】
  *
  * 1. **顶层块的起始偏移 ≥ to 的整个丢掉**。光标还没走到的块，屏幕上一点都不该有
  *    ——这是「还没开始的块不存在」。
- * 2. **跨越 to 的文本被截断**。剩下的部分照常显示。
- * 3. **块内的叶子（没 `value` 可裁、也没 `children`）按它自己的区间判**：没开始就丢。
+ * 2. **块内的「重复单元」（表格的行、列表的项）也按它自己的区间判**。光标走到第几行 /
+ *    第几项，那一行 / 那一项才画出来；没走到的整个丢掉。丢掉的行 / 项由渲染层按
+ *    「默认一行高」留白，**不留任何结构**（设计 3.2，2026-10-15 修订）。
+ * 3. **跨越 to 的文本被截断**。剩下的部分照常显示。
+ * 4. **块内的叶子（没 `value` 可裁、也没 `children`）按它自己的区间判**：没开始就丢。
  *    它们截不出「半个」，留着就等于提前把没揭示的东西弄上屏——图片会提前发 IPC 去抓
  *    （设计 8.2：只抓已经抽出来的那张）。**内嵌 HTML 是其中的特例，要等抽完**，理由见下。
  *
- * 【规则 1 只在顶层判，块内的容器结构一个都不丢】这不是省事，是设计 3.2 钉死的口径：
- * **「块」= `root.children`（mdast 根节点的直接子节点）**，表格的行、列表的项都
- * **不是**块，而是块的内部结构——「一旦所在的块被保留，它们整体跟着保留」。
+ * 【粒度只下到「重复单元」，这一条是刻意的】顶层块、表格的行、列表的项各自按自己的起始
+ * 偏移判；**其余容器（引用块、段落、表格的单元格、行内的粗体…）一律无条件保留**。
+ * 两个理由：
+ * - 表格若按单元格判，一行里前面几个格子揭示、后面几个没揭示时，屏幕上是**缺列的残行**
+ *   ——比空格子难看得多。所以表格这一层只下到行。
+ * - 行内若也下沉，`**季度**` 抽到第二个 `*` 时会画出一个空 `strong`：屏幕上什么都没有，
+ *   下一个字符却突然变粗。设计 3.4 那条「屏幕上永不出现裸记号」靠的正是「结构先于文字」，
+ *   行内下沉会把那个破绽露出来。
  *
- * 于是「已经开始、但没抽完」的块会**保留完整结构**：表格的表头一露头，整张网格
- * 就在树里了，只是后面几行的文字是空的；列表的第一项开始揭示时，后面几项也在，
- * 只是文字是空的。这正是设计 3.2 那条——看着像「正在填表」，
- * 代价是提前泄露「后面还有几行」这类结构信息，这是明确接受的。
- *
- * **把规则 1 也用到块内部是错的**（本模块第一版就是这么写的）：那样表格只会画出
- * 已揭示的那几行，整张网格画不出来，上面那条口径当场失效。判据是设计 3.2 与
- * 计划末尾验收清单第 9 条，不是任何一条单测。
- *
- * 【规则 3 与规则 1 的边界在哪】保留与否一律看**节点自己的区间**，与「它所在的块开没
- * 开始」无关。差别只在后果：块内容器丢不得（丢了整张网格就没了），块内叶子非丢不可
- * （留着就是提前抓图 / 提前上屏）。所以两条规则不矛盾，是同一条判据落在两类节点上。
+ * 【规则 2 的后果：布局会跳】占位只有「默认一行高」，光标走到它时变成真实高度，它下面的
+ * 内容就往下推一次。这是设计 3.2 里写明并接受的取舍，不是缺陷——**别把这个当成 bug 去修**。
  *
  * 【为什么 from 也要判】它是折点（折叠前文）或 revealStart。折点是按块边界算的，
  * 但 `revealStart` 不是——`jumpToChapter` 抬起来的那个值可能落在块中间，所以两边
  * 都要能切。`from` 落在块中间时，块本身留着，块内 `from` 之前的那部分文字被截成空。
  *
  * 【三类节点】只有 `text` / `code` / `inlineCode` 三个带**可裁**的 `value`（截断）；
- * 有 `children` 的（段落、列表、表格…）递归下去裁（结构不丢）；
- * 剩下的叶子（图片、分隔线、脚注引用、硬换行、内嵌 HTML）整块留或整个丢。
+ * 有 `children` 的（段落、列表、表格…）递归下去裁；剩下的叶子（图片、分隔线、脚注引用、
+ * 硬换行、内嵌 HTML）整块留或整个丢。
+ *
+ * 【代码与表格的占位计数】规则 2 丢掉的行 / 项要由渲染层留出高度，而「留多少」是个
+ * 算出来的数——**只有本文件知道它**，所以在这里算出来挂在节点上（`wtBlankLines` /
+ * `wtBlankRows`，读它们只有 `readBlankCount` 一个口）。这不是把判断漏到视图层：判断仍然
+ * 只在本文件做，视图层拿到的是已经定好的数字。
+ *
+ * 【代码类节点的原点不是 `position.start.offset`】`value` 里不含定界符（围栏、反引号），
+ * 而 `position` 从定界符起算。真实起点由 `parse.ts` 算好挂着，这里用 `valueStartOf` 取
+ * （设计 3.6）。用错原点的后果是**内容恒定领先光标一个定界符的长度**。
  *
  * 【叶子里的两档时机，别合并】图片、脚注引用、硬换行**没有文字**，从中间「切」没有
  * 意义，所以「一开始揭示（`start < to`）就整体出现」是自洽的（设计 8.3）。**内嵌 HTML
@@ -56,13 +63,35 @@ type ClipNode = Content | Root
 /** 带可裁文本的节点类型。加新类型之前先想清楚它算文本还是算结构。 */
 const VALUE_TYPES = new Set(['text', 'code', 'inlineCode'])
 
+/**
+ * 「重复单元」：块内**按自己的区间判**的那两类节点（设计 3.2 修订）。
+ * 加新类型之前先想清楚：它是不是「同一个块里会重复出现、且逐个揭示读起来才自然」的东西。
+ * 段落、单元格、行内元素都**不是**——理由见文件头那条「粒度只下到重复单元」。
+ */
+const REPEAT_UNITS = new Set(['listItem', 'tableRow'])
+
+/** 挂在节点上的占位计数字段名。只有本文件与 `readBlankCount` 用它，别处别自己拼字符串。 */
+export const WT_BLANK_LINES = 'wtBlankLines'
+export const WT_BLANK_ROWS = 'wtBlankRows'
+
+/**
+ * 读占位计数：没有这个字段、不是有限正数，一律当 0。
+ *
+ * 【为什么让 clip 出这个读口】字段名与「什么样的值算有效」只该有一处定义——
+ * 由 `toReact.tsx` 自己拼字符串去读的话，两侧对不上时是**静默**的（占位少一截，不报错）。
+ */
+export function readBlankCount(node: unknown, field: string): number {
+  const raw = (node as Record<string, unknown> | null | undefined)?.[field]
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+}
+
 export function clipTree(root: Root, from: number, to: number): Root {
   return { ...root, children: clipBlocks(root.children, from, to) as Root['children'] }
 }
 
 /**
  * 顶层块：**保留还是丢掉只在这一层判**（设计 3.2）。
- * 留下来的块交给 `clipInside`，那里只截断、不丢。
+ * 留下来的块交给 `clipInside`，那里只截断、不丢整块。
  */
 function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): ClipNode[] {
   const out: ClipNode[] = []
@@ -83,8 +112,16 @@ function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): ClipN
   return out
 }
 
+/** 节点自己的区间是否与 `[from, to)` 相交。**没有区间的节点一律算「在」**（宁可多显示）。 */
+function inWindow(node: ClipNode, from: number, to: number): boolean {
+  const position = positionOf(node)
+  if (position === null) return true
+  return position.start < to && position.end > from
+}
+
 /**
- * 已经开始揭示的块**内部**：容器结构一个都不丢，块内三类节点各按各的规则裁。
+ * 已经开始揭示的块**内部**：重复单元（表格行、列表项）各按各的区间判，
+ * 其余容器结构一个不丢，块内三类可裁文本各按各的窗口截。
  *
  * 【为什么返回值可以是 null】块内的**叶子**（图片、内嵌 HTML、脚注引用、硬换行）
  * 截不出「半个」，只能在「留整块」与「丢」之间二选一，二选一的判据是它**自己的**
@@ -94,8 +131,9 @@ function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): ClipN
  * 发 IPC 去抓图（设计 8.2：只抓已经抽出来的那张）；留着没抽到的 HTML = 把还没有揭示的
  * 字画到屏幕上（内嵌 HTML 的 `value` 里连文字一起，见下面第三支）。两条都破契约。
  *
- * 三支的分派依据是「有没有可裁的 `value` / 有没有 `children`」，不是节点类型：
- * 类型逐个窄化在这里会变成几十行只做类型收窄、不做任何事的代码。
+ * 四支的分派依据是「有没有可裁的 `value` / 有没有 `children`」，不是节点类型：
+ * 类型逐个窄化在这里会变成几十行只做类型收窄、不做任何事的代码。按类型分岔的只有
+ * `code`（要数占位行）与 `table`（要数占位行数）两处，都带注释。
  */
 function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
   const n = node as unknown as {
@@ -108,20 +146,56 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
   // 第一支：可裁文本（text / code / inlineCode）——截到 [from, to) 那个窗口
   if (VALUE_TYPES.has(n.type) && typeof n.value === 'string') {
     // 【原点不是 position.start.offset】`code` / `inlineCode` 的 `value` 里不含定界符
-    // （围栏、反引号），而 `position` 从定界符起算——两套坐标差着一个定界符的长度。
-    // 真实起点由 `parse.ts` 在解析时算好挂在节点上（设计 3.6），这里只是取用。
+    // （围栏、反引号），而 `position` 从定界符起算。真实起点由 `parse.ts` 在解析时算好
+    // 挂在节点上（设计 3.6），这里取用。
+    // **别把它读成「差一个定界符的长度」**：围栏块差的是「定界符 + 换行」（4 或 6），
+    // 缩进块根本没有定界符（差一段缩进），容器里的还会逐行变。设计 3.6 的残留那一段
+    // 讲了哪些形态是精确的、哪些不是。
     const origin = valueStartOf(n) ?? start
     // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
     if (origin === undefined) return node
     const head = Math.max(0, from - origin)
     const tail = Math.max(head, to - origin)
-    return { ...n, value: n.value.slice(head, tail) } as unknown as ClipNode
+    const value = n.value.slice(head, tail)
+    // 【切完之后起点要跟着挪】`wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个
+    // 字符在源码里的偏移」。切掉了前 `head` 个字符，起点就后移 `head`——不挪的话这棵树上的
+    // 节点会带着一个**失真**的起点，而下游（设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）
+    // 拿到它就是静默差几个字符，**不报错**。
+    const shiftedStart = origin + head
+    // 【代码块多挂一个占位行数】它的框只包住已揭示的行，没揭示的行由渲染层按「默认一行高」
+    // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数 ——
+    // 当前这一行的余下部分不另算一行（它已经由框里那半行占着了）。
+    if (n.type === 'code') {
+      const rest = n.value.slice(tail)
+      const blankLines = rest === '' ? 0 : rest.split('\n').length - 1
+      return {
+        ...n,
+        value,
+        [WT_VALUE_START]: shiftedStart,
+        [WT_BLANK_LINES]: blankLines
+      } as unknown as ClipNode
+    }
+    return { ...n, value, [WT_VALUE_START]: shiftedStart } as unknown as ClipNode
   }
-  // 第二支：容器——递归下去裁，**结构本身不丢**（设计 3.2：块内的行、项整体跟着保留）
+  // 第二支：容器——递归下去裁。重复单元按自己的区间判（规则 2），其余结构不丢
   if (Array.isArray(n.children)) {
-    const children = n.children
-      .map((child) => clipInside(child, from, to))
-      .filter((child): child is ClipNode => child !== null)
+    const children: ClipNode[] = []
+    for (const child of n.children) {
+      // 重复单元：光标还没走到就整个丢掉。它本来该占的高度由下面那个计数交给渲染层
+      if (REPEAT_UNITS.has(child.type) && !inWindow(child, from, to)) continue
+      const kept = clipInside(child, from, to)
+      if (kept) children.push(kept)
+    }
+    // 【表格：丢掉了几行要报出去】渲染层拿它在表格底下留白。
+    // 数的是**行数差**，不是被丢掉的那些行本身——判据与这里是不是表格无关，
+    // 只有这个数字是表格专属的。（表格的子节点只可能是 `tableRow`，所以这个差就是行数。）
+    if (n.type === 'table') {
+      return {
+        ...n,
+        children,
+        [WT_BLANK_ROWS]: n.children.length - children.length
+      } as unknown as ClipNode
+    }
     return { ...n, children } as unknown as ClipNode
   }
   // 第三支：叶子——没有可裁的文本，整块留或整个丢，按它自己的区间判
