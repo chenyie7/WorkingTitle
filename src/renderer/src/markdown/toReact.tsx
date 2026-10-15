@@ -281,31 +281,37 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
       // 是在块内的——那时这一格判的是「起点 + 长度 ≥ 揭示偏移」的算术版，**没有下界**，
       // 所以漏不出来。位置仍取串尾是对的：被丢掉的那几个字符不上屏、缝后面的节点又都是空的，
       // 「串尾」与「插在它前面」落的是同一个 DOM 位置。
-      // 【第三条判据：这一串里有没有**兜底目标**（`Caret.tail`）】这条路**只调
-      // `renderTokens(tokens)`、从不 `renderNode`**，于是 `splitAtCaret` 不被调用、`tail`
-      // 没人消费——光标一路落到 `renderMarkdown` 末尾那条兜底，落在**块外**。实测
-      // `'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 18、19 与 `'甲 <b>乙</b>\n\n末段\n'` 的 7、8、9
-      // （设计 3.5 那条兜底的注释里记着它的成因不是「链尾是 html 叶子」——那几格
-      // `tailTarget` 返回的是**文本节点**）。
-      //
-      // 【位置仍取串尾是对的】`tailTarget` 沿**最后一个孩子**往下走，所以 tail 落在一串里时
-      // 它必然就是这一串的**最后一个节点**——「串尾」与「那个节点的末尾」是同一个 DOM 位置，
-      // 不必再算下标。
       if (ctx.caret && !ctx.caret.placed) {
         const at = ctx.caret.at
         const nodeStart = n.position?.start.offset
-        if (
-          ctx.caret.tail === n ||
-          caretIndexIn(n, at) !== null ||
-          (nodeStart !== undefined && nodeStart >= at)
-        ) {
+        if (caretIndexIn(n, at) !== null || (nodeStart !== undefined && nodeStart >= at)) {
           caretHere = true
         }
       }
       i++
     }
+    // 【第三条判据：这一串里有没有**兜底目标**（`Caret.tail`）】这条路**只调
+    // `renderTokens(tokens)`、从不 `renderNode`**，于是 `splitAtCaret` 不被调用、`tail`
+    // 没人消费——光标一路落到 `renderMarkdown` 末尾那条兜底，落在**块外**。实测
+    // `'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 18、19 与 `'甲 <b>乙</b>\n\n末段\n'` 的 7、8、9
+    // （设计 3.5 那条兜底的注释里记着它的成因不是「链尾是 html 叶子」——那几格
+    // `tailTarget` 返回的是**文本节点**）。
+    //
+    // 【位置取串尾是对的，而这一句就**只跟串尾比**】`tailTarget` 沿**最后一个孩子**往下走，
+    // 所以 tail 落在一串里时它必然就是这一串的**最后一个节点**——「串尾」与「那个节点的末尾」
+    // 于是是同一个 DOM 位置，不必再算下标。**那是一条不变量，而这一句现在自己钉住它**：判据
+    // 若写成「tail 出现在这一串里」（在循环里逐个节点比），它就把不变量当成了没人管的前提，
+    // 将来 `tailTarget` 一改取值方式（比如返回链上的中间节点），光标会**静默**落到串尾而不是
+    // 那个节点的末尾。串尾是循环消费到的最后一个下标，**写成 `nodes[i - 1]`**——别写成
+    // `nodes[nodes.length - 1]`：`tailTarget` 会跳过渲染成 `null` 的 `definition`，链尾后面
+    // 跟一个 `definition` 时那是**另一个**节点，判据会平白失效、光标退回篇末兜底。
+    if (ctx.caret && !ctx.caret.placed && ctx.caret.tail === nodes[i - 1]) caretHere = true
     if (!hasHtml) {
-      // 没有 html 时每个节点各成一个 Fragment——这条路上光标能精确落进某一个文本节点
+      // 【这一条路上读不到 `caretHere`】每个节点各成一个 Fragment、光标由 `caretBefore`
+      // 精确落进某一个文本节点，所以上面那三条判据算出来的 `caretHere` 只被**合成 token 流**
+      // 那条路（下面 `renderTokens` 那一段）消费。**它不是死代码，只是多余的一次求值**：
+      // 规格评审实测，把它改成「只在 `hasHtml` 时求值」（两遍扫描）**行为逐字节不变**
+      // （200 份定种子文档 × 每个偏移 = 1988 格，光标 DOM 签名 0 差异）。拆循环比留着贵。
       for (let k = start; k < i; k++) {
         out.push(
           <Fragment key={k}>
