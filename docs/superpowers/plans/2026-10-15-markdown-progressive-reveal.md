@@ -2461,6 +2461,103 @@ git commit -F /tmp/wt-msg.txt
 
 消息末尾保留 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
 
+## Task 4g: md 路上的光标在**文档中间**仍会掉到块下方（Task 5 的评审查出来的）
+
+**对应设计：** 3.5（规则二与那条兜底）、文末「第四轮」。
+
+**由来**：Task 5 接线之后，md 路的光标第一次真的由语法树产出。它的规格评审逐格扫出：**「光标在内容里面」在文档中间的若干格不成立**——落点是「最后一个已渲染块**下面一行、左边缘**」，而设计 3.5 写明这个坐标是**隐形输入框与输入法候选框的锚点**，验收清单第 13 条要的正是「都不是掉到那个块的下方」。
+
+**实测（评审，14 份夹具 × 逐偏移 = 230 格，判据「光标是不是 `.wt-page__text` 的最后一个子元素」）**：文档中间开火 **15 格 / 4 种形态**：
+
+| 形态 | 夹具 | 偏移位 |
+|---|---|---|
+| 列表多项 | `- 甲\n- 乙\n- 丙\n` | **4、8**（每个列表项边界一格）|
+| 容器里的代码 | `> ```\n…` | 3、4、5、6、7 |
+| 表格尾部 | `\|甲\|乙\|…` | 32–35 |
+| 标题正文 | `# 季度汇报…` | 7、8、20、21 |
+
+列表那两格还额外偏了 `.wt-md-list` 的 `padding-left: 2em`（`markdown.css`）——**下一个字要出现的位置的左边 2em、下边约一个 margin**。
+
+**机制（两个口都堵上）**：
+1. `clip` 把 `start >= to` 的节点**整块丢掉**，于是设计 3.5 规则二（「整个在揭示偏移之后的节点 → 光标插在它前面」）**对被丢掉的节点永远开不了火**——那些节点根本不在树上；
+2. 容器里 `value` 为空、内容起点在 `at` 之后的节点（正在敲的围栏）被接受窗口的**左界**挡掉（`caretIndexIn` 的 `at < rows[0].src`）。
+于是走到 `renderMarkdown` 末尾那条兜底，被追加成 `.wt-page__text` 的最后一个子元素 = 块下方。
+
+**`toReact.tsx` 那段兜底注释要一并改准**：它写「实测它走到的时候只有两类…那时内容本来也到头了，位置看不出差别」——**第一类（`to = 0`）成立，第二类不成立**（上面 15 格里内容都还剩很多）。
+
+**候选修法（要实测，别直接信）**：让**还有未揭示子节点**的容器把光标**收在自己内部**——判据是「这个容器的 `position.end.offset > to`（即它还有没揭示的孩子），而它已渲染的孩子都没接住光标」，此时把光标追加在**最后一个已渲染子节点之后**（而不是追加在整篇末尾）。递归地取**最内层**这样的容器。列表那两格于是在 `<ul>` 内、`li[0]` 之后；容器里的围栏那几格进入 `<blockquote>` 内的空 `<pre><code>`。
+
+**Files:**
+- Modify: `src/renderer/src/markdown/toReact.tsx`
+- Modify: `tests/unit/markdownToReact.test.tsx`
+- Modify: `tests/unit/markdownView.test.tsx`（那条用例的判据按下面 Step 3 改）
+
+- [ ] **Step 1: 写失败的测试（先钉住那 4 种形态）**
+
+`tests/unit/markdownToReact.test.tsx` 追加一个 `describe`，走**真管线**（`parseMarkdown` → `clipTree` → `renderMarkdown(…, { caretAt: to })`）：
+
+```ts
+/**
+ * md 路上的光标**不许掉到块下方**（设计 3.5；Task 5 的评审逐格扫出来的 4 种形态）。
+ *
+ * 【判据为什么是这条】`clamp` 到「父元素不是 `.wt-page__text` 的最后一个子元素」——
+ * 用 `closest('p')` 会**误伤**：正确地待在 `<h1>` / `<li>` / `<td>` / `<pre>` 里的光标
+ * 会被判成失败（评审实测 10 格）。
+ */
+describe('光标不出块（真管线，逐偏移）', () => {
+  const FIXTURES = [
+    '- 甲\n- 乙\n- 丙\n',
+    '> ```\n> 甲\n> 乙\n> ```\n',
+    '| 甲 | 乙 |\n| - | - |\n| 1 | 2 |\n',
+    '# 季度汇报\n\n正文一行。\n\n又一段。\n'
+  ]
+
+  it.each(FIXTURES)('逐偏移：光标都在内容里（%s）', (src) => {
+    for (let to = 0; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]')
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(caret!.parentElement?.classList.contains('wt-page__text'), `to=${to} 掉到块下方`).toBe(false)
+    }
+  })
+})
+```
+
+**`to = 0` 是例外**：树是空的，那时兜底是唯一的位置。若 `to = 0` 红，把它从循环里排除并在注释里写明理由（**别为了让测试绿而放宽判据**——先确认它红在哪一格）。
+
+- [ ] **Step 2: 跑测试，确认它红**
+
+预期：四条全红，红的格数**至少**覆盖评审那份表（列表 4/8、围栏 3–7、表格 32–35、标题正文 7/8/20/21）。**把你实测的红格数与那张表对一遍**，多或少都要在报告里说明。
+
+- [ ] **Step 3: 改那条既有用例的判据（Task 5 自己产出的那条）**
+
+`tests/unit/markdownView.test.tsx` 里「md 那条路：光标恰好一个，且插在内容里面」那条：**判据换成「父元素不是 `.wt-page__text` 的最后一个子元素」**（或「父元素是 `p/li/td/th/pre/h1..h6` 之一」），**并把它测的偏移从只有一格扩成逐偏移**（评审实测：同一份 DOC 的 7/8/20/21/30 五格上，原断言不成立；而 1–6、22、23、31、32 十格是它**误伤**）。
+
+- [ ] **Step 4: 改 `toReact.tsx`（候选修法，落地时按实测调整）**
+
+按上面那条候选规则改；**先把要改的那段注释读一遍**，改完把「只有两类」那句改成实测口径。
+
+- [ ] **Step 5: 跑测试，确认它绿**
+
+Run: `pnpm vitest run tests/unit/markdownToReact.test.tsx tests/unit/markdownView.test.tsx` → PASS
+Run: `pnpm test` → **exit 0**；Run: `pnpm typecheck` → exit 0
+
+**另外必须回归的两条**（设计 3.5 里量出来的老账，别修一个新的坏一个旧的）：
+1. 「值节点不抢它前面的光标」——表格里那串空单元格文字节点把光标接走那个形态（**实测过连续 13 个偏移位**）；
+2. 「未揭示的占位之前」——表格/代码块占位那几格光标落在**占位之前**。
+
+- [ ] **Step 6: 变异验证（两条，各自单独做）**
+
+- 甲：把你新加的「容器收留光标」那一段**关掉**（回到只走末尾兜底）→ 预测 Step 1 那四条全红，红格数与 Step 2 实测的相同。
+- 乙：把判据写成「父元素不是 `.wt-page__text` 的最后一个子元素」**之外**再收紧成 `closest('p')` → 预测**误伤**那 10 格（`<h1>`/`<li>` 里的），即同样的输入下用例变红——**这条用来证明判据换对了**。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add src/renderer/src/markdown/toReact.tsx tests/unit/markdownToReact.test.tsx tests/unit/markdownView.test.tsx
+git commit -F /tmp/wt-msg-task4g.txt
+```
+
 ## Task 5: `MarkdownView.tsx` / `Page.tsx` —— 接线
 
 **对应设计：** 第 3.5 节最后一段。
