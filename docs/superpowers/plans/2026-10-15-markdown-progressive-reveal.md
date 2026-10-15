@@ -1490,6 +1490,272 @@ git commit -F /tmp/wt-msg.txt
 
 ---
 
+## Task 4b: 逐行偏移表 —— 容器里的文字与代码块共用一条坏坐标
+
+**对应设计：** 第 3.6.1 节（它同时推翻了 3.6 里那条「不为它做逐行映射」的裁定）。
+
+**为什么插在 Task 4 之后：** 它要改 `toReact.tsx` 的光标换算，而 Task 4 正在那条路上。**等 Task 4 的返工落地并评审通过再开工。**
+
+**背景**：容器里**逐行剥前缀**的文字（引用块的 `> `、多行列表项的续行缩进）`value` 下标与源码偏移**不是差一个常量**——第二行起每行差一个前缀宽度，方向是**提前**（未揭示的字上屏）。实测（仓库里的 remark 复算）：
+
+```
+'> 引用甲\n> 引用乙\n' → text 节点 position=[2,11]、value='引用甲\n引用乙'
+揭示偏移 7 时屏幕上是 '引用甲\n引'，而应当是 '引用甲' —— '引'（源码偏移 8）漏了
+```
+
+代码块那两处「已知残留」（缩进块、带缩进的围栏）是**同一套机制**，一并精确。
+
+**Files:**
+- Modify: `src/renderer/src/markdown/parse.ts`（加一个逐行表与它的读口）
+- Modify: `src/renderer/src/markdown/clip.ts`（值那一支改成逐行切片）
+- Modify: `src/renderer/src/markdown/toReact.tsx`（光标的「偏移 → 下标」换算用同一张表）
+- Modify: `tests/unit/markdownParse.test.ts`、`tests/unit/markdownClip.test.ts`、`tests/unit/markdownToReact.test.tsx`
+
+- [ ] **Step 1: 写失败的测试**
+
+`tests/unit/markdownParse.test.ts` 追加（表本身）：
+
+```ts
+/**
+ * 逐行偏移表（设计 3.6.1）。**每一行的 `value` 都贴在该行源码的尾部**，前缀
+ * （`> `、缩进、围栏）全在它前面——所以「行尾往前走该行长度」就是行起点。
+ */
+describe('parseMarkdown —— 逐行偏移表', () => {
+  it('多行引用块：第二行的起点是那一行自己的位置，不是第一行加字符数', () => {
+    const src = '> 引用甲\n> 引用乙\n'
+    const text = (parseMarkdown(src)!.children[0] as never as { children: { children: unknown[] }[] })
+      .children[0].children[0]
+    expect(lineStartsOf(text)).toEqual([src.indexOf('引用甲'), src.indexOf('引用乙')])
+    // `'引用甲\n引用乙'` 里第 4 个字符是第二行的「引」——它的源码位置是 8，不是 2+4=6
+    expect(src.indexOf('引用乙')).toBe(8)
+  })
+
+  it('普通的单行文本：不挂表（用 `position` 就够，挂了也只是重复信息）', () => {
+    const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
+    expect(lineStartsOf(para.children[0])).toBeNull()
+  })
+
+  it('围栏代码块：挂表，第一行起点在围栏之后', () => {
+    const src = '```\n第一行\n第二行\n```\n'
+    expect(lineStartsOf(parseMarkdown(src)!.children[0])).toEqual([
+      src.indexOf('第一行'),
+      src.indexOf('第二行')
+    ])
+  })
+})
+```
+
+`tests/unit/markdownClip.test.ts` 追加（切片真的按行走）：
+
+```ts
+/**
+ * 逐行切片（设计 3.6.1）：容器里的文字在窗口两侧都要按**行**求交，不能按字符数硬减。
+ * 修之前这里的每一条都是错的，而且方向是**提前**——未揭示的字上屏。
+ */
+describe('clipTree —— 容器里的文字按行切', () => {
+  const QUOTE = '> 引用甲\n> 引用乙\n'
+
+  it('光标停在第一行结尾：第二行一个字都不显示', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('引用甲') + 3)
+    expect(textOf(out)).toBe('引用甲')
+  })
+
+  it('光标走到第二行中间：只显示到那里', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('引用乙') + 1)
+    expect(textOf(out)).toBe('引用甲\n引')
+  })
+
+  it('折点切进第一行中间：窗口起点也按行算，前面的字不显示', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, QUOTE.indexOf('用'), QUOTE.length)
+    expect(textOf(out)).toBe('用甲\n引用乙')
+  })
+})
+```
+
+- [ ] **Step 2: 跑测试，确认它红**
+
+Run: `pnpm vitest run tests/unit/markdownParse.test.ts tests/unit/markdownClip.test.ts`
+Expected: **红**（`lineStartsOf` 还没导出；切片那三条给出比期望多的字）。把实际红的样子记几条下来。
+
+- [ ] **Step 3: 改三个文件**
+
+**`parse.ts`：**
+
+在 `contentStartOf` 那一带之后追加：
+
+```ts
+/** 挂在节点上的逐行偏移表（设计 3.6.1）：每个 value **行**的首字符在源码里的偏移。 */
+export const WT_LINE_STARTS = 'wtLineStarts'
+
+/** 读逐行偏移表：没有、不是数组一律给 `null`（调用方退回按字符数切）。 */
+export function lineStartsOf(node: unknown): number[] | null {
+  const raw = (node as Record<string, unknown> | null | undefined)?.[WT_LINE_STARTS]
+  return Array.isArray(raw) && raw.every((n) => typeof n === 'number') ? (raw as number[]) : null
+}
+
+/**
+ * 建逐行偏移表：每个 value 行的首字符在源码里的偏移。
+ *
+ * 【依据】**每一行的 `value` 都贴在该行源码的尾部**——前缀（引用块的 `> `、列表项的续行
+ * 缩进、围栏、缩进块的缩进）全在它前面。所以「该行源码的结束偏移 − 该行在 value 里的
+ * 长度」就是行起点。这与 3.6 给代码块算首部起点用的是同一条技巧，推广到逐行。
+ *
+ * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
+ */
+function buildLineStarts(kind: string, source: string, start: number, end: number, value: string): number[] {
+  const lines = value.split('\n')
+  const nl = source.indexOf('\n', start)
+  const firstLineEnd = nl >= 0 && nl < end ? nl : end
+  const fenced = kind === 'code' && /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
+  let lineStart = fenced ? (firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd) : start
+  const out: number[] = []
+  for (const line of lines) {
+    const next = source.indexOf('\n', lineStart)
+    const lineEnd = next >= 0 && next < end ? next : end
+    out.push(lineEnd - line.length)
+    lineStart = lineEnd + 1
+  }
+  return out
+}
+
+/** 这张表能不能由「起点 + 字符数」直接推出来。能的话不挂——挂了也只是重复信息。 */
+function isContiguous(starts: readonly number[], base: number, value: string): boolean {
+  let v = 0
+  for (const s of starts) {
+    if (s !== base + v) return false
+    const nl = value.indexOf('\n', v)
+    v = nl < 0 ? value.length : nl + 1
+  }
+  return true
+}
+```
+
+并把 `annotateValueStarts` 改成（**`text` 也要判**——容器里的文字就走这一类）：
+
+```ts
+function annotateValueStarts(node: unknown, source: string): void {
+  const n = node as {
+    type?: string
+    value?: string
+    children?: unknown[]
+    position?: { start: { offset?: number }; end: { offset?: number } }
+  }
+  const start = n.position?.start.offset
+  const end = n.position?.end.offset
+  if (typeof n.value === 'string' && start !== undefined && end !== undefined) {
+    if (n.type === 'code' || n.type === 'inlineCode') {
+      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(n.type, source, start, end, n.value)
+    }
+    if (n.type === 'text' || n.type === 'code') {
+      const starts = buildLineStarts(n.type, source, start, end, n.value)
+      const base = n.type === 'code' ? (valueStartOf(n) as number) : start
+      if (!isContiguous(starts, base, n.value)) {
+        ;(n as Record<string, unknown>)[WT_LINE_STARTS] = starts
+      }
+    }
+  }
+  for (const child of n.children ?? []) annotateValueStarts(child, source)
+}
+```
+
+**`clip.ts`：** 值那一支在算 `head` / `tail` 之前插一段分派——有表就逐行走，没表就按老办法：
+
+```ts
+    const lines = lineStartsOf(n)
+    let head: number
+    let tail: number
+    let revealedStarts: number[] | null = null
+    if (lines) {
+      const r = sliceByLineStarts(n.value, lines, from, to)
+      head = r.head
+      tail = r.tail
+      revealedStarts = r.starts
+    } else {
+      head = Math.max(0, from - origin)
+      tail = Math.max(head, to - origin)
+    }
+```
+
+切片完写回时，**表也要跟着切成「已揭示那几行」**（光标的换算靠它）：
+
+```ts
+const shiftedStart = revealedStarts ? revealedStarts[0] : origin + head
+```
+并在返回的对象里带上 `[WT_LINE_STARTS]: revealedStarts`（为 `null` 时不带）。
+
+新增的两个纯函数（放 `readBlankCount` 附近）：
+
+```ts
+/**
+ * 逐行切片（设计 3.6.1）：`value` 的下标与源码偏移**逐行**是 +1 线性的（每行差一个
+ * 前缀宽度），所以窗口两侧都要**按行求交**，不能按字符数硬减。
+ *
+ * 【换行符算谁的】行 k 与行 k+1 之间那个 `\n` 在源码里位于「行 k 的源码结束偏移」处，
+ * 所以它挂在**行 k 名下**：`to` 越过它才显示。
+ *
+ * 【返回值里的 `starts`】已揭示那几行的行起点（第一行按窗口起点裁过的那个算）。
+ * 光标的「偏移 → 下标」换算要用它，否则多行容器里的光标会差一个前缀宽度。
+ */
+function sliceByLineStarts(
+  value: string,
+  starts: readonly number[],
+  from: number,
+  to: number
+): { head: number; tail: number; starts: number[] } {
+  let head = -1
+  let tail = -1
+  const revealed: number[] = []
+  let base = 0
+  for (let k = 0; k < starts.length; k++) {
+    const nl = value.indexOf('\n', base)
+    const lineLen = (nl < 0 ? value.length : nl) - base
+    const srcStart = starts[k]
+    const lo = Math.max(from, srcStart)
+    const hi = Math.min(to, srcStart + lineLen + 1)
+    if (lo < hi) {
+      const i0 = base + (lo - srcStart)
+      const i1 = base + (hi - srcStart)
+      if (head < 0) head = i0
+      tail = i1
+      revealed.push(lo)
+    }
+    base += lineLen + 1
+  }
+  if (head < 0) return { head: 0, tail: 0, starts: [] }
+  return { head, tail, starts: revealed }
+}
+```
+
+**`toReact.tsx`：** `splitAtCaret` 里那个 `at = clamp(caret.at − origin, 0, value.length)` 换成**查表**：有 `wtLineStarts` 时，`at` = 「第一个行起点 ≥ 揭示偏移的那一行」在 value 里的下标；没有时按现在的算术。同理 `holdsCaret` 的区间判据在有表时用「首行起点 ≤ 揭示偏移 ≤ 末行起点 + 末行长度」。
+
+> 这一段是**规则**不是逐字代码：实施者按它写，写完把最终代码贴回报告，我回写进计划。判据是设计 3.6.1 与上面那张表的语义。
+
+- [ ] **Step 4: 跑测试，确认它绿**
+
+Run: `pnpm vitest run tests/unit/markdownParse.test.ts tests/unit/markdownClip.test.ts tests/unit/markdownToReact.test.tsx` → PASS
+Run: `pnpm test` → **exit 0**；Run: `pnpm typecheck` → exit 0
+
+- [ ] **Step 5: 变异验证（三条，各自单独做）**
+
+**先写下预期**再回退：
+
+- 甲：`sliceByLineStarts` 里的 `const hi = Math.min(to, srcStart + lineLen + 1)` 改成 `Math.min(to, srcStart + lineLen)`（换行符不归行 k）→ 预测红的是「光标走到第二行中间」那条。
+- 乙：`buildLineStarts` 里 `out.push(lineEnd - line.length)` 改成 `out.push(lineEnd)` → 预测红的是**多行引用块那两条 + 折点那条**。
+- 丙：`annotateValueStarts` 里那句 `if (!isContiguous(...))` 改成 `if (false)`（表一律不挂）→ 预测红的是同样的三条（退回旧行为）。
+
+红得比预期多或少都要查清楚再往下走。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add src/renderer/src/markdown/parse.ts src/renderer/src/markdown/clip.ts src/renderer/src/markdown/toReact.tsx tests/unit/markdownParse.test.ts tests/unit/markdownClip.test.ts tests/unit/markdownToReact.test.tsx
+git commit -F /tmp/wt-msg.txt
+```
+
+消息末尾保留 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
+
+---
+
 ## Task 5: `MarkdownView.tsx` / `Page.tsx` —— 接线
 
 **对应设计：** 第 3.5 节最后一段。
