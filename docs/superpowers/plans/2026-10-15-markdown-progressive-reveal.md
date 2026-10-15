@@ -3203,6 +3203,13 @@ git commit -F /tmp/wt-msg.txt
 - **CSS 手核**：10-14 那面 `markdown.css` 整文件围栏已逐字节回写 ✓。本计划 Task 6 的**四面** css 片段里，
   前三面本来就是子串，第四面（`.wt-md-pre` 那条「为什么必须有一行的高度」注释 + `min-height`）**是旧的**——
   4h 补 `+ 20px` 之后没人回写，已按交付源码重抽（现在四面全是子串）。
+- **规则账（postcss 逐条对账，`2f6b810`(Task 6) → `95c9203`(4h)）**：31 条规则 → 31 条规则，**`only in BEFORE` 空**、
+  **无新增规则**、**30/31 逐字相同**；唯一差异是 `.wt-md-pre` 的 `min-height: var(--wt-md-code-line)`
+  → `min-height: calc(var(--wt-md-code-line) + 20px)`（就是 4h 本身要改的那一条，声明总数 113 → 113 不变，
+  行数 289 → 301）。`95c9203` → `HEAD` **31/31 逐字相同**（此后没人再动这个文件）。
+  **`.wt-md-hr` 在 markdown.css 的全部 6 个历史版本里都完好**（选择器 + `border: 0` +
+  `border-top: 1px solid var(--wt-md-rule)` + `margin: 1em 0`），且**没有任何一版**把 `border-top`
+  挂到 `.wt-md-pre` 上——上次那个事故形态在这条线上从没落地过。对账脚本：`/tmp/t8-css-reconcile.js`。
 - **`.wt-md-hr` 手核**（Task 6 的实施者曾把它的选择器吃掉一次，而四条门禁与两套围栏判据**都看不见**）：
   `src/renderer/src/styles/markdown.css:151-155` 完好 —— `.wt-md-hr { border: 0; border-top: 1px solid var(--wt-md-rule); margin: 1em 0; }`；
   另核 `.wt-md-pre`（117 起）里**没有**多出来的 `border*`（那正是上次出事的样子）✓。
