@@ -2507,7 +2507,9 @@ describe('Page —— 阅读光标', () => {
 - [ ] **Step 2: 跑测试，确认它红**
 
 Run: `pnpm vitest run tests/unit/markdownView.test.tsx`
-Expected: **红的是第一条**——现在有两个光标（树里的那个 + `Page` 追在末尾的那个），`toHaveLength(1)` 当场失败。另两条该绿。
+Expected: **红的是第一条，但红在「位置」而不是「计数」**（**落地实测推翻了这里原稿**）：改之前 `MarkdownView` 调的是**不带 opts 的** `renderMarkdown(visible)`，树上**根本没有**光标，全文档只有 `Page` 追在末尾的那**一个**——所以 `toHaveLength(1)` 是**过**的，红的是 `closest('p')` 那一句（`expected null not to be null`）。另两条该绿。
+
+**原稿写的是「现在有两个光标、`toHaveLength(1)` 当场失败」——那是错的**，而且**危险**：照「计数该红」去反推，会误以为 `caretAt` 的接线已经做好了。
 
 - [ ] **Step 3: 改两个文件**
 
