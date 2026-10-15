@@ -23,6 +23,12 @@
   --wt-md-rule: #d8d8d8;
   --wt-md-grid: #c8c8c8;
   --wt-md-th-bg: #f7f7f7;
+
+  /* 未揭示部分占位用的两个「一行多高」。**必须是绝对长度**：自定义属性是在*使用处*
+     解析的，写成 `1.9em` 会在占位块那儿按它自己的字号算，与表格行、代码行的真实高度
+     对不上（占位块是表格/代码块的兄弟节点，字号与它们不同）。 */
+  --wt-md-code-line: calc(13px * 1.6);    /* `.wt-md-pre` 的 font-size × line-height */
+  --wt-md-row-h: calc(14px * 1.9 + 10px); /* `.wt-md-table` 的字号 × 正文行高 + 单元格上下内边距与边框 */
 }
 
 [data-theme='dark'][data-paper='dark'] {
@@ -121,6 +127,13 @@
      而纸是固定宽度的，长行溢出会直接盖到纸外面去。代码行被折行在这里是可以接受的。 */
   white-space: pre-wrap;
   word-break: break-word;
+  /* 【为什么必须有一行的高度】光标还在围栏里、框里一个字都没抽出来时，`<pre>` 没有
+     line box，高度只剩上下 padding——而 `clip.ts` 按「未揭示文本里的换行个数」报占位行数，
+     它**假设当前这一行已经由框里那半行占着了**；框是空的，这个前提就不成立，于是少报一行。
+     把它撑到恰好一行高，「框内行数 + 占位行数 == 总行数」这条在**每个**光标位置都成立
+     （设计 3.2 那一轮量过 6 个位置）。`min-height` 是**下限**：非空的框自己 ≥ 一行，
+     永远不会多算，两种机制也不会叠加。表格那侧的 `.wt-md-cell { height }` 是同一条口径。 */
+  min-height: var(--wt-md-code-line);
 }
 
 .wt-md-hr {
@@ -145,6 +158,10 @@
   text-align: left;
   vertical-align: top;
   word-break: break-word;
+  /* 光标刚走到某一行、里面的字还没抽出来时，那一行是空的——不给高度就缩成一条细线，
+     这正是改之前「太拥挤」那个观感的一半。表格单元格上的 `height` 是**最小高度**，
+     内容多的行照常撑开，不会被压扁。 */
+  height: var(--wt-md-row-h);
 }
 
 .wt-md-table thead .wt-md-cell {
@@ -185,6 +202,26 @@
 
 .wt-md-fndef__label::after {
   content: '. ';
+}
+
+/* ── 未揭示部分的占位：**只占高度，什么都不画** ──────────────────────
+
+   表格还没走到的行、代码块还没揭示的行，占的就是这两块空白（设计 3.2 修订）。
+   行数由 `toReact.tsx` 的 `BlankSpace` 内联设成 `--wt-md-blank-lines` /
+   `--wt-md-blank-rows`，这里只负责把「几行」换算成高度。
+
+   【为什么不画网格线、不画代码框】用户拍板：占位只留白。画出来的话就是改之前那个
+   「块一露头，整张空网格全铺出来」的画面，也就是这次要消灭的东西。
+
+   【`.wt-md-measure-block` 那条禁令不适用于这里】占位元素只出现在**可见**的那一份里
+   ——测量用的是整篇未裁剪的文档，占位字段根本不存在——所以碰不到 `measure.ts`
+   那个 offsetTop 差值算法。 */
+.wt-md-pre-blank {
+  height: calc(var(--wt-md-blank-lines, 0) * var(--wt-md-code-line));
+}
+
+.wt-md-table-blank {
+  height: calc(var(--wt-md-blank-rows, 0) * var(--wt-md-row-h));
 }
 
 /* ── 图片占位框（Task 9 会把真图放进来，这个框留着给加载中与加载失败用） ── */
