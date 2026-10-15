@@ -281,10 +281,24 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
       // 是在块内的——那时这一格判的是「起点 + 长度 ≥ 揭示偏移」的算术版，**没有下界**，
       // 所以漏不出来。位置仍取串尾是对的：被丢掉的那几个字符不上屏、缝后面的节点又都是空的，
       // 「串尾」与「插在它前面」落的是同一个 DOM 位置。
+      // 【第三条判据：这一串里有没有**兜底目标**（`Caret.tail`）】这条路**只调
+      // `renderTokens(tokens)`、从不 `renderNode`**，于是 `splitAtCaret` 不被调用、`tail`
+      // 没人消费——光标一路落到 `renderMarkdown` 末尾那条兜底，落在**块外**。实测
+      // `'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 18、19 与 `'甲 <b>乙</b>\n\n末段\n'` 的 7、8、9
+      // （设计 3.5 那条兜底的注释里记着它的成因不是「链尾是 html 叶子」——那几格
+      // `tailTarget` 返回的是**文本节点**）。
+      //
+      // 【位置仍取串尾是对的】`tailTarget` 沿**最后一个孩子**往下走，所以 tail 落在一串里时
+      // 它必然就是这一串的**最后一个节点**——「串尾」与「那个节点的末尾」是同一个 DOM 位置，
+      // 不必再算下标。
       if (ctx.caret && !ctx.caret.placed) {
         const at = ctx.caret.at
         const nodeStart = n.position?.start.offset
-        if (caretIndexIn(n, at) !== null || (nodeStart !== undefined && nodeStart >= at)) {
+        if (
+          ctx.caret.tail === n ||
+          caretIndexIn(n, at) !== null ||
+          (nodeStart !== undefined && nodeStart >= at)
+        ) {
           caretHere = true
         }
       }

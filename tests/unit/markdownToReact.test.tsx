@@ -741,3 +741,130 @@ describe('围栏里的光标（真管线，逐偏移）', () => {
     expect(outside, '「光标不在框里」的偏移集合').toEqual(expected)
   })
 })
+
+/**
+ * 兜底那三支路各自的守卫（Task 4j）。
+ *
+ * 【为什么补这三条】4g 的评审逐条单独变异发现**三条支路零覆盖**（关掉它们、全仓 608 条照旧
+ * 全绿）：`renderMarkdown` 里 `hasPlaceholder` 那条让路、`tailTarget` 里 `?? node`（容器收留）、
+ * `tailTarget` 里 `definition` 跳过。三条都属「4g 自己写的、没人守着的」——零覆盖的支路等于
+ * 下一批人随手改掉它也不会有任何信号。
+ *
+ * 【三条的判据都取「可观察的后果」，不取实现细节】占位那支守的是设计 3.5 记的**连续 13 格**
+ * 老账（关掉它，光标从「`</table>` 之后、占位之前」被挪进表头单元格，20 行表上差出十几行）；
+ * 另两条守的是「链尾退回容器之后光标**仍在那个块里**」（关掉它，光标掉到最后一个块下方）。
+ *
+ * 【夹具与窗口都是量出来的】不是推的：四行表的顶层窗口 = 8–20 ∪ {28,29,30}（8–20 正是设计里
+ * 那 13 格），20 行表 = 每行三格、从 8–20 起共 67 格；三份「以叶子收尾」的夹具上，**除 to=0
+ * 之外没有一格**是顶层的。
+ */
+describe('兜底三支路的守卫', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  const TABLE_ROWS_4 = '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\n末段\n'
+  const TABLE_ROWS_20 =
+    '| a | b |\n| - | - |\n' + Array.from({ length: 19 }, (_, i) => `| ${i} | x |`).join('\n') + '\n'
+
+  it('占位在场：光标紧挨 `</table>` 之后的占位，不在任何格子里（关掉让路那支就红）', () => {
+    const WINDOWS: [string, number[]][] = [
+      [TABLE_ROWS_4, [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 28, 29, 30]],
+      [
+        TABLE_ROWS_20,
+        // 表头那一窗 + 之后每行三格（量出来的，不是推的）
+        [
+          8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 28, 29, 30, 38, 39, 40, 48, 49, 50, 58,
+          59, 60, 68, 69, 70, 78, 79, 80, 88, 89, 90, 98, 99, 100, 108, 109, 110, 118, 119, 120,
+          129, 130, 131, 140, 141, 142, 151, 152, 153, 162, 163, 164, 173, 174, 175, 184, 185, 186,
+          195, 196, 197, 206, 207, 208
+        ]
+      ]
+    ]
+    for (const [src, window] of WINDOWS) {
+      for (const to of window) {
+        const c = at(src, to)
+        const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
+        expect(caret, `to=${to} 没有光标`).not.toBeNull()
+        // 关掉让路那支之后：光标进了 `<th>` / `<td>`，这一条当场红
+        expect(caret.closest('th, td'), `to=${to} 光标进了格子`).toBeNull()
+        // 也不许掉到表格**下面**去：它必须紧挨着占位那块的**前面**
+        expect(caret.parentElement, `to=${to} 不是顶层`).toBe(c)
+        expect(
+          caret.nextElementSibling?.className ?? '',
+          `to=${to} 后面不是占位`
+        ).toContain('wt-md-table-blank')
+      }
+    }
+  })
+
+  it.each([
+    ['图片收尾', '甲 ![图](a.png)\n', 'p'],
+    /*
+      【脚注那份的容器选择器要带上 `.wt-md-fndef`】它渲染成
+      `<div class="wt-md-fndef"><span>标号</span><p>…</p></div>`，而 to=8–13 那几格光标
+      合法地待在**那个 div 里、`<p>` 前面**（`caretBefore` 的「插在它前面」）——只认 `p`
+      会把正确的落点判成失败（实测踩到过）。
+    */
+    ['脚注引用收尾', '甲[^1]\n\n[^1]: 脚注\n', 'p, .wt-md-fndef'],
+    ['硬换行收尾', '甲  \n', 'p']
+  ])('段落以叶子收尾（%s）：链尾退回容器，光标仍在块里（关掉 `?? node` 就红）', (_n, src, sel) => {
+    for (let to = 1; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(caret.parentElement, `to=${to} 掉到块下方`).not.toBe(c)
+      expect(caret.closest(sel), `to=${to} 不在 ${sel} 里`).not.toBeNull()
+    }
+  })
+
+  it('文档以 `[ref]:` 定义收尾：跳过它看前一个兄弟（关掉 definition 跳过那支就红）', () => {
+    const src = '甲\n\n[a]: https://example.com\n'
+    for (let to = 1; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(caret.parentElement, `to=${to} 掉到块下方`).not.toBe(c)
+      expect(caret.closest('p'), `to=${to} 不在段落里`).not.toBeNull()
+    }
+  })
+})
+
+/**
+ * 合并 text / html 那条串上的链尾（Task 4j）。
+ *
+ * 【缺陷】`renderAll` 里 `hasHtml` 那条路**只调 `renderTokens(tokens)`、从不 `renderNode`**，
+ * 于是 `splitAtCaret` 不被调用、`caret.tail` 没人消费——光标一路落到 `renderMarkdown` 末尾
+ * 那条兜底，落在**块外**。实测：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 **18、19** 与
+ * `'甲 <b>乙</b>\n\n末段\n'` 的 **7、8、9**（老代码 871 格里这类 110 格，4g 修好 108，剩这 2 处）。
+ *
+ * 【成因不是「链尾是 html 叶子」】那几格 `tailTarget` 返回的是**文本节点**（line 里那个
+ * 「非值叶子返回 null」的分支只在这两份夹具的 `to = 0` 附近开火，而那时光标本来也在块内）。
+ * 所以修法是让这条串**也认 `caret.tail`**：串尾命中 tail 时把光标放在这一串的末尾
+ * （tail 恒是这一串的最后一个节点，所以「串尾」就是「那个节点的末尾」）。
+ */
+describe('合并串上的链尾（真管线，逐偏移）', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  it.each([
+    ['引用块里的行内 HTML', '> <b>x</b>甲一\n> 乙二\n\n末段\n', 'blockquote', [18, 19]],
+    ['段落里的行内 HTML', '甲 <b>乙</b>\n\n末段\n', 'p', [7, 8, 9]]
+  ])('%s：光标在块内（%s）', (_n, src, sel, named) => {
+    for (const to of named) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(caret.closest(sel), `to=${to} 掉出 ${sel}`).not.toBeNull()
+    }
+    // 整段逐偏移一起守：除 to=0（树是空的）之外，一格都不许落在顶层
+    for (let to = 1; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
+      expect(caret.parentElement, `to=${to} 掉到块下方`).not.toBe(c)
+    }
+  })
+})
