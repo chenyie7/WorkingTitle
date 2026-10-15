@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMarkdown, isMarkdownPath } from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath, valueStartOf } from '../../src/renderer/src/markdown/parse'
 
 /**
  * 【这一批用例断言的是**关系**，不是字面数字】
@@ -74,5 +74,49 @@ describe('parseMarkdown', () => {
     // 【这一条是刻意的】内容长得像 md 的 txt 不渲染：导入 txt 的人要的就是原文
     expect(isMarkdownPath('/Users/某人/周报.md.txt')).toBe(false)
     expect(isMarkdownPath('/Users/某人/周报')).toBe(false)
+  })
+})
+
+/**
+ * 代码类节点的 `value` 与源码偏移**不是同一个坐标系**（设计 3.6）。
+ *
+ * mdast 的 `position` 从**定界符**起算，而 `value` 里不含定界符：
+ *
+ *     源码 '```\n第一行\n'   position.start.offset = 0   ← 第一个反引号
+ *                           value = '第一行'             ← 没有围栏
+ *
+ * 记下 `value` 的真实起点，`clip.ts` 才不会把内容提前一个定界符的长度切出来。
+ */
+describe('parseMarkdown —— 代码节点 value 的真实起点（设计 3.6）', () => {
+  it('围栏代码块：起点在首行换行之后', () => {
+    const src = '```\n第一行\n'
+    expect(valueStartOf(parseMarkdown(src)!.children[0])).toBe(src.indexOf('第一行'))
+  })
+
+  it('带语言标注的围栏块：标注算在围栏里', () => {
+    const src = '```js\n第一行\n```\n'
+    expect(valueStartOf(parseMarkdown(src)!.children[0])).toBe(src.indexOf('第一行'))
+  })
+
+  it('行内代码：起点在起首反引号之后', () => {
+    const src = '前 `甲` 后\n'
+    const para = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(para.children[1])).toBe(src.indexOf('甲'))
+  })
+
+  it('双反引号的行内代码同样对', () => {
+    const src = '前 ``甲`` 后\n'
+    const para = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(para.children[1])).toBe(src.indexOf('甲'))
+  })
+
+  it('四空格缩进的代码块：起点在首行缩进之后', () => {
+    const src = '    甲\n    乙\n'
+    expect(valueStartOf(parseMarkdown(src)!.children[0])).toBe(src.indexOf('甲'))
+  })
+
+  it('普通文本节点没有这个标注 —— 读出来是 null，调用方退回 position', () => {
+    const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(para.children[0])).toBeNull()
   })
 })
