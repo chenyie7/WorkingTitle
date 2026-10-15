@@ -691,3 +691,53 @@ describe('光标不出块（真管线，逐偏移）', () => {
     expect(carets[0].parentElement).toBe(c)
   })
 })
+
+/**
+ * 打着围栏时光标要**在框里**（设计 3.5；Task 4i）。
+ *
+ * 【这一条修的是用户最初报的那句】原话是「代码块的问题是光标不在代码块里面而是在代码块
+ * 下面」。Task 4g 之后剩下的就是这一批：**代码块里还有没揭示的行**（占位存在）时，4g 按
+ * 「占位之前」那条把光标留在**框外、紧挨占位**——两条位置都在设计 3.5 之内（框本来就在
+ * 占位前面），区别只是「框内第一格」还是「框外紧挨着」。
+ *
+ * 【判据：光标在不在 `CODE` 元素内】`closest('code')` 同时管住行内代码（`wt-md-code-inline`）
+ * 与围栏里的 `<pre><code>`，正是「在框里」这句话的字面意思。
+ *
+ * 【期望值为什么逐格写死】这张表是 Task 4g 的实施者在加厚语料上量出来的三状态表里的
+ * 「目标」列，它等于「4g + 窄修法」的行为；**错的不是那些仍在框外的格**——`0` 那一格树是
+ * 空的、`1` 那几格围栏自身还没开始（`code.position.start > at`），按设计 3.5 规则二光标
+ * 就该插在它**前面**。所以这里断言的是**整个集合相等**，多一格少一格都要红。
+ */
+describe('围栏里的光标（真管线，逐偏移）', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  /** [名字, 源码, 「光标不在 CODE 内」的那些偏移] */
+  const CASES: [string, string, number[]][] = [
+    ['单行围栏', '```\n甲\n```\n', [0]],
+    ['两行围栏', '```\n甲\n乙\n```\n', [0]],
+    ['引用块里的围栏', '> ```\n> 甲\n> ```\n', [0, 1]],
+    ['引用块里的多行围栏 + 尾段', '> ```\n> 甲\n> 乙\n> ```\n\n尾段\n', [0, 1, 22, 23, 24]],
+    ['列表项里的围栏', '- ```\n  甲\n  ```\n', [0, 1]],
+    ['空围栏', '```\n```\n', [0]],
+    ['缩进代码块', '    甲\n    乙\n', [0]],
+    ['只有行内代码', '`乙`\n', [0]]
+  ]
+
+  it.each(CASES)('%s：光标不在框里的格只有那几个', (_name, src, expected) => {
+    const outside: number[] = []
+    for (let to = 0; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement | null
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(
+        c.querySelectorAll('[data-testid="caret"]'),
+        `to=${to} 光标数不对`
+      ).toHaveLength(1)
+      if (caret!.closest('code') === null) outside.push(to)
+    }
+    expect(outside, '「光标不在框里」的偏移集合').toEqual(expected)
+  })
+})

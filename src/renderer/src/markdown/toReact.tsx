@@ -651,6 +651,30 @@ function rowsOf(node: MdNode, value: string, origin: number): Row[] {
  * （实测 `'> 引用甲\n> 引用乙\n'` 的 6、7、8 三格从块内跳到篇末）。
  * **「末行内容结束 + 1」不够**（评审实测）：中间还隔着 `> ` 那两个字符，掉出集合只各减一个。
  *
+ * 【下界取**节点自己的源码起点**，不是内容起点】（Task 4i）
+ * `value` 里不含定界符，所以 `code` / `inlineCode` 的**内容起点在围栏之后**（设计 3.6）：
+ * 「光标还在打围栏」那几格（`'```\n甲\n```\n'` 的 1–3、容器里的 1–6）上，内容起点比揭示偏移
+ * 还靠后，于是**没有任何节点接得住**，光标落到占位前/兜底上——**在框外**。而用户最初报的
+ * 正是这一条（「代码块的问题是光标不在代码块里面而是在代码块下面」）。
+ *
+ * 判据于是松开到「**这个节点已经开始了**就允许它接住光标」：
+ * `lower = min(内容起点, position.start)`，下标在循环里自然夹到 0（那几格的内容还没出来，
+ * 光标落在框内第一格，正是下一个字要出现的地方）。
+ *
+ * 【为什么这样松开不会破「值节点不抢它前面的光标」】`min()` 只在
+ * `position.start < rows[0].src` 时把下界往下拉，而那条保护管的是**节点起点在 `at` 之后**
+ * （`position.start > at`）——两件事不相交。而且它只在 `at ≥ position.start` 时才放行：
+ * 围栏自身还没开始那几格（`'> ```\n> 甲\n> ```\n'` 的 `at = 1`，`code.position.start = 2`）
+ * **照样拒绝**，走设计 3.5 规则二「整个在揭示偏移之后的节点 → 光标插在它前面」✓。
+ *
+ * 【它结构上动不到表格】`text` 节点的 `position.start` **就是**内容起点，`min()` 对它是恒等
+ * 变换；受影响的只有「`position` 从定界符起算」的 `code` 类节点。评审在加厚表格语料
+ * （表头带空格、空单元格、两行表头、多行表体）上逐格量过：**0 差异**。
+ *
+ * 【别把下界整条删掉】那样会多改 61 格，全是「把光标拉进一个**还没开始**的元素」——
+ * 上面那条保护的退化形态（实测：`'甲甲\n> 甲\n> ```ts\n> ```ts\n'` 的 `to = 7`，
+ * 真值该紧跟已揭示的『甲』之后，删掉下界后光标被拉进 `<pre><code>`）。
+ *
  * 【`isTail`：这一次是**夹**而不是**拒**】末尾兜底的目标节点（`Caret.tail`，见 `tailTarget`）
  * 带这个标记：它明知揭示偏移在区间外也要接住光标，两端都夹——落在起点之前给 0、落在上界
  * 之后给 `value.length`。整篇的最后一个字已经全部揭示、而揭示偏移落在它后面（文档末尾那个
@@ -671,7 +695,10 @@ function caretIndexIn(
   // 手工造的树或者位置缺失时退回 `contentEnd`，判据不因此放宽。
   const contentEnd = last.src + last.len
   const upper = Math.max(node.position?.end.offset ?? contentEnd, contentEnd)
-  if (!isTail && (at < rows[0].src || at > upper)) return null
+  // 下界见上面那段：节点**已经开始**（`position.start ≤ at`）就允许它接住光标，
+  // 哪怕内容起点（围栏之后）还在揭示偏移的后面。位置缺失时退回内容起点——不放宽。
+  const lower = Math.min(rows[0].src, node.position?.start.offset ?? rows[0].src)
+  if (!isTail && (at < lower || at > upper)) return null
   let index = 0
   for (const row of rows) {
     if (at < row.src) break
