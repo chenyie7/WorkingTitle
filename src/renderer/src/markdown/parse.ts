@@ -114,7 +114,9 @@ function annotateValueStarts(node: unknown, source: string): void {
     if (n.type === 'text' || n.type === 'code') {
       const starts = buildLineStarts(n.type, source, start, end, n.value)
       const base = n.type === 'code' ? (valueStartOf(n) as number) : start
-      if (!isContiguous(starts, base, n.value)) {
+      // 【`null`（回验没找到）与「连续」走同一条退路】两种都不挂表，下游按「起点 + 字符数」
+      // 切——回验没找到时那是 4b 之前的行为，宁可少精确一处，也不挂一张偏掉的表。
+      if (starts && !isContiguous(starts, base, n.value)) {
         ;(n as Record<string, unknown>)[WT_LINE_STARTS] = starts
       }
     }
@@ -200,13 +202,31 @@ export function lineStartsOf(node: unknown): number[] | null {
 /**
  * 建逐行偏移表：每个 value 行的首字符在源码里的偏移。
  *
- * 【依据】**每一行的 `value` 都贴在该行源码的尾部**——前缀（引用块的 `> `、列表项的续行
- * 缩进、围栏、缩进块的缩进）全在它前面。所以「该行源码的结束偏移 − 该行在 value 里的
- * 长度」就是行起点。这与 3.6 给代码块算首部起点用的是同一条技巧，推广到逐行。
+ * 【依据是**回验**，不是「行尾 − 行长」】最初写的是「该行源码的结束偏移 − 该行在 value 里的
+ * 长度」，依据是「每一行的 `value` 都贴在该行源码的尾部」——**这条依据不成立**：remark 除了
+ * 剥行首前缀，还会剥**行尾空白**，那个减法于是把被剥掉的字也算进去，整张表往后偏（实测
+ * `'甲 \n乙\n'` 得 `[1,3]`、真值 `[0,3]`；`'> 甲 \t\n> 乙\n'` 偏 2）。方向是「晚」——
+ * 那一行的首字晚一个按键上屏。
+ *
+ * 现在的做法是**在这一行源码里把那行文字找出来**：从行尾往前找最后一次出现（行尾空白是
+ * 它后面唯一允许多出来的东西），并要求找到的位置之后到行尾**全是空白**。找不到就返回
+ * `null`、不挂表——退回「起点 + 字符数」那条路（4b 之前的行为）。**宁可少精确一处，也不要
+ * 挂一张偏掉的表**：偏掉的表不报错，只让内容静默地差几个字。
  *
  * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
  */
-function buildLineStarts(kind: string, source: string, start: number, end: number, value: string): number[] {
+function buildLineStarts(
+  kind: string,
+  source: string,
+  start: number,
+  end: number,
+  value: string
+): number[] | null {
+  // 【空 `value` 一律不挂表】`contentStartOf` 对空 `value` 给的是**围栏之后**那个位置，而
+  // 「行尾 − 行长」里的那个「行尾」是**收尾围栏那一行**的换行——同一个节点于是在同一棵树上
+  // 有**两个原点**（实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value`
+  // 没有下标可言，表让位，让 `contentStartOf` 定的那个数成为唯一的原点。
+  if (value === '') return null
   const lines = value.split('\n')
   const nl = source.indexOf('\n', start)
   const firstLineEnd = nl >= 0 && nl < end ? nl : end
@@ -216,7 +236,9 @@ function buildLineStarts(kind: string, source: string, start: number, end: numbe
   for (const line of lines) {
     const next = source.indexOf('\n', lineStart)
     const lineEnd = next >= 0 && next < end ? next : end
-    out.push(lineEnd - line.length)
+    const at = source.lastIndexOf(line, lineEnd)
+    if (at < lineStart || !/^[ \t]*$/.test(source.slice(at + line.length, lineEnd))) return null
+    out.push(at)
     lineStart = lineEnd + 1
   }
   return out

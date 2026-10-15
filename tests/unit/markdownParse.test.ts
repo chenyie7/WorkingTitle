@@ -19,6 +19,28 @@ function sliceOf(text: string, node: { position?: { start: { offset?: number }; 
   return text.slice(s, e)
 }
 
+/**
+ * 取树里第一个带 `value` 的文本节点（深度优先）。逐行表那几条夹具的内容都落在一个
+ * 节点里（容器层是 blockquote / list / listItem，都会被走穿），取第一个就够。
+ */
+function textOf(tree: { children?: unknown[] }): Record<string, unknown> {
+  let found: Record<string, unknown> | null = null
+  const walk = (nodes: unknown[]): void => {
+    for (const node of nodes) {
+      if (found) return
+      const n = node as { type?: string; value?: unknown; children?: unknown[] }
+      if (n.type === 'text' && typeof n.value === 'string') {
+        found = n as Record<string, unknown>
+        return
+      }
+      walk(n.children ?? [])
+    }
+  }
+  walk(tree.children ?? [])
+  if (!found) throw new Error('夹具里没有 text 节点')
+  return found
+}
+
 describe('parseMarkdown', () => {
   it('标题：类型、层级、以及切片等于源码那一段', () => {
     const text = '# 季度汇报\n'
@@ -208,8 +230,8 @@ describe('parseMarkdown —— 代码节点 value 的真实起点（设计 3.6�
 })
 
 /**
- * 逐行偏移表（设计 3.6.1）。**每一行的 `value` 都贴在该行源码的尾部**，前缀
- * （`> `、缩进、围栏）全在它前面——所以「行尾往前走该行长度」就是行起点。
+ * 逐行偏移表（设计 3.6.1）。行起点要用**回验**得到——「每一行的 `value` 都贴在该行源码的
+ * 尾部」这条依据**不成立**（remark 还会剥行尾空白，见本块最后那条 `it.each`）。
  */
 describe('parseMarkdown —— 逐行偏移表', () => {
   it('多行引用块：第二行的起点是那一行自己的位置，不是第一行加字符数', () => {
@@ -244,5 +266,43 @@ describe('parseMarkdown —— 逐行偏移表', () => {
     expect(lineStartsOf(code)).toBeNull()
     // 不挂表不等于没坐标：首行起点由 `valueStartOf` 给，退回按字符数切是精确的
     expect(src.slice(valueStartOf(code)!, valueStartOf(code)! + '第一行'.length)).toBe('第一行')
+  })
+
+  /**
+   * 行尾空白被 remark 剥掉时，行起点要用**回验**得到，不能「行尾 − 行长」（设计 3.6.1）。
+   *
+   * 【真值怎么来的】在源码里找该行文字**最后一个**位置——行尾空白是它后面唯一允许多出来的
+   * 东西。这样写是为了让断言**不依赖实现**：哪怕换一种回验算法，真值也是这一串。
+   */
+  it.each([
+    ['顶层段落', '甲 \n乙\n'],
+    ['引用块', '> 甲 \n> 乙\n'],
+    ['列表项', '- 甲 \n  乙\n'],
+    ['行尾是制表符', '> 甲 \t\n> 乙\n']
+  ])('%s：行尾空白被剥时表不右移', (_name, src) => {
+    const text = textOf(parseMarkdown(src)!)
+    const value = text.value as string
+    expect(lineStartsOf(text)).toEqual(
+      value.split('\n').map((line) => src.lastIndexOf(line, src.length))
+    )
+  })
+
+  /**
+   * 空 `value` 的代码节点**不挂表**（计划 Step 3b）：两条路对空 `value` 要给同一个原点。
+   *
+   * 【为什么】`contentStartOf` 对 `value === ''` 给的是**围栏之后**那个位置，而「行尾 − 行长」
+   * 里的那个「行尾」是**收尾围栏那一行**的换行——于是同一个节点在同一棵树上有**两个原点**
+   * （实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value` 没有下标可言，
+   * 表让位，`contentStartOf` 那个数成为唯一的原点。
+   *
+   * 【只断言解析期】`to=8` 那一格上的跳变是「解析期挂上了表」的后果，表不挂它就不存在。
+   */
+  it.each([
+    ['无语言标注', '```\n```\n'],
+    ['带语言标注', '```md\n```\n']
+  ])('空代码块（%s）：不挂表，起点是围栏之后那个位置', (_name, src) => {
+    const code = parseMarkdown(src)!.children[0]
+    expect(lineStartsOf(code)).toBeNull()
+    expect(valueStartOf(code)).toBe(src.indexOf('\n') + 1)
   })
 })
