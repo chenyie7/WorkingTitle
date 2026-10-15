@@ -16,7 +16,8 @@ import type { Root } from 'mdast'
  *
  * 【position.offset 是整条路的坐标系地基】mdast 每个节点自带 `position.start.offset`
  * / `end.offset`，是**相对 flatText 的字符下标**——和 `cursor`、`revealStart` 同一个
- * 坐标系，所以裁剪时不需要任何换算（设计 3.1）。
+ * 坐标系，所以裁剪时不需要任何换算（设计 3.1）。**唯一的例外是 `code` / `inlineCode`**：
+ * 它们的 `value` 不含定界符、也不含容器前缀，得先用 `valueStartOf` 换成真实起点（设计 3.6）。
  *
  * 【为什么 `unified` 实例提到模块级】`.use()` 会重建 processor，每次调用都建一遍
  * 是白扔的。processor 本身无可变状态，`.parse()` 也是纯的。
@@ -27,8 +28,13 @@ import type { Root } from 'mdast'
  */
 const processor = unified().use(remarkParse).use(remarkGfm)
 
-/** 挂在 `code` / `inlineCode` 上的字段：`value` 的第一个字符在源码里的偏移。 */
-export const WT_VALUE_START = 'wtValueStart'
+/**
+ * 挂在 `code` / `inlineCode` 上的字段：`value` 的第一个字符在源码里的偏移。
+ *
+ * 【为什么不出这个口】只有同文件的 `valueStartOf` 读它。导出等于给下游开一条绕过
+ * 校验的路（那边拿到裸字段就会绕过「不是有限数一律 null」那一步）。
+ */
+const WT_VALUE_START = 'wtValueStart'
 
 /**
  * 读 `value` 的真实源码起点。没标注、标注不是有限数一律给 `null`——调用方据此退回
@@ -77,12 +83,15 @@ export function isMarkdownPath(filePath: string): boolean {
  * remark 怎么从源码得到 `value`，只有它知道。算一次挂在节点上，`clip.ts` 与
  * `toReact.tsx` 各自取用。
  *
- * 【一处已知残留，别当成没修干净】四空格缩进的代码块，remark 是**逐行**剥缩进的，
- * 不是常量偏移；这里只修首部，那种块内部仍有小偏差（设计 3.6 记着这条，是接受的）。
+ * 【已知残留，别当成没修干净】带前缀的块（引用块、列表项里）与超过四格的缩进块，
+ * remark 是**逐行**剥前缀/缩进的，不是常量偏移；这里只给一个常量原点，所以**首行精确、
+ * 第二行起仍差一个前缀宽度**。代码块放进引用块或列表项是很常见的写法，不是罕见格式。
+ * 设计 3.6 记着这条，是接受的；用例「已知偏差：……」把它钉住了。
  */
 function annotateValueStarts(node: unknown, source: string): void {
   const n = node as {
     type?: string
+    value?: string
     children?: unknown[]
     position?: { start: { offset?: number }; end: { offset?: number } }
   }
@@ -90,7 +99,13 @@ function annotateValueStarts(node: unknown, source: string): void {
     const start = n.position?.start.offset
     const end = n.position?.end.offset
     if (start !== undefined && end !== undefined) {
-      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(n.type, source, start, end)
+      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(
+        n.type,
+        source,
+        start,
+        end,
+        n.value ?? ''
+      )
     }
   }
   for (const child of n.children ?? []) annotateValueStarts(child, source)
@@ -99,27 +114,65 @@ function annotateValueStarts(node: unknown, source: string): void {
 /**
  * `value` 的第一个字符在源码里的偏移。
  *
- * - 行内代码：起首那串反引号之后；
- * - 围栏代码块：围栏那一行（首行）的换行之后；
- * - 缩进代码块：首行的缩进之后。
+ * 【原理：`value` 的首行必然收在「它那一源码行的行尾」】容器前缀（`> `、列表项缩进）、
+ * 代码块自己的缩进、围栏全都在它前面。所以从那一行的行尾往回退首行长度，就是内容起点——
+ * 不用去识别前缀长什么样，也就不用管它有几层。
  *
- * 【怎么区分围栏与缩进】看首行：行首最多三个空格之后以三个及以上 `` ` `` 或 `~`
- * 开头就是围栏——remark 只认这两种围栏，所以这个判据与它一致。
+ * 【「那一行」是哪一行】围栏块是**围栏的下一行**（围栏那一行不是内容），缩进块是节点
+ * 自己那行。这一处用错对**所有**块都错。
+ *
+ * 【缩进块剥的是固定四格，多出来的算内容】`     甲`（五格）的 `value` 是 ` 甲`——首字符
+ * 是那个多出来的空格，不是「甲」。所以「跳过所有前导空白」是错的（八格会差 4）。
+ *
+ * 【怎么区分围栏与缩进】看首行：行首最多三个空格之后以三个及以上 `` ` `` 或 `~` 开头
+ * 就是围栏——remark 只认这两种围栏，所以这个判据与它一致。
+ *
+ * 【空 `value` 为什么要单独兜】没有字符可切，但设计 3.5 的光标用的是同一个数——退回
+ * `end` 会把空代码框里的光标推出框外。
  */
-function contentStartOf(kind: string, source: string, start: number, end: number): number {
-  if (kind === 'inlineCode') {
-    let i = start
-    while (i < end && source[i] === '`') i++
-    return i
-  }
+function contentStartOf(
+  kind: string,
+  source: string,
+  start: number,
+  end: number,
+  value: string
+): number {
+  if (kind === 'inlineCode') return inlineContentStart(source, start, end, value)
   const nl = source.indexOf('\n', start)
   const firstLineEnd = nl >= 0 && nl < end ? nl : end
-  if (/^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))) {
-    // 围栏块：内容在围栏那一行之后
-    return firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd
+  const fenced = /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
+  const lineStart = fenced ? (firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd) : start
+  if (value === '') return lineStart
+  if (lineStart > end) return end
+  const nl2 = source.indexOf('\n', lineStart)
+  const lineEnd = nl2 >= 0 && nl2 < end ? nl2 : end
+  return Math.max(start, lineEnd - (value.split('\n')[0] ?? '').length)
+}
+
+/**
+ * 行内代码的 `value` 起点。
+ *
+ * 【为什么要拿 `value` 回验】CommonMark 在内容两侧各有一个空格时会各剥掉一个，于是
+ * 「跳过起首反引号」不再精确：` `` 甲 `` ` 的 `value` 是 `甲`，而它在源码里从那个空格
+ * **之后**才开始。所以算完拿 `value` 对一下：对得上就采用；对不上（跨行的行内代码
+ * remark 会把换行折成空格）就退回「跳过起首反引号」——宁可差一点点，也不给一个错的、
+ * 偏得更远的原点。
+ */
+function inlineContentStart(source: string, start: number, end: number, value: string): number {
+  let from = start
+  while (from < end && source[from] === '`') from++
+  let to = end
+  while (to > from && source[to - 1] === '`') to--
+  const raw = source.slice(from, to)
+  if (raw === value) return from
+  if (
+    raw.length >= 2 &&
+    raw.startsWith(' ') &&
+    raw.endsWith(' ') &&
+    raw.trim() !== '' &&
+    raw.slice(1, -1) === value
+  ) {
+    return from + 1
   }
-  // 缩进块：内容在首行的缩进之后
-  let i = start
-  while (i < end && (source[i] === ' ' || source[i] === '\t')) i++
-  return i
+  return from
 }

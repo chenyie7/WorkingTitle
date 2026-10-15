@@ -115,6 +115,87 @@ describe('parseMarkdown —— 代码节点 value 的真实起点（设计 3.6�
     expect(valueStartOf(parseMarkdown(src)!.children[0])).toBe(src.indexOf('甲'))
   })
 
+  it('引用块里的围栏块：前缀不算在起点里，首行照样精确', () => {
+    const src = '> ```\n> 甲\n> ```\n'
+    const quote = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(quote.children[0])).toBe(src.indexOf('甲'))
+  })
+
+  it('列表项里的围栏块：同样精确（前缀是列表项的缩进）', () => {
+    const src = '- ```\n  甲\n  ```\n'
+    const list = parseMarkdown(src)!.children[0] as unknown as {
+      children: { children: unknown[] }[]
+    }
+    expect(valueStartOf(list.children[0].children[0])).toBe(src.indexOf('甲'))
+  })
+
+  it('超过四格的缩进块：多出来的空格算内容，不能被当成缩进一起跳掉', () => {
+    const src = '     甲\n     乙\n'
+    const node = parseMarkdown(src)!.children[0] as unknown as { value: string }
+    const origin = valueStartOf(node)!
+    const firstLine = node.value.split('\n')[0]
+    // 起点算对了的话，从它切出的首行恰好等于 value 的首行，而且正好收在行尾
+    expect(src.slice(origin, origin + firstLine.length)).toBe(firstLine)
+    expect(src[origin + firstLine.length]).toBe('\n')
+    // 被剥掉的只有固定那四格
+    expect(src.slice(0, origin)).toBe('    ')
+  })
+
+  it('八格缩进同样只剥四格（「跳过所有前导空白」会差 4）', () => {
+    const src = '        甲\n'
+    const node = parseMarkdown(src)!.children[0] as unknown as { value: string }
+    const origin = valueStartOf(node)!
+    expect(node.value).toBe('    甲')
+    expect(src.slice(0, origin)).toBe('    ')
+  })
+
+  it('空代码块：起点兜回内容行首，不是 end —— 设计 3.5 的光标用的是同一个数', () => {
+    const src = '```\n```\n'
+    const node = parseMarkdown(src)!.children[0] as unknown as {
+      value: string
+      position: { end: { offset: number } }
+    }
+    expect(node.value).toBe('')
+    const origin = valueStartOf(node)!
+    expect(origin).not.toBe(node.position.end.offset)
+    expect(origin).toBe(src.lastIndexOf('```'))
+  })
+
+  it('行内代码两侧各有一个空格时，起点在空格之后（CommonMark 会剥掉那一对）', () => {
+    const src = '前 `` 甲 `` 后\n'
+    const para = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(para.children[1])).toBe(src.indexOf('甲'))
+  })
+
+  it('反引号当字面量：`` ` `` 的起点是中间那个反引号，不是开头那串', () => {
+    const src = '`` ` ``\n'
+    const para = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(valueStartOf(para.children[0])).toBe(src.indexOf('`', 2))
+  })
+
+  /**
+   * 【这条用例钉的是**已知偏差**，不是在守正确行为】
+   *
+   * 带前缀的块，remark 逐行剥前缀；而 `valueStartOf` 只给一个常量原点，所以首行精确、
+   * **第二行起仍差一个前缀宽度**。设计 3.6 记着这条、判定为可接受——但「可接受」也得
+   * 有机器可读的记录，否则将来谁无意改了 `contentStartOf`，不会有任何东西出声。
+   * 这条红了不等于回归：先读 3.6 再决定是改代码还是改这条用例。
+   */
+  it('已知偏差：带前缀的块，第二行首字符仍差一个前缀宽度（设计 3.6 接受的残留）', () => {
+    const src = '> ```\n> 甲\n> 乙\n> ```\n'
+    const quote = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    const code = quote.children[0] as unknown as { value: string }
+    const origin = valueStartOf(code)!
+    // 首行是精确的
+    const firstLine = code.value.split('\n')[0]
+    expect(src.slice(origin, origin + firstLine.length)).toBe(firstLine)
+    // 前缀宽度从源码里量：第二行行首到「乙」之间那一段
+    const prefix = src.slice(src.lastIndexOf('\n', src.indexOf('乙')) + 1, src.indexOf('乙'))
+    expect(prefix).toBe('> ')
+    // 第二行不是：按「起点 + value 内下标」线性推出来的位置，比真值小一个前缀宽度
+    expect(src.indexOf('乙') - (origin + code.value.indexOf('乙'))).toBe(prefix.length)
+  })
+
   it('普通文本节点没有这个标注 —— 读出来是 null，调用方退回 position', () => {
     const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
     expect(valueStartOf(para.children[0])).toBeNull()
