@@ -114,8 +114,9 @@ function annotateValueStarts(node: unknown, source: string): void {
     if (n.type === 'text' || n.type === 'code') {
       const starts = buildLineStarts(n.type, source, start, end, n.value)
       const base = n.type === 'code' ? (valueStartOf(n) as number) : start
-      // 【`null`（回验没找到）与「连续」走同一条退路】两种都不挂表，下游按「起点 + 字符数」
-      // 切——回验没找到时那是 4b 之前的行为，宁可少精确一处，也不挂一张偏掉的表。
+      // 【`null` 只剩一个来源：空 `value`】回验对不上**不再**摘表——那一支现在退回表里那个
+      // 恒不提前的保守算式（第四轮）。所以「不挂表」的两种情形是：空 `value`（没有下标可言）
+      // 与「连续」（`起点 + 字符数` 与表逐字等价，挂了只是重复信息），两条都不丢坐标。
       if (starts && !isContiguous(starts, base, n.value)) {
         ;(n as Record<string, unknown>)[WT_LINE_STARTS] = starts
       }
@@ -218,9 +219,14 @@ export function lineStartsOf(node: unknown): number[] | null {
  * 那一行的首字晚一个按键上屏。
  *
  * 现在的做法是**在这一行源码里把那行文字找出来**：从行尾往前找最后一次出现（行尾空白是
- * 它后面唯一允许多出来的东西），并要求找到的位置之后到行尾**全是空白**。找不到就返回
- * `null`、不挂表——退回「起点 + 字符数」那条路（4b 之前的行为）。**宁可少精确一处，也不要
- * 挂一张偏掉的表**：偏掉的表不报错，只让内容静默地差几个字。
+ * 它后面唯一允许多出来的东西），并要求找到的位置之后到行尾**全是空白**。
+ *
+ * 【对不上时退回的是**保守算式**，不是「不挂表」】(设计 3.6.1 第四轮改) 原先写的是「找不到
+ * 就不挂表，退回『起点 + 字符数』那条路——宁可少精确一处」。那把退路定性成**精度问题**，
+ * 实测它是**方向问题**：摘表之后 `clip` 退回按字符数切，而裁剪原点是**首行**的内容起点，
+ * 于是从第二行起每一行的前缀宽度都变成**提前量**，**未揭示的字上屏**——核心不变量被破。
+ * 现在退的是 `行尾 − 行长`，它恒不早于真实内容起点（推导见循环里那段注释），方向是「晚」。
+ * **晚是少显示，提前是多显示**，两害相权取前者。
  *
  * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
  */
@@ -250,8 +256,15 @@ function buildLineStarts(
     const next = source.indexOf('\n', lineStart)
     const lineEnd = next >= 0 && next < end ? next : end
     const at = source.lastIndexOf(line, lineEnd)
-    if (at < lineStart || !/^[ \t]*$/.test(source.slice(at + line.length, lineEnd))) return null
-    out.push(at)
+    // 【回验对不上时**不摘表**，退回恒不提前的保守算式】(设计 3.6.1 第四轮) 摘表之后
+    // `clip` 会退回按字符数切，而裁剪原点是**首行**的内容起点——从第二行起每一行的前缀
+    // 宽度都变成**提前量**，屏幕于是显示**还没揭示的字**（评审 10 个夹具 79 格；本仓这 6 个
+    // 夹具实测 43 格，判据见 `tests/unit/markdownParse.test.ts` 里那条逐偏移扫描）。
+    // `lineEnd - line.length` 恒 >= 真实内容起点：value 行是源码某连续片段的解码结果，
+    // 剥前缀把起点右移、剥行尾空白与解码只让它更短（评审用独立对齐器在 42808 行上验过，0 违例）。
+    // 代价是那一行的首字**晚**若干按键（晚的格数 = 该行记号的超出量）——**晚是少显示，提前是多显示**。
+    if (at >= lineStart && /^[ \t]*$/.test(source.slice(at + line.length, lineEnd))) out.push(at)
+    else out.push(lineEnd - line.length)
     lineStart = lineEnd + 1
   }
   return out

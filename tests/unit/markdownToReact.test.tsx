@@ -570,4 +570,31 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
       expect(carets[0].closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
     }
   })
+
+  /**
+   * **保守表的**那几行（回验对不上的行，第四轮）照样要接得住光标——逐偏移扫**全部**偏移位。
+   *
+   * 【为什么单开一条】上面那三条钉的是**精确表**（`> 引用甲\n> 引用乙\n` 这类行起点回验命中）
+   * 与**没有表**这两种形态。第四轮之后多出第三种：那几行的起点是按 `行尾 − 行长` 退的**保守值**，
+   * 比真实内容起点**晚**（`&amp;` 晚 4、`\*` 晚 1）。而接受窗口的两端都拿这张表在算
+   * （下界 `rows[0].src`、上界 `position.end`），所以保守表与窗口的交互是**新的一格**，
+   * 上面那几条一条都碰不到。
+   *
+   * 【它有没有牙：有，但在**上界**那一侧】实测（把 `upper` 从 `max(position.end, contentEnd)`
+   * 改回 `contentEnd`）：这条红，`实体` 夹具在 to=13、14 上掉出引用块。**下界那一侧它拦不住**
+   * ——把下界整个去掉（`at > upper` 才拒绝）时这条**照样绿**：夹具上没有一格能触发下界
+   * （表存在时 `rows[0].src < to` 恒成立，表被摘掉时 `rows[0].src` 就是 `originOf(node)`）。
+   * 所以别把它当成「下界有覆盖」的证据。
+   */
+  it.each([
+    ['实体', '> 甲 &amp; 乙\n> 丙\n'],
+    ['反斜杠转义', '> 甲 \\* 乙\n> 丙\n']
+  ])('回验失败的那几行（%s）：逐偏移扫，光标不出容器', (_name, SRC) => {
+    for (let to = 1; to < SRC.length; to++) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      expect(carets[0].closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
+    }
+  })
 })

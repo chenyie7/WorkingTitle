@@ -6,6 +6,7 @@ import {
   lineStartsOf,
   WT_LINE_STARTS
 } from '../../src/renderer/src/markdown/parse'
+import { clipTree } from '../../src/renderer/src/markdown/clip'
 
 /**
  * 【这一批用例断言的是**关系**，不是字面数字】
@@ -334,5 +335,89 @@ describe('parseMarkdown —— 逐行偏移表', () => {
     const code = parseMarkdown(src)!.children[0]
     expect(lineStartsOf(code)).toBeNull()
     expect(valueStartOf(code)).toBe(src.indexOf('\n') + 1)
+  })
+})
+
+/**
+ * 屏幕上那段文字：把裁剪后的树里所有带 `value` 的节点按文档顺序拼起来。
+ *
+ * 【为什么按 `value` 拼就够】`text` / `code` / `inlineCode` 的 `value` 就是它们在屏幕上的
+ * 字形（`toReact.tsx` 只负责给它套标签），所以这个拼接与「把 `renderMarkdown` 的结果取
+ * `textContent`」是同一个串——而它不用起 React，判据也就少一层依赖。
+ */
+function renderVisible(src: string, to: number): string {
+  const tree = parseMarkdown(src)
+  if (tree === null) throw new Error('解析失败')
+  const out: string[] = []
+  const walk = (nodes: readonly unknown[]): void => {
+    for (const node of nodes) {
+      const n = node as { value?: unknown; children?: unknown[] }
+      if (typeof n.value === 'string') out.push(n.value)
+      walk(n.children ?? [])
+    }
+  }
+  walk(clipTree(tree, 0, to).children)
+  return out.join('')
+}
+
+/** `needle` 的每个字符能不能在 `haystack` 里**按序**找到（贪心子序列）。 */
+function isSubsequence(needle: string, haystack: string): boolean {
+  let i = 0
+  for (const ch of haystack) {
+    if (i < needle.length && needle[i] === ch) i++
+  }
+  return i === needle.length
+}
+
+/**
+ * 把源码里的记号解回来。**这一步不可省**：`&amp;` 与 `\*` 上屏的是 `&` 与 `*`，而源码里
+ * 没有这两个字符的裸形态；`&nbsp;` 更极端——上屏的是 U+00A0，源码里是六个 ASCII 字节。
+ * 不先解码就比对，**正确的实现也会被判成泄漏**（实测：`&nbsp;` 的 to=16、17 与 `&lt;` 的
+ * to=14、15 这四格，那时屏幕上显示的确实只是已揭示范围内该有的字）。
+ */
+function decodeMarks(s: string): string {
+  const ENTITIES: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&nbsp;': '\u00a0' // 实体解码出来的是不换行空格，不是普通空格
+  }
+  return s
+    .replace(/&[a-zA-Z#0-9]+;/g, (m) => ENTITIES[m] ?? m)
+    .replace(/\\([\\`*_{}[\]()#+\-.!<>~|$])/g, '$1')
+}
+
+/**
+ * 回验失败的那一类（实体、转义、重复文字）**不许把未揭示的字上屏**（设计 3.6.1 第四轮）。
+ *
+ * 【判据为什么长这样】摘表之后 `clip` 退回按字符数切，而裁剪原点是**首行**的内容起点，
+ * 于是从第二行起每一行的前缀宽度都变成**提前量**——屏幕上会出现还没揭示的字。
+ * 这里不写死期望串，而是问一条性质：**显示出来的整段文字，能不能在 `src[0, to)` 里
+ * 按序匹配出来**（源码那一段要先解掉实体与转义）。匹配不上就是泄漏。
+ *
+ * 【为什么这几条夹具】`&amp;` / `\*` / `&nbsp;` / `&lt;` / `\_` 这几类让 `lastIndexOf`
+ * 回验失败（`value` 与源码不是逐字相同），它们都是**多行**的——单行节点的裁剪原点是
+ * 自己的起点，摘不摘表都一样，测不出这条。
+ */
+describe('回验失败时的退路 —— 不许泄漏未揭示的字', () => {
+  const FIXTURES = [
+    '> 甲 &amp; 乙\n> 丙\n',
+    '> 甲 \\* 乙\n> 丙\n',
+    '> 甲 &nbsp; 乙\n> 丙\n',
+    '> 甲\n> 甲\n',
+    '> 甲 \\_ 乙\n> 丙\n',
+    '> 甲 &lt; 乙\n> 丙\n'
+  ]
+
+  it('逐偏移：屏幕上的文字必须在已揭示范围内按序匹配得上', () => {
+    for (const src of FIXTURES) {
+      for (let to = 1; to <= src.length; to++) {
+        const shown = renderVisible(src, to)
+        const leaked = !isSubsequence(shown, decodeMarks(src.slice(0, to)))
+        expect([src, to, leaked, shown]).toEqual([src, to, false, shown])
+      }
+    }
   })
 })
