@@ -222,10 +222,14 @@ function buildLineStarts(
   end: number,
   value: string
 ): number[] | null {
-  // 【空 `value` 一律不挂表】`contentStartOf` 对空 `value` 给的是**围栏之后**那个位置，而
+  // 【解析期空 `value` 不挂表】`contentStartOf` 对空 `value` 给的是**围栏之后**那个位置，而
   // 「行尾 − 行长」里的那个「行尾」是**收尾围栏那一行**的换行——同一个节点于是在同一棵树上
   // 有**两个原点**（实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value`
   // 没有下标可言，表让位，让 `contentStartOf` 定的那个数成为唯一的原点。
+  //
+  // **别把这条读成全局不变量**：它管的是**解析出来的**空 `value`。**裁剪之后** `value` 为空
+  // 是**空窗口**的结果（容器里的围栏块，`to` 落在围栏那一段），那几格归 `clip.ts` 的空窗口
+  // 守卫，与这里无关——把两者并成一条规则会两边都错。
   if (value === '') return null
   const lines = value.split('\n')
   const nl = source.indexOf('\n', start)
