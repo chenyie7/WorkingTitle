@@ -106,6 +106,12 @@ export function clipTree(root: Root, from: number, to: number): Root {
  *
  * 【返回值里的 `starts`】已揭示那几行的行起点（第一行按窗口起点裁过的那个算）。
  * 光标的「偏移 → 下标」换算要用它，否则多行容器里的光标会差一个前缀宽度。
+ *
+ * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
+ * 循环在这里、`parse.ts` 的 `isContiguous`、`toReact.tsx` 的 `rowsOf` 各写了一份——用途不同
+ * （求窗口 / 判连续性 / 摊成行），所以**不合并**，但**行尾口径三份不一样**：这里用 `+ 1` 把
+ * 换行**括进窗口**（所以窗口正好收在某行行尾时会连那个 `\n` 一起显示），`isContiguous` 把换行
+ * **算给上一行**，`rowsOf` 的行长**不含**换行。动任何一处之前先把三处对一遍。
  */
 function sliceByLineStarts(
   value: string,

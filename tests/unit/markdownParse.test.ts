@@ -3,7 +3,8 @@ import {
   parseMarkdown,
   isMarkdownPath,
   valueStartOf,
-  lineStartsOf
+  lineStartsOf,
+  WT_LINE_STARTS
 } from '../../src/renderer/src/markdown/parse'
 
 /**
@@ -249,6 +250,20 @@ describe('parseMarkdown —— 逐行偏移表', () => {
   })
 
   /**
+   * 读口与 `valueStartOf` 同一口径：**不是有限数一律当没挂表**。手工造节点——真管线今天
+   * 产不出 `NaN` / `Infinity`（`parse.ts` 与 `clip.ts` 都只写整数），所以这条只能这么测。
+   *
+   * 【空数组为什么单独钉一句】它**不是 `null`**（`every` 对空数组恒真），而它是个**真值**
+   * ——`clip.ts` 那个「空表按没有表算」的守卫（`r.starts.length > 0`）防的正是这一格。
+   */
+  it('表里混进 NaN / Infinity 一律当没挂表；空数组仍然原样返回', () => {
+    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, 7] })).toEqual([2, 7])
+    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, Number.NaN] })).toBeNull()
+    expect(lineStartsOf({ [WT_LINE_STARTS]: [Number.POSITIVE_INFINITY] })).toBeNull()
+    expect(lineStartsOf({ [WT_LINE_STARTS]: [] })).toEqual([])
+  })
+
+  /**
    * 【夹具为什么是**容器里的**围栏块，不是顶格那个】顶格的围栏块逐行是**连续**的
    * （三行前缀一样长），`isContiguous` 判定「按 `valueStartOf` + 字符数就能推」于是
    * **不挂表**——挂了只是重复信息。挂表的是前缀**逐行不同**的那些：容器里的围栏块每行
@@ -271,19 +286,34 @@ describe('parseMarkdown —— 逐行偏移表', () => {
   /**
    * 行尾空白被 remark 剥掉时，行起点要用**回验**得到，不能「行尾 − 行长」（设计 3.6.1）。
    *
-   * 【真值怎么来的】在源码里找该行文字**最后一个**位置——行尾空白是它后面唯一允许多出来的
-   * 东西。这样写是为了让断言**不依赖实现**：哪怕换一种回验算法，真值也是这一串。
+   * 【真值怎么来的】第 k 行文字在**它自己那一源码行**里从后往前找（行尾空白是它后面唯一
+   * 允许多出来的东西），再加上前面各行累计的长度。**必须按行界住**：拿
+   * `src.lastIndexOf(line, src.length)` 在整篇源码里找，会把**别的行**里相同的文字也找出来
+   * （实测 `'> 甲 \n> 甲\n'` 它给 `[7,7]`、真值 `[2,7]`）。写死数字是「测实现」，不界住同样
+   * 是「测实现」，只是错在另一个方向上。
+   *
+   * 【为什么末尾四条是重复行的】前面四条夹具里每行文字在整篇源码里恰好**唯一**，所以
+   * 「在整篇源码里找」那版写法在它们身上**也是绿的**——两版写法分不开。这四条才分得开：
+   * 不界住那版会给 `[7,7]` / `[3,3]` / `[6,3]` / `[2,11,11]`，与实现对不上。
    */
   it.each([
     ['顶层段落', '甲 \n乙\n'],
     ['引用块', '> 甲 \n> 乙\n'],
     ['列表项', '- 甲 \n  乙\n'],
-    ['行尾是制表符', '> 甲 \t\n> 乙\n']
+    ['行尾是制表符', '> 甲 \t\n> 乙\n'],
+    ['引用块里两行文字相同', '> 甲 \n> 甲\n'],
+    ['顶格两行文字相同', '甲 \n甲\n'],
+    ['同样的文字在后面又出现一次', '甲 \n乙\n\n甲\n'],
+    ['三行、后两行相同', '> 甲 \n> 乙\n> 乙\n']
   ])('%s：行尾空白被剥时表不右移', (_name, src) => {
     const text = textOf(parseMarkdown(src)!)
     const value = text.value as string
+    const srcLines = src.split('\n')
     expect(lineStartsOf(text)).toEqual(
-      value.split('\n').map((line) => src.lastIndexOf(line, src.length))
+      value.split('\n').map((line, k) => {
+        const lineStart = srcLines.slice(0, k).reduce((n, l) => n + l.length + 1, 0)
+        return lineStart + srcLines[k].lastIndexOf(line)
+      })
     )
   })
 

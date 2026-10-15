@@ -450,6 +450,12 @@ interface Row {
  *
  * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
  * 走空表会拿到不存在的 `rows[0]`。
+ *
+ * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
+ * 循环在这里、`parse.ts` 的 `isContiguous`、`clip.ts` 的 `sliceByLineStarts` 各写了一份——
+ * 用途不同（摊成行 / 判连续性 / 求窗口），所以**不合并**，但**行尾口径三份不一样**：这里的
+ * 行长**不含**换行（`base = nl + 1` 才进下一行），`isContiguous` 把换行**算给上一行**，
+ * `sliceByLineStarts` 用 `+ 1` 把换行**括进窗口**。动任何一处之前先把三处对一遍。
  */
 function rowsOf(node: MdNode, value: string, origin: number): Row[] {
   const starts = lineStartsOf(node)

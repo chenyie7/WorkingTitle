@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { clipTree, readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
-import { parseMarkdown, valueStartOf } from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, valueStartOf, lineStartsOf } from '../../src/renderer/src/markdown/parse'
 import type { Root } from 'mdast'
 
 const DOC = [
@@ -355,7 +355,14 @@ describe('clipTree —— 裁剪后起点跟着挪', () => {
 
 /**
  * 逐行切片（设计 3.6.1）：容器里的文字在窗口两侧都要按**行**求交，不能按字符数硬减。
- * 修之前这里的每一条都是错的，而且方向是**提前**——未揭示的字上屏。
+ *
+ * 【这四条里只有一条是逐行表带来的】把它们原样搬到 `12fac2d`（引进逐行偏移表之前）上跑，
+ * **四条里三条是绿的**，只有「光标走到第二行中间」那条红（实收 `'引用甲\n引用乙'`，期望
+ * `'引用甲\n引'`）——那是唯一一条**窗口切在两行之间**的（`to = 8 + 1 = 9`，跨过第一行行尾）。
+ * 另外三条的窗口要么整个落在**第一行之内**、或正好收在它的行尾（`to = 5`、`to = 6`），
+ * 要么把**整条 `value`** 都包住（`from = 3, to = 12`）——这两种情形下「常量原点 + 字符数」
+ * 本来就是精确的（那是 Task 1 / Task 2 的成果）。所以原先那句「修之前这里的每一条都是错的」
+ * 与事实不符，别照着它理解这一节在守什么。
  */
 describe('clipTree —— 容器里的文字按行切', () => {
   const QUOTE = '> 引用甲\n> 引用乙\n'
@@ -387,5 +394,44 @@ describe('clipTree —— 容器里的文字按行切', () => {
   it('折点切进第一行中间：窗口起点也按行算，前面的字不显示', () => {
     const out = clipTree(parseMarkdown(QUOTE)!, QUOTE.indexOf('用'), QUOTE.length)
     expect(textOf(out)).toBe('用甲\n引用乙')
+  })
+})
+
+/** 树里第一个 `code` 节点（深度优先）。 */
+function findCode(node: unknown): { value: string } | null {
+  const n = node as { type?: string; children?: unknown[] } | null
+  if (!n || typeof n !== 'object') return null
+  if (n.type === 'code') return n as { value: string }
+  for (const child of n.children ?? []) {
+    const hit = findCode(child)
+    if (hit) return hit
+  }
+  return null
+}
+
+/**
+ * 「空窗口那一格」：`value` 为 `''` 且窗口跟**任何一行都没相交**时，
+ * 起点退回节点自己的 `position.start`（围栏之后那个内容起点 8）、**且不许挂表**。
+ *
+ * 【为什么单钉这一格】两条活着的路（本来没有表 / 空窗口）都该给「没有表」；
+ * 挂一张空表、或者把解析期那张**整条 value** 的表原样留下，都是错的，而且都不出声。
+ * 【断言为什么写成 `[to, 值]`】红的时候要一眼看出**是哪一格**红的。
+ */
+describe('空窗口那一格', () => {
+  const SRC = '> ```\n> 甲\n> 乙\n> ```\n'
+
+  it('起点退回 8（围栏之后那个内容起点）', () => {
+    for (const to of [1, 2, 3, 4, 5, 6, 7]) {
+      const code = findCode(clipTree(parseMarkdown(SRC)!, 0, to))!
+      expect([to, code.value]).toEqual([to, ''])
+      expect([to, valueStartOf(code)]).toEqual([to, 8])
+    }
+  })
+
+  it('不许挂表', () => {
+    for (const to of [1, 2, 3, 4, 5, 6, 7]) {
+      const code = findCode(clipTree(parseMarkdown(SRC)!, 0, to))!
+      expect([to, lineStartsOf(code)]).toEqual([to, null])
+    }
   })
 })

@@ -193,10 +193,19 @@ function inlineContentStart(source: string, start: number, end: number, value: s
 /** 挂在节点上的逐行偏移表（设计 3.6.1）：每个 value **行**的首字符在源码里的偏移。 */
 export const WT_LINE_STARTS = 'wtLineStarts'
 
-/** 读逐行偏移表：没有、不是数组一律给 `null`（调用方退回按字符数切）。 */
+/**
+ * 读逐行偏移表：没有、不是数组一律给 `null`（调用方退回按字符数切）。
+ *
+ * 【与 `valueStartOf` 同一口径：不是有限数一律当没挂表】两个读口是一对兄弟，判据必须一样
+ * ——只查 `typeof n === 'number'` 的话 `NaN` / `Infinity` 会被原样当成行起点，下游按它算
+ * 出来的位置**不报错**、只是错到天边。今天上游产不出这种值（`parse.ts` 与 `clip.ts` 都只
+ * 写整数），但读口松一格就是给下一个人留坑：他按 `valueStartOf` 的注释来理解这里就会踩。
+ */
 export function lineStartsOf(node: unknown): number[] | null {
   const raw = (node as Record<string, unknown> | null | undefined)?.[WT_LINE_STARTS]
-  return Array.isArray(raw) && raw.every((n) => typeof n === 'number') ? (raw as number[]) : null
+  return Array.isArray(raw) && raw.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ? (raw as number[])
+    : null
 }
 
 /**
@@ -248,7 +257,15 @@ function buildLineStarts(
   return out
 }
 
-/** 这张表能不能由「起点 + 字符数」直接推出来。能的话不挂——挂了也只是重复信息。 */
+/**
+ * 这张表能不能由「起点 + 字符数」直接推出来。能的话不挂——挂了也只是重复信息。
+ *
+ * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
+ * 循环在这里、`clip.ts` 的 `sliceByLineStarts`、`toReact.tsx` 的 `rowsOf` 各写了一份——用途
+ * 不同（判连续性 / 求窗口 / 摊成行），所以**不合并**，但**行尾口径三份不一样**：这里把换行
+ * **算给上一行**（`v` 一步跳过它），`sliceByLineStarts` 用 `+ 1` 把换行**括进窗口**，
+ * `rowsOf` 的行长**不含**换行。动任何一处之前先把三处对一遍。
+ */
 function isContiguous(starts: readonly number[], base: number, value: string): boolean {
   let v = 0
   for (const s of starts) {
