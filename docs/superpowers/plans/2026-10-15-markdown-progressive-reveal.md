@@ -1302,13 +1302,23 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               )}
             </code>
           </pre>
-          <BlankSpace
-            node={node}
-            field={WT_BLANK_LINES}
-            className="wt-md-pre-blank"
-            cssVar="--wt-md-blank-lines"
-            ctx={ctx}
-          />
+          {/*
+            【为什么是**直接调用**、不是 JSX 元素】它是个不用 hook 的纯函数。写成
+            `<BlankSpace …/>` 的话，React 要到**渲染这棵树的时候**才执行它、才置
+            `placed`；而 `renderMarkdown` 末尾那句兜底是在**建元素的时候**判
+            `caret.placed` 的，那时还是 false——于是同一次渲染里会冒出**两个**
+            `[data-testid="caret"]`（实测 81 个偏移位，产物长这样：
+            `…</table><span caret/><div class="wt-md-table-blank"/><span caret/>`）。
+            `InputCapture` 取的是第一个，所以今天「恰好」还对——那是运气，不是设计。
+            直接调用让置位发生在兜底之前。
+          */}
+          {BlankSpace({
+            node,
+            field: WT_BLANK_LINES,
+            className: 'wt-md-pre-blank',
+            cssVar: '--wt-md-blank-lines',
+            ctx
+          })}
         </>
       )
     }
@@ -1329,13 +1339,14 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               </tbody>
             )}
           </table>
-          <BlankSpace
-            node={node}
-            field={WT_BLANK_ROWS}
-            className="wt-md-table-blank"
-            cssVar="--wt-md-blank-rows"
-            ctx={ctx}
-          />
+          {/* 同 `case 'code'`：**直接调用**，理由（渲染时序）见那里 */}
+          {BlankSpace({
+            node,
+            field: WT_BLANK_ROWS,
+            className: 'wt-md-table-blank',
+            cssVar: '--wt-md-blank-rows',
+            ctx
+          })}
         </>
       )
     }
@@ -1429,6 +1440,16 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
   const caret = ctx.caret
   if (!caret || caret.placed) return null
   if (holdsCaret(node, ctx)) return null
+  /*
+    【给表格的行与格让路】它们的子文本节点会接住光标；在它们身上开火会把光标插成
+    `<tr>` 的**直接子元素**——那不是合法的表格内容，CSS 会给它套一个匿名表格盒，
+    **表格于是多出一列**（实测宽 115→172、第二列 x 57→114）。
+
+    这一格是本轮新引入的：旧判据在那些位置把光标放在第二个 `<th>` **里面**（合法），
+    而区间判据让 `cell.start >= caret.at` 先开火、把它挪到了格外。下面那条「插在它
+    前面」针对的是**叶子**（硬换行、图片、占位），不是容器。
+  */
+  if (node.type === 'tableCell' || node.type === 'tableRow') return null
   const start = node.position?.start.offset
   const after = start !== undefined && start >= caret.at
   const leafAcross = isLeaf(node) && endOf(node) >= caret.at
@@ -1511,7 +1532,9 @@ Run: `pnpm typecheck` → exit 0
 **先写下预期**：
 
 - 变异甲：把 `BlankSpace` 里的 `if (count <= 0) return null` 改成 `if (false) return null`。预期红：**「表格一行不缺时：一个占位元素都不多出」这一条**，其余两条不该红。
-- 变异乙：把 `splitAtCaret` 里的 `if (origin + value.length < caret.at) return null` 改成 `if (value.length < caret.at) return null`（**把 `origin` 整个丢掉**）。预期红：**「光标落在空节点上也算命中」与「光标插进代码框里」两条**。
+- 变异乙：把 `splitAtCaret` 里的区间判据 `if (caret.at < origin || caret.at > origin + value.length) return null` 改成 `if (caret.at > value.length) return null`（**把 `origin` 整个丢掉**）。预期红：**只有「光标插进代码框里」一条**。
+
+  **「空节点」那条不会再红，这是实施者量出来的**：它现在有**两个独立见证**——`splitAtCaret` 的区间判据，与 `caretBefore(paragraph)` 的 `start >= caret.at`（那个段落的起点正好等于揭示偏移）。单回退一个机制，光标照样落在 `<li>` 里。想让两条都红，得**同时**回退两个机制。原计划写「预期两条」是按 `caretBefore` 还不存在时的实现写的。
 - 变异丙：把 `BlankSpace` 里的 `const takesCaret = caret !== null && !caret.placed` 改成 `const takesCaret = false`（占位不再接光标）。预期红：**真管线那组里的「表格」与「代码块」两条**——它们正是坏区（表格 8–20、代码块 1–3）。
 
   **这条是本 Task 的头条机制**：实施者实测过，**靠 `caretBefore` 在那两个分支里接是死代码**（它的判据与被渲染块的 `start < to` 互斥），所以这个缺陷只有「占位自己接」这一条路能修。
