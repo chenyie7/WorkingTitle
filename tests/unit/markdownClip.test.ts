@@ -188,3 +188,44 @@ describe('clipTree —— 内嵌 HTML 等抽完才出现', () => {
     expect(textOf(out)).not.toContain('</span>') // 闭合标签还没抽到，不在
   })
 })
+
+/**
+ * 代码类节点的坐标系（设计 3.6）。修之前这里的每一条都是错的——内容恒定领先光标
+ * 一个定界符的长度，而**一条守它的用例都没有**（这是它能活下来的原因）。
+ */
+describe('clipTree —— 代码类节点的坐标系', () => {
+  const FENCE = '```\n第一行\n第二行\n第三行\n```\n'
+
+  it('光标还在围栏里：一个字都不显示（修之前第一行已经整行上屏）', () => {
+    const out = clipTree(parseMarkdown(FENCE)!, 0, FENCE.indexOf('第一行')) // 走完围栏与换行
+    expect((out.children[0] as unknown as { value: string }).value).toBe('')
+  })
+
+  it('光标走到第一行结尾：只显示到那里，不多一个字', () => {
+    const out = clipTree(parseMarkdown(FENCE)!, 0, FENCE.indexOf('第一行') + 3)
+    expect((out.children[0] as unknown as { value: string }).value).toBe('第一行')
+  })
+
+  it('光标走到第二行中间：第三行不在（修之前三行全在）', () => {
+    const out = clipTree(parseMarkdown(FENCE)!, 0, FENCE.indexOf('第二行') + 1)
+    expect((out.children[0] as unknown as { value: string }).value).toBe('第一行\n第')
+  })
+
+  it('带语言标注的围栏块同样对（那里的围栏长 6，偏差本来更大）', () => {
+    const src = '```js\n甲\n```\n'
+    expect(
+      (clipTree(parseMarkdown(src)!, 0, src.indexOf('甲')).children[0] as unknown as { value: string }).value
+    ).toBe('')
+    expect(
+      (clipTree(parseMarkdown(src)!, 0, src.indexOf('甲') + 1).children[0] as unknown as { value: string })
+        .value
+    ).toBe('甲')
+  })
+
+  it('行内代码：光标在起首反引号上时一个字都不显示', () => {
+    const src = '前 `甲` 后\n'
+    const out = clipTree(parseMarkdown(src)!, 0, src.indexOf('`') + 1)
+    const para = out.children[0] as unknown as { children: { type: string; value?: string }[] }
+    expect(para.children.find((c) => c.type === 'inlineCode')?.value).toBe('')
+  })
+})

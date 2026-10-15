@@ -1,4 +1,5 @@
 import type { Content, Root } from 'mdast'
+import { valueStartOf } from './parse'
 
 /**
  * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
@@ -106,10 +107,14 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
   const start = n.position?.start.offset
   // 第一支：可裁文本（text / code / inlineCode）——截到 [from, to) 那个窗口
   if (VALUE_TYPES.has(n.type) && typeof n.value === 'string') {
+    // 【原点不是 position.start.offset】`code` / `inlineCode` 的 `value` 里不含定界符
+    // （围栏、反引号），而 `position` 从定界符起算——两套坐标差着一个定界符的长度。
+    // 真实起点由 `parse.ts` 在解析时算好挂在节点上（设计 3.6），这里只是取用。
+    const origin = valueStartOf(n) ?? start
     // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
-    if (start === undefined) return node
-    const head = Math.max(0, from - start)
-    const tail = Math.max(head, to - start)
+    if (origin === undefined) return node
+    const head = Math.max(0, from - origin)
+    const tail = Math.max(head, to - origin)
     return { ...n, value: n.value.slice(head, tail) } as unknown as ClipNode
   }
   // 第二支：容器——递归下去裁，**结构本身不丢**（设计 3.2：块内的行、项整体跟着保留）
