@@ -105,10 +105,10 @@ describe('parseMarkdown —— 代码节点 value 的真实起点（设计 3.6�
 })
 ```
 
-并把该文件头部的 import 补上 `valueStartOf`：
+并把该文件头部的 import 那一行换成下面这样（`isMarkdownPath` 本来就在那一行里，别删）：
 
 ```ts
-import { parseMarkdown, valueStartOf } from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath, valueStartOf } from '../../src/renderer/src/markdown/parse'
 ```
 
 - [ ] **Step 2: 跑测试，确认它红**
