@@ -1010,11 +1010,75 @@ describe('renderMarkdown —— 阅读光标', () => {
 })
 ```
 
+再追加一组**真管线**用例——它们守的是 Task 4 的质量评量出来的那三处**真缺陷**：
+
+```tsx
+/**
+ * 光标的落点必须与「揭示到哪」重合 —— 这三条是量出来的真缺陷，不是假想的。
+ *
+ * 旧判据（「第一个**结束偏移 ≥ 揭示偏移**的**带文本**节点」）会被「命中节点之后的空文本
+ * 节点」接走，而它前面/中间站着**提前渲染的非文本节点**：占位、硬换行、图片。于是光标
+ * 落到占位之后、下一行、或图的右边——而**隐形输入框与输入法候选框都按这个坐标摆**。
+ *
+ * 【为什么必须走真管线】缺陷正出在 `clip` 与 `toReact` 的**接缝**上：手工造树造不出
+ * `clip` 写的 `wtValueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
+ *
+ * 【实现者注意】下面每个 `to` 都要**先确认它在旧代码上真的红**（Step 2 那一步），
+ * 落点不对就自己找一个能复现的偏移并**在报告里写清实测数**——别为了让用例变绿去改断言。
+ */
+describe('renderMarkdown —— 光标的落点（真管线）', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\n末段\n'
+
+  it('表格：光标落在占位**之前**，不是之后', () => {
+    const to = TABLE.indexOf('| 1 |') + 5 // 揭示偏移落在第一行正文行里，其后几行还没走到
+    const c = at(TABLE, to)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const blank = c.querySelector('.wt-md-table-blank')
+    expect(caret).not.toBeNull()
+    expect(blank).not.toBeNull()
+    // 光标在占位**前面**：从光标看，占位是 FOLLOWING
+    expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('硬换行：光标落在 `<br>` **之前**（还在第一行），不是之后', () => {
+    const src = '甲  \n乙\n'
+    const c = at(src, src.indexOf('乙') - 1) // 揭示偏移正好落在行尾那个换行上
+    const caret = c.querySelector('[data-testid="caret"]')
+    const br = c.querySelector('br')
+    expect(caret).not.toBeNull()
+    expect(br).not.toBeNull()
+    expect(caret!.compareDocumentPosition(br!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('图片：光标落在图**之前**，不是图的右边', () => {
+    const src = '甲 ![图](a.png) 乙\n'
+    const c = at(src, src.indexOf('![') + 1)
+    const caret = c.querySelector('[data-testid="caret"]')
+    const img = c.querySelector('.wt-md-img')
+    expect(caret).not.toBeNull()
+    expect(img).not.toBeNull()
+    expect(caret!.compareDocumentPosition(img!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('量高度那一份**永远**不带光标（`caret: null` 那条闸）', () => {
+    const doc = parseMarkdown('甲乙丙\n')!
+    const c = render(<>{renderMarkdown(doc, { withBlockEnds: true, caretAt: 2 })}</>).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(0)
+  })
+})
+```
+
 并把该文件头部的 import 补齐（按它现有的写法调整，缺什么补什么）：
 
 ```tsx
 import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
-import { WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { clipTree, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
 import type { Root } from 'mdast'
 ```
 
@@ -1109,7 +1173,12 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
   while (i < nodes.length) {
     const node = nodes[i]
     if (node.type !== 'text' && node.type !== 'html') {
-      out.push(<Fragment key={i}>{renderNode(node, ctx)}</Fragment>)
+      out.push(
+        <Fragment key={i}>
+          {caretBefore(node, ctx)}
+          {renderNode(node, ctx)}
+        </Fragment>
+      )
       i++
       continue
     }
@@ -1129,7 +1198,14 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
     }
     if (!hasHtml) {
       // 没有 html 时每个节点各成一个 Fragment——这条路上光标能精确落进某一个文本节点
-      for (let k = start; k < i; k++) out.push(<Fragment key={k}>{renderNode(nodes[k], ctx)}</Fragment>)
+      for (let k = start; k < i; k++) {
+        out.push(
+          <Fragment key={k}>
+            {caretBefore(nodes[k], ctx)}
+            {renderNode(nodes[k], ctx)}
+          </Fragment>
+        )
+      }
       continue
     }
     const tokens: HtmlToken[] = []
@@ -1211,6 +1287,8 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               )}
             </code>
           </pre>
+          {/* 占位代表「还没揭示的行」——光标必须在它**前面**（设计 3.5） */}
+          {caretBefore(node, ctx)}
           <BlankSpace
             node={node}
             field={WT_BLANK_LINES}
@@ -1237,6 +1315,8 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
               </tbody>
             )}
           </table>
+          {/* 占位代表「还没走到的行」——光标必须在它**前面**（设计 3.5） */}
+          {caretBefore(node, ctx)}
           <BlankSpace
             node={node}
             field={WT_BLANK_ROWS}
@@ -1248,7 +1328,7 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
     }
 ```
 
-**改法六：新增四个小函数**，放在 `HtmlFragment` 那个函数**之后**：
+**改法六：新增八个小函数**，放在 `HtmlFragment` 那个函数**之后**：
 
 ```tsx
 /** 阅读光标。类名与 `data-testid` 与纯文本那条路用的是同一套——`InputCapture` 按它定位。 */
@@ -1286,11 +1366,62 @@ function originOf(node: MdNode): number {
 function splitAtCaret(value: string, origin: number, ctx: Ctx): [string, string] | null {
   const caret = ctx.caret
   if (!caret || caret.placed) return null
-  if (origin + value.length < caret.at) return null
+  // 判据与 `holdsCaret` 一致：**区间包含**揭示偏移才算接得住
+  if (caret.at < origin || caret.at > origin + value.length) return null
   const at = Math.max(0, Math.min(caret.at - origin, value.length))
   // 【先置位再返回】置位是「整棵树只插一个」的闸，必须在返回前落下
   caret.placed = true
   return [value.slice(0, at), value.slice(at)]
+}
+
+/** 这个节点能不能**自己**接住光标：它带可裁文本，且区间 `[起点, 起点 + 长度]` 包含揭示偏移。 */
+function holdsCaret(node: MdNode, ctx: Ctx): boolean {
+  const caret = ctx.caret
+  if (!caret) return false
+  if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return false
+  const origin = originOf(node)
+  return origin <= caret.at && caret.at <= origin + node.value.length
+}
+
+/** 节点的源码结束偏移。**没有位置的一律算「在揭示偏移之后」**。 */
+function endOf(node: MdNode): number {
+  return node.position?.end.offset ?? Number.POSITIVE_INFINITY
+}
+
+/** 没有 `children`、也不是可裁文本的叶子：硬换行、分隔线、图片、内嵌 HTML、脚注引用。 */
+function isLeaf(node: MdNode): boolean {
+  if (node.type === 'text' || node.type === 'code' || node.type === 'inlineCode') return false
+  return !('children' in node)
+}
+
+/**
+ * 渲染一个子节点**之前**，先看光标该不该落在它前面（设计 3.5 那条规则的正本）。
+ *
+ * 【判据一：这个节点整个在揭示偏移之后】起点 ≥ 揭示偏移 → 光标落在它前面。
+ *
+ * 【判据二：提前渲染的叶子跨过了揭示偏移】硬换行与图片的**起点在揭示偏移之前**、结束
+ * 在之后（理由见设计 3.5）。只看起点会跳过它们，光标于是落到**下一行或图的右边**——
+ * 实测过（`甲  ␊乙` 在 2–4、`甲 ![图](…) 乙` 在 3–19）。所以对「没有 children、也不是
+ * 可裁文本」的叶子再判一次**结束偏移**。
+ *
+ * 【为什么值节点不在这里处理】它能自己把文本**劈开**（`splitAtCaret`），那样光标落在
+ * 它**里面**那个正确的字符上，比落在它前面准。上面 `holdsCaret` 那一句就是把这个机会
+ * 让给它。
+ *
+ * 【未揭示的占位也走这一条】`BlankSpace` 不是语法树里的节点，所以它由 `code` / `table`
+ * 两个分支在渲染它之前显式调一次本函数——占位代表「还没到的东西」，光标永远在它**前面**。
+ * 不这么做的话，实测一张表在揭示偏移 8–20 这连续 13 个位置上，光标会被一路甩到占位之后。
+ */
+function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
+  const caret = ctx.caret
+  if (!caret || caret.placed) return null
+  if (holdsCaret(node, ctx)) return null
+  const start = node.position?.start.offset
+  const after = start !== undefined && start >= caret.at
+  const leafAcross = isLeaf(node) && endOf(node) >= caret.at
+  if (!after && !leafAcross) return null
+  caret.placed = true
+  return <CaretSpan />
 }
 
 /**
