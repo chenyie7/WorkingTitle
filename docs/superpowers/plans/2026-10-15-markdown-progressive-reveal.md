@@ -2623,6 +2623,60 @@ git commit -F /tmp/wt-msg-task4g.txt
 git commit -F /tmp/wt-msg-task4i.txt -- src/renderer/src/markdown/toReact.tsx tests/unit/markdownToReact.test.tsx
 ```
 
+## Task 4j: 收 4g 评审的两条 —— 合并串里的链尾，以及三条零覆盖支路
+
+**对应设计：** 3.5（兜底那条与「占位之前」那条）。
+
+**由来**：Task 4g 的规格评审（判「有偏离」）查出两条，都不是回归，但都该收。
+
+### 一条：合并 token 串里的链尾，兜底仍会开火
+
+`renderAll` 的 `hasHtml` 那条路**只调 `renderTokens(tokens)`、从不 `renderNode`**，于是 `splitAtCaret` 不被调用、`caret.tail` 没人消费，光标落到末尾兜底。
+
+实测（真管线逐偏移、871 格对拍）：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 **to = 18、19** 光标在 `</blockquote>` **之后**；`'甲 <b>乙</b>\n\n末段\n'` 的 **7、8、9** 同理。老代码 871 格里「掉到块下方」110 格，4g 修好 **108**，剩下这 **2** 格。
+
+**成因**（设计文档已按实测更正）：**不是**「`tailTarget` 对 html 叶子返回空」——那几格 `tailTarget` 返回的是**文本节点**（`leaf-null` 那支只在 `to = 10` 出现，而那一格光标在 `<p>` 里、不掉块外）。**修法**：让那条合并串的路**也认 `caret.tail`**——串尾命中 tail 的文本节点时，把光标放在**该节点末尾**，而不是靠 `caretHere`。
+
+### 另一条：三条支路零覆盖，其中一条注释里点名「必须保住」
+
+逐条单独变异（每条都还原过），跑全仓 608 条：
+
+| 变异 | 行为差异 | 套件 |
+|---|---|---|
+| `:85` 去掉 `hasPlaceholder` 让路 | **168 格**（表格 8–20 那连续 13 格全变、20 行表 64 格）| **608 全绿** |
+| `:192` 去掉 `?? node`（容器收留）| 14 格 | **608 全绿** |
+| `:190` 去掉 `definition` 跳过 | 26 格 | **608 全绿** |
+
+**第一条最要紧**：去掉之后，表格 `to=12` 的光标从「`</table>` 之后、占位之前」被挪进**表头单元格**，20 行表上差出十几行——正是设计 3.5 记的那条**连续 13 格**老账。而新用例的判据（「不是容器最后一个子元素」+「顶层落点后面紧跟占位」）**过**：光标进了 `<td>`，两个断言都不开火。
+
+**Files:**
+- Modify: `src/renderer/src/markdown/toReact.tsx`
+- Modify: `tests/unit/markdownToReact.test.tsx`
+
+- [ ] **Step 1: 补三条用例（先只写用例，确认它们在**当前**代码上红/绿）**
+
+1. **占位在场**：20 行表，偏移 8–20（那连续 13 格）锁「光标**紧挨**占位（`.wt-md-table-blank`）、**不在**任何 `td/th` 里」。
+2. **段落以叶子收尾**：脚注引用 / 图片收尾的段落，锁住 `?? node` 那支。
+3. **文档以 `[ref]:` 定义收尾**：锁住 `definition` 跳过那支。
+
+三条都要**先确认它们能红**（把对应支路关掉应当红）——**红不了就先别往下走**，报告实测。
+
+- [ ] **Step 2: 改合并串那条路**（上面「一条」的修法），并补第 4 条用例：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 的 `to = 18、19` 与 `'甲 <b>乙</b>\n\n末段\n'` 的 `7、8、9`，光标**在块内**。
+
+- [ ] **Step 3: 跑门禁**（exit code）：`pnpm test`、`pnpm typecheck`。
+
+- [ ] **Step 4: 变异验证（五条，各自单独做）**
+
+上表那三条（`:85`/`:192`/`:190`）+ 本任务新改的那支（关掉它 → Step 2 那条红）。**每条都要指名红的是哪几条用例**。
+
+- [ ] **Step 5: 真机**（`pnpm build` 后）：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 逐字符打字到 18–19，量**光标是否在 `blockquote` 内**、以及**隐形输入框 `style.left/top` 是否等于光标的 `offsetLeft/offsetTop`**。
+
+- [ ] **Step 6: 提交**（带 pathspec）
+
+```bash
+git commit -F /tmp/wt-msg-task4j.txt -- src/renderer/src/markdown/toReact.tsx tests/unit/markdownToReact.test.tsx
+```
+
 ## Task 5: `MarkdownView.tsx` / `Page.tsx` —— 接线
 
 **对应设计：** 第 3.5 节最后一段。
