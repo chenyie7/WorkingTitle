@@ -1818,6 +1818,485 @@ git commit -F /tmp/wt-msg.txt
 
 ---
 
+## Task 4c: `parse.ts` —— 逐行表的行起点改用**回验**（行尾空白被剥时整张表右移）
+
+**对应设计：** 第 3.6.1 节。**这一节要改掉它自己的一句话**——「每一行的 `value` 都贴在该行源码的尾部」这条依据**不成立**（理由见下）。
+
+**为什么排在最前：** 这是 4b 带出来、**现在就在线上**的内容回归——`Page.tsx` 早就接了 `MarkdownView`，内容那一半是活的（只有 `caretAt` 还没接）。表现为**那一行的首字晚一个按键上屏**，方向与 4b 要治的那个（提前）相反。
+
+**背景（实测，评审与我都独立跑过真管线）：** remark 除了剥**行首前缀**，还会剥**行尾空白**，于是「行尾 − 行长」那个减法把被剥掉的字也算进去了：
+
+| 源码 | `value` | 现在的表 | 真值 |
+|---|---|---|---|
+| `甲 \n乙\n` | `甲\n乙` | `[1, 3]` | `[0, 3]` |
+| `> 甲 \n> 乙\n` | `甲\n乙` | `[3, 7]` | `[2, 7]` |
+| `> 甲 \t\n> 乙\n` | `甲\n乙` | `[4, 8]` | `[2, 8]` |
+| `- 甲 \n  乙\n` | `甲\n乙` | `[3, 7]` | `[2, 7]` |
+
+真管线后果（顶层 `'甲 \n乙\n'`）：`to = 1` 时 4b 之前显示 `甲`、现在显示空——**首字晚一个按键**。
+
+**Files:**
+- Modify: `src/renderer/src/markdown/parse.ts`（`buildLineStarts` 一个函数）
+- Modify: `tests/unit/markdownParse.test.ts`
+
+- [ ] **Step 1: 写失败的测试**
+
+`tests/unit/markdownParse.test.ts`，接在已有的「逐行偏移表」那个 `describe` 里：
+
+```ts
+  /**
+   * 行尾空白被 remark 剥掉时，行起点要用**回验**得到，不能「行尾 − 行长」（设计 3.6.1）。
+   *
+   * 【真值怎么来的】在源码里找该行文字**最后一个**位置——行尾空白是它后面唯一允许多出来的
+   * 东西。这样写是为了让断言**不依赖实现**：哪怕换一种回验算法，真值也是这一串。
+   */
+  it.each([
+    ['顶层段落', '甲 \n乙\n'],
+    ['引用块', '> 甲 \n> 乙\n'],
+    ['列表项', '- 甲 \n  乙\n'],
+    ['行尾是制表符', '> 甲 \t\n> 乙\n']
+  ])('%s：行尾空白被剥时表不右移', (_name, src) => {
+    const text = textOf(parseMarkdown(src)!)
+    const value = text.value as string
+    const srcLines = src.split('\n')
+    expect(lineStartsOf(text)).toEqual(
+      value.split('\n').map((line, k) => {
+        const lineStart = srcLines.slice(0, k).reduce((n, l) => n + l.length + 1, 0)
+        return lineStart + srcLines[k].lastIndexOf(line)
+      })
+    )
+  })
+```
+
+（`textOf` 是「取第一个 text 节点」的小助手，**文件里没有就自己加一个**，别改别处；断言的右半边必须由 `value` 与源码现算，**不许把 `[0,3]`、`[2,7]` 这些数写死**——写死就变成「测实现」了。）
+
+**右半边必须按行界住**（这一条是实施者量出来的、我原先写错了）：`src.lastIndexOf(line, src.length)` 是**全源码**查找，只有当每行文字在整篇源码里**唯一**时才等于真值。反例（实现与按行界住的真值一致，是**断言那半边**错）：`'> 甲 \n> 甲\n'` 计划那条给 `[7,7]`（真值 `[2,7]`）、`'甲 \n甲\n'` 给 `[3,3]`（`[0,3]`）、`'甲 \n乙\n\n甲\n'` 给 `[6,3]`（`[0,3]`）、`'> 甲 \n> 乙\n> 乙\n'` 给 `[2,11,11]`（`[2,7,11]`）。**已交付的 `03ec224` 用的正是不界住的那版**——四个夹具恰好各行唯一，所以现在是绿的，但它是个**假判据**：谁加一条重复行的夹具，它就会把**对的实现判成红的**。改准与补重复行夹具归 **Task 4e**。
+
+- [ ] **Step 2: 跑测试，确认它红**
+
+Run: `pnpm vitest run tests/unit/markdownParse.test.ts`
+
+预期：四条**全红**，且红的理由是**表右移**（`[1,3]` vs `[0,3]` 这种）。全仓其余用例一条都不动。
+
+- [ ] **Step 3: 改 `buildLineStarts`（一个函数）**
+
+```ts
+/**
+ * 建逐行偏移表：每个 value 行的首字符在源码里的偏移。
+ *
+ * 【依据是**回验**，不是「行尾 − 行长」】最初写的是「该行源码的结束偏移 − 该行在 value 里的
+ * 长度」，依据是「每一行的 `value` 都贴在该行源码的尾部」——**这条依据不成立**：remark 除了
+ * 剥行首前缀，还会剥**行尾空白**，那个减法于是把被剥掉的字也算进去，整张表往后偏（实测
+ * `'甲 \n乙\n'` 得 `[1,3]`、真值 `[0,3]`；`'> 甲 \t\n> 乙\n'` 偏 2）。方向是「晚」——
+ * 那一行的首字晚一个按键上屏。
+ *
+ * 现在的做法是**在这一行源码里把那行文字找出来**：从行尾往前找最后一次出现（行尾空白是
+ * 它后面唯一允许多出来的东西），并要求找到的位置之后到行尾**全是空白**。找不到就返回
+ * `null`、不挂表——退回「起点 + 字符数」那条路（4b 之前的行为）。**宁可少精确一处，也不要
+ * 挂一张偏掉的表**：偏掉的表不报错，只让内容静默地差几个字。
+ *
+ * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
+ */
+function buildLineStarts(
+  kind: string,
+  source: string,
+  start: number,
+  end: number,
+  value: string
+): number[] | null {
+  const lines = value.split('\n')
+  const nl = source.indexOf('\n', start)
+  const firstLineEnd = nl >= 0 && nl < end ? nl : end
+  const fenced = kind === 'code' && /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
+  let lineStart = fenced ? (firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd) : start
+  const out: number[] = []
+  for (const line of lines) {
+    const next = source.indexOf('\n', lineStart)
+    const lineEnd = next >= 0 && next < end ? next : end
+    const at = source.lastIndexOf(line, lineEnd)
+    if (at < lineStart || !/^[ \t]*$/.test(source.slice(at + line.length, lineEnd))) return null
+    out.push(at)
+    lineStart = lineEnd + 1
+  }
+  return out
+}
+```
+
+**调用点要跟着收窄**（`annotateValueStarts` 里那一句）：`buildLineStarts(...)` 现在可能给 `null`，那就**不挂表**——`null` 与「连续」走的是同一条退路。
+
+**其余一个字节不改。**
+
+- [ ] **Step 3b: 空 `value` 的 code 节点，两条路取同一个约定**
+
+**由来（质量评审第 8 条，它实测的）**：`contentStartOf` 对 `value === ''` 提前返回**围栏之后**那个位置，而 `buildLineStarts` 对 `lines = ['']` 走「行尾 − 行长」——那个「行尾」是**收尾围栏那一行**的换行。两条路对空 `value` 的约定不同，于是同一个节点在同一棵树上有**两个原点**：
+
+| 夹具 | 解析期 | 裁到 `to` 越过收尾围栏那一格 |
+|---|---|---|
+| `'```\n```\n'` | `wtValueStart=4`、表 `[7]` | `to=8` → `wtValueStart=7`、表 `[7]` |
+| `'```md\n```\n'` | `wtValueStart=6`、表 `[9]` | `to=10` → `wtValueStart=9`、表 `[9]` |
+| `'```\n\n```\n'` | 表 `null`（不发作） | 从不挂表 |
+
+**非空围栏的对照**（同一支探针）：`'```\n甲\n```\n'` 在 `to = 1..10` 上 `wtValueStart` **恒为 4**、表恒为 `null`——不发作。归属上：`wtValueStart` 那一半是 Task 1 的约定，表那一半是 4b 新带出来的（`12fac2d` 上没有「表」这个概念，所以「两个原点」在 4b 之前不存在）。
+
+**修法**：`value === ''` 时**不挂表**（`buildLineStarts` 早退给 `null`），让 `contentStartOf` 定的那个数成为**唯一**的原点。挂表本来是想说「下标与偏移不是线性关系」——空 `value` 没有下标可言。
+
+**别顺手写过头**：**不许**把它推广成「空 `value` 的节点一律不许挂表」当成全局不变量。`'> ```\n> 甲\n> 乙\n> ```\n'` 的 `to = 1..7` 上 `value` 为空是**空窗口**的结果，那几格归 `clip.ts` 的空窗口守卫管（Task 4e 钉的就是它，且它用的判据必须钉在**空窗口那一格**上）。
+
+**顺带记一句后果、别去追**：`to = 8` 那一格上，空代码框的区间退化成一点、接不住光标，走末尾兜底——那本来就是「内容到头」那一类，评审也判它低严重度。本步**只收「两个原点」这个不一致**。
+
+测试（`tests/unit/markdownParse.test.ts`）：两个夹具各断言**解析期** `lineStartsOf(code) === null`，且 `valueStartOf(code)` 是那个数（4 / 6）。**只断言解析期**——`to=8` 那个跳变是「解析期挂上了表」的后果，表不挂它就不存在。（这个文件里若没有 `clipTree` 的 import，别为了这一步去加。）
+
+**变异（单独做）**：把 `value === ''` 那条早退去掉 → 预测红的是**本步新加的那条**（表 `[7]` / `[9]` 又回来）。
+
+- [ ] **Step 4: 跑测试，确认它绿**
+
+Run: `pnpm vitest run tests/unit/markdownParse.test.ts tests/unit/markdownClip.test.ts` → PASS
+Run: `pnpm test` → **exit 0**；Run: `pnpm typecheck` → exit 0
+
+- [ ] **Step 5: 变异验证（两条，各自单独做）**
+
+**先写下预期**再回退：
+
+- 甲：把回验那句换回旧的 `out.push(lineEnd - line.length)`（并把返回类型的 `| null` 去掉、调用点改回原样）→ 预测红的是**本次新加的六条**：四条 `it.each` 加 **Step 3b 那两条**（空代码块）。**「六条」这个数在 Step 3b 加进来之后才成立**——实施者按「四条」的旧预期跑、实测红 6 条，如实报了差。
+- 乙：把 `/^[ \t]*$/` 那个守卫改成 `true`（不做「后面全是空白」的检查，只留 `lastIndexOf`）→ 预测**四条仍绿**（`lastIndexOf` 已经找对了位置）。这条用来确认守卫是**多余的**还是**有主的**：若真的一条都不红，在报告里写清「守卫零覆盖」，**别删它**——它是「宁可退回旧行为」那条口径的落点，留着并说明理由。
+
+- [ ] **Step 6: 顺手核一遍 `contentStartOf` 有没有同一形态**
+
+`contentStartOf`（3.6，代码块 `value` 的首部起点）用的是**同一个技巧**（「行尾 − 行长」）。**实测**一个「围栏里第一行内容带行尾空白」的样本（例：`` ```\n甲 \n```\n ``），看它算出来的首部偏移对不对：
+
+- 对 → 在报告里写一句「同形态不存在，实测样本是 X」；
+- 不对 → **别顺手改**，停下报告：它属于 3.6 那条路，修法要跟本任务一起过一遍评审。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add src/renderer/src/markdown/parse.ts tests/unit/markdownParse.test.ts
+git commit -F /tmp/wt-msg.txt
+```
+
+消息末尾保留 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
+
+---
+
+## Task 4d: `toReact.tsx` —— 行由 `value` 定、光标的接受窗口取节点源码结束
+
+**对应设计：** 第 3.5 节末尾那一段（2026-10-15 第三轮补）。
+
+**为什么排在 4c 之后：** 它读的是 4c 修好的那张表。
+
+**背景（实测，两个夹具各扫过一遍）：** 两件事凑成一个症状——容器里的光标在**行前缀**上掉出块外。
+
+**其一：表比 `value` 少一行。** `clip` 的 `sliceByLineStarts` 把末行那个**换行**算进了 revealed（`hi = srcStart + lineLen + 1`），于是切出来的 `value` 会多出一个**空行**；而表只有「起点 < 揭示偏移」的那几行的行起点。实测（6 个夹具 × 每个 `to`）：
+
+```
+'> 引用甲\n> 引用乙\n'  to=6:  value='引用甲\n'  表=[2]      value 2 行、表 1 个数
+'> 甲\n> 乙\n> 丙\n'    to=8:  value='甲\n乙\n'   表=[2,6]    value 3 行、表 2 个数
+```
+
+**多出来的那一行恒为空行**（评审与我的两份扫描都只见到这一种）。而 `rowsOf` 的注释写着「切后的 `value` 有几行，表就有几个数」——**这句是假的**，得改。
+
+**其二：接受窗口的上界取「末行内容的结束」，接不住行前缀。** 逐行表只收「起点 < 揭示偏移」的行；而前缀（`> `、续行缩进）的偏移比它所属那一行的**内容起点**还靠前，于是那几个偏移位**不属于表里任何一行**。`at` 落在那里时一个节点都接不住，走到 `renderMarkdown` 末尾的兜底 → **光标跳到篇末**（实测：`'> 引用甲\n> 引用乙\n'` 的 6/7/8，`'- 甲甲甲\n  乙乙乙\n'` 的 6/7/8，`'> <b>x</b>甲一\n> 乙二\n'` 的 7/8/9 与 13/14/15）。这三个夹具在 `12fac2d` 上那几格**在块内**（旧版拿「顺带显示未揭示的字」换的），所以这是回归。**评审另量到两处：它的坏区逐偏移集合在修前修后各有一半，净变化是各多 1、1、2 个位置。**
+
+**顺手否掉一个看着显然的修法**（评审实测）：把上界写成 `last.src + last.len + 1`（把那个换行算进去）**不够**——**坏格子的宽度是「下一行前缀宽度 + 1」**：末行内容之后那一格是换行，再往后是整段前缀（引用块 `> ` 是 2 格、列表续行对齐缩进也是 2 格）。实测掉出集合只各减一个（`6` 修好了、`7`、`8` 还在）。所以上界要取**节点源码的结束偏移**。
+
+**评审另一版原型差了一格，本任务的做法正好补上**：它那版只改上界、夹法仍是 `Math.min(at - row.src, row.len)`，落点是 `'引用甲'` 之后、**尾随换行之前**（value 下标 3）；而 `pre` 是 `white-space: pre-wrap`，那一格在代码块里是一个**可见的行高**。本任务的「行由 `value` 定」会让那个空行成为一行真实的 row（`min(…, 0) = 0`），落点自然是 `value.length`（下标 4）。
+
+**Files:**
+- Modify: `src/renderer/src/markdown/toReact.tsx`（`rowsOf` 与 `caretIndexIn` 两个函数，连它们上面的注释）
+- Modify: `tests/unit/markdownToReact.test.tsx`
+
+- [ ] **Step 1: 写失败的测试**
+
+`tests/unit/markdownToReact.test.tsx`，加在「光标的落点（真管线）」那个 `describe` 里的最后一条之后（`at(...)` 辅助函数就在同一个 `describe` 里）：
+
+```ts
+  /**
+   * 揭示偏移落在**下一行还没开始、而它的行前缀已经揭示**的那几个偏移位上（设计 3.5 第三轮）。
+   *
+   * 【为什么这几格会掉出去】`clip` 的逐行表只收「起点 < 揭示偏移」的行，而前缀（`> `、续行
+   * 缩进）的偏移比它所属那一行的**内容起点**还靠前——于是那几个偏移位不属于表里任何一行。
+   * 接受窗口的上界若取「末行内容结束」，它们就一个节点都接不住，光标掉到篇末。
+   * （把上界写成「末行内容结束 + 1」也不够：中间还隔着 `> ` 那两个字符。）
+   *
+   * 【为什么这几格非修不可】隐形输入框与输入法候选框都按这个坐标摆：光标从引用块里跳出去，
+   * 候选框跟着跳。它与用户报的「光标不在代码块里面」是同一个缺陷类，只是粒度更细。
+   */
+  it('引用块：揭示偏移落在第二行的 `> ` 上，光标不出块', () => {
+    const SRC = '> 引用甲\n> 引用乙\n'
+    for (const to of [6, 7, 8]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      // 【「恰好一个」不是顺手写的】置位闸（`caret.placed`）与 `caretBefore` 的让路判据
+      // 共用 `caretIndexIn`；上界一放宽，两条路若不同步就会**各插一个**，而多出来的那个
+      // 谁都不报错。本批次已经栽过一次（组件惰性求值 → 81 个偏移位上双光标）。
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      const caret = carets[0] as HTMLElement
+      expect(caret.closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
+      expect(caret.closest('p'), `to=${to} 掉出段落`).not.toBeNull()
+      // 已揭示文字的**末尾**（`'引用甲\n'` 之后）——与「没有逐行表」那条路给同一个数
+      expect(caret.previousSibling?.textContent, `to=${to} 落点不是已揭示文字的末尾`).toBe('引用甲\n')
+    }
+  })
+
+  it('多行列表项：同样的偏移位同样不出列表项', () => {
+    const SRC = '- 甲甲甲\n  乙乙乙\n'
+    for (const to of [6, 7, 8]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      expect(carets[0].closest('li'), `to=${to} 掉出列表项`).not.toBeNull()
+    }
+  })
+
+  it('引用块 + 行内 HTML：前缀上的偏移同样不出容器', () => {
+    const SRC = '> <b>x</b>甲一\n> 乙二\n'
+    for (const to of [7, 8, 9, 13, 14, 15]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      expect(carets[0].closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
+    }
+  })
+```
+
+- [ ] **Step 2: 跑测试，确认它们红**
+
+Run: `pnpm vitest run tests/unit/markdownToReact.test.tsx`
+
+预期：上面三条**全红**，红的理由必须是「掉出块 / 掉出列表项」。全仓其余用例一条都不动。
+
+**红不出来就停下报告**：先自己逐偏移扫一遍这三个夹具，把实测落点写进报告，别改断言去凑。
+
+- [ ] **Step 3: 改 `rowsOf` 与 `caretIndexIn`（两个函数，连注释）**
+
+`rowsOf`：**行数由 `value` 定，表只供 `src`**（表可能比 `value` 少一行——末行那个换行算进 revealed 之后 `value` 会多出一个空行）。多出来的那一行用「上一行的起点 + 上一行长度 + 1」兜，它按构造恒为空行，所以这个兜法只影响判据的落点、不影响内容。
+
+```ts
+/**
+ * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1）。
+ *
+ * 【没有逐行表时摊成**一行**】那时候「起点 + 字符数」本来就是线性的，退化成一行正好等价于
+ * 旧算法（下标 `= 揭示偏移 − 起点`、区间 `[起点, 起点 + 长度]`），所以下面两处调用都不必
+ * 分岔——分岔两份判据就等于两份会各自走样的东西。
+ *
+ * 【行数由 `value` 定，**不是**由表长定】这两者会差一行：`clip` 把末行那个换行也算进
+ * revealed，于是切出来的 `value` 会多出一个**空行**，而表里只有「起点 < 揭示偏移」的那几行
+ * 的起点（实测 `'> 引用甲\n> 引用乙\n'` 在 `to=6` 上是 `value='引用甲\n'`、表 `[2]`）。
+ * 差出来的那一行恒为空行，用「上一行起点 + 上一行长度 + 1」兜即可——它的**长度是 0**，
+ * 所以这个兜法不会把任何字符划给它。
+ *
+ * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
+ * 走空表会拿到不存在的 `rows[0]`。
+ */
+function rowsOf(node: MdNode, value: string, origin: number): Row[] {
+  const starts = lineStartsOf(node)
+  if (starts === null || starts.length === 0) return [{ base: 0, len: value.length, src: origin }]
+  const rows: Row[] = []
+  let base = 0
+  for (let i = 0; ; i++) {
+    const nl = value.indexOf('\n', base)
+    const len = (nl < 0 ? value.length : nl) - base
+    const prev = rows[rows.length - 1]
+    rows.push({ base, len, src: starts[i] ?? (prev ? prev.src + prev.len + 1 : origin) })
+    if (nl < 0) break
+    base = nl + 1
+  }
+  return rows
+}
+```
+
+`caretIndexIn`：**上界取节点源码的结束偏移**（末行内容之后到节点结束之间只剩语法——尾随换行、下一行还没揭示的行前缀）。上面那段长注释保留原样，只在末尾追加一段：
+
+```ts
+ * 【上界取**节点源码的结束**，不是末行内容的结束】末行内容之后到节点结束之间只剩语法：
+ * 尾随换行，以及**下一行还没揭示的行前缀**（引用块的 `> `、列表项的续行缩进）。逐行表只收
+ * 「起点小于揭示偏移」的行，而前缀的偏移比它所属那一行的内容起点还靠前，所以那几个偏移位
+ * 不属于表里任何一行；上界若取末行内容结束，它们就一个节点都接不住，光标掉出块外
+ * （实测 `'> 引用甲\n> 引用乙\n'` 的 6、7、8 三格从块内跳到篇末）。
+ * **「末行内容结束 + 1」不够**（评审实测）：中间还隔着 `> ` 那两个字符，掉出集合只各减一个。
+ */
+function caretIndexIn(node: MdNode, at: number): { value: string; index: number } | null {
+  if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return null
+  const value = node.value
+  const rows = rowsOf(node, value, originOf(node))
+  const last = rows[rows.length - 1]
+  // 【`Math.max` 那一下是防位置失真】正常情形 `position.end` 一定不小于末行内容结束；
+  // 手工造的树或者位置缺失时退回 `contentEnd`，判据不因此放宽。
+  const contentEnd = last.src + last.len
+  const upper = Math.max(node.position?.end.offset ?? contentEnd, contentEnd)
+  if (at < rows[0].src || at > upper) return null
+  let index = 0
+  for (const row of rows) {
+    if (at < row.src) break
+    index = row.base + Math.min(at - row.src, row.len)
+  }
+  return { value, index }
+}
+```
+
+**其余一个字节不改。**
+
+- [ ] **Step 4: 跑测试，确认它绿**
+
+Run: `pnpm vitest run tests/unit/markdownToReact.test.tsx` → PASS
+Run: `pnpm test` → **exit 0**；Run: `pnpm typecheck` → exit 0
+
+- [ ] **Step 5: 变异验证（三条，各自单独做）**
+
+**先写下预期**再回退：
+
+- 甲：把 `caretIndexIn` 的 `const upper = Math.max(...)` 换回 `const upper = contentEnd` → 预测红的是**本次新加的三条**，理由是「掉出块 / 掉出列表项」。
+- 乙：把 `rowsOf` 改回「按表长出行」（`for (const src of starts)` 那一版）→ 预测红的是**新加的第一条**（`previousSibling` 断言 `'引用甲\n'` 会变成 `'引用甲'`，差的就是那个换行算出来的空行）。**这一条如果只红一条，就把实测写清**——它同时说明另外两条夹具走不到那一格。
+- 丙：把 `holdsCaret` 换回算术版（`return ctx.caret !== null && originOf(node) + (node.value?.length ?? 0) >= ctx.caret.at`）→ **这一条的预期要分两层**：评审量出它在上一个提交上是**行为等价**的去重（两版在现有夹具上输出完全一致，差异只在「值节点会不会压住 `caretBefore`」那一支，那一支在那些位置本来就不开火），所以**它在改动前一条都不红是预期的**；但本任务放宽了上界，两版**可能不再等价**。预测红的是新加三条里**「光标数不对」**那部分断言（若两版在这几个偏移位上给出不同答案，`caretBefore` 的让路与 `splitAtCaret` 的置位就不同步，同一偏移位上出现两个光标）。
+
+红得比预期多或少都要查清楚再往下走；每条都要指名道姓地报出「红的是哪一条、理由是什么」。**丙若一条都不红，别改断言去凑**——在报告里写清「`holdsCaret` 的覆盖缺口仍在」与实测落点。
+
+- [ ] **Step 6: 重测兜底那一格，把 `renderMarkdown` 上面那段注释改准**
+
+`renderMarkdown` 里「一个都没命中就退回老位置」那段注释**逐条列了实测落点**（表格 `to=38–41` 与 `44`、代码块 `to=10–14`、纯文字 `'甲乙丙\n'` 的 `to=4` 等）。本任务放宽了上界，**这些数字大概率已经不对了**。
+
+**别照抄那几个数、也别照抄这段文字**：自己把同一批夹具逐偏移扫一遍（夹具就是这段注释与 `markdownToReact.test.tsx` 里已有的那些），把**兜底仍然开火**的偏移位重列一遍，按实测改注释。判据不变：**兜底不该在文档中间开火**——扫出来若仍有块中间的位置走兜底，那是缺陷，停下报告。
+
+**评审已经量过一遍，可以拿来对照**（它用的是「末尾多一个 `尾段`」的夹具，判据是「光标是不是容器最后一个子节点」）：修对之后三个夹具剩下的兜底**只有 `to=0` 与文档末尾那两格**——引用块 `0, 12, 13, 16`、列表项 `0, 10, 11, 14`、引用里的围栏 `0, 20, 21, 24`，与 `12fac2d` 上的残留集合**一致**。你扫出来的若比它多，就是还没修干净。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add src/renderer/src/markdown/toReact.tsx tests/unit/markdownToReact.test.tsx
+git commit -F /tmp/wt-msg.txt
+```
+
+消息末尾保留 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
+
+## Task 4e: 收口 —— 两条零覆盖的守卫、一句说谎的注释、两处读口对齐
+
+**对应设计：** 没有新的设计条目——它守的都是已经定下的口径（3.6.1 的表、3.5 的光标、3.6 的 `wtValueStart`）。
+
+**为什么排在 4d 之后：** 它只动测试与注释，**在基线 `512b07c` 上就是绿的**，本可以随时做；它与 4c/4d 改的文件也不重叠。排在后面**唯一的原因是不并发写**（两个写者同时 `git commit` 会把对方暂存的东西带进去——本仓库栽过）。
+
+**由来：** Task 4b 的质量评审查出两条**可达、会改变可见行为、却零覆盖**的守卫（整条回退，全仓 573 条仍绿），外加一句与实际不符的注释。
+
+| 变异 | 位置 | 行为差异（评审实测） |
+|---|---|---|
+| **M2** 去掉空窗口守卫（`revealed = r.starts.length > 0 ? r.starts : null` 改回 `revealed = r.starts`） | `clip.ts:224` | `'> ```\n> 甲\n> 乙\n> ```\n'` 的 `to=2`：光标从 `BLOCKQUOTE` 落进 `BLOCKQUOTE>PRE>CODE`（`shiftedStart` 取 `[][0]` 成 `undefined`，退回 `position.start`） |
+| **M8** 去掉 `else delete kept[WT_LINE_STARTS]` | `clip.ts:244` | `'甲 \n乙\n'` 的 `to=1`：光标从根节点挪进 `<p>`（解析期那张**整条 `value`** 的表被留下） |
+
+**Files:**
+- Modify: `tests/unit/markdownClip.test.ts`（补一个 `describe` + 改两句注释）
+- Modify: `src/renderer/src/markdown/parse.ts`（`lineStartsOf` 加 `Number.isFinite`）
+- Modify: `tests/unit/markdownParse.test.ts`（给上面那条加用例）
+- Modify: `src/renderer/src/markdown/clip.ts`、`src/renderer/src/markdown/toReact.tsx`（各补一句交叉引用注释）
+
+- [ ] **Step 1: 补「空窗口那一格」的用例**
+
+`tests/unit/markdownClip.test.ts` 末尾（紧接「clipTree —— 容器里的文字按行切」那个 `describe` 之后）。先加一个小助手（本文件里没有就加，**别改别处**）：
+
+```ts
+/** 树里第一个 `code` 节点（深度优先）。 */
+function findCode(node: unknown): { value: string } | null {
+  const n = node as { type?: string; children?: unknown[] } | null
+  if (!n || typeof n !== 'object') return null
+  if (n.type === 'code') return n as { value: string }
+  for (const child of n.children ?? []) {
+    const hit = findCode(child)
+    if (hit) return hit
+  }
+  return null
+}
+```
+
+再加这个 `describe`：
+
+```ts
+/**
+ * 「空窗口那一格」：`value` 为 `''` 且窗口跟**任何一行都没相交**时，
+ * 起点退回节点自己的 `position.start`（围栏之后那个内容起点 8）、**且不许挂表**。
+ *
+ * 【为什么单钉这一格】两条活着的路（本来没有表 / 空窗口）都该给「没有表」；
+ * 挂一张空表、或者把解析期那张**整条 value** 的表原样留下，都是错的，而且都不出声。
+ * 【断言为什么写成 `[to, 值]`】红的时候要一眼看出**是哪一格**红的。
+ */
+describe('空窗口那一格', () => {
+  const SRC = '> ```\n> 甲\n> 乙\n> ```\n'
+
+  it('起点退回 8（围栏之后那个内容起点）', () => {
+    for (const to of [1, 2, 3, 4, 5, 6, 7]) {
+      const code = findCode(clipTree(parseMarkdown(SRC)!, 0, to))!
+      expect([to, code.value]).toEqual([to, ''])
+      expect([to, valueStartOf(code)]).toEqual([to, 8])
+    }
+  })
+
+  it('不许挂表', () => {
+    for (const to of [1, 2, 3, 4, 5, 6, 7]) {
+      const code = findCode(clipTree(parseMarkdown(SRC)!, 0, to))!
+      expect([to, lineStartsOf(code)]).toEqual([to, null])
+    }
+  })
+})
+```
+
+- [ ] **Step 2: 跑测试，确认它**绿**
+
+Run: `pnpm vitest run tests/unit/markdownClip.test.ts` → **全绿**。
+
+**这一条与前面几个 Task 相反**：它守的是**既有行为**，所以要的是「补上之后照样绿」。**它红了说明你对这两条守卫的理解错了**——停下报告，把实测的 `value` / `wtValueStart` / 表列出来，别改断言。
+
+- [ ] **Step 3: 变异验证（两条，各自单独做）**
+
+**先写下预期**再回退（预期来自评审实测，你要复现它）：
+
+- M2：`clip.ts:224` 的 `revealed = r.starts.length > 0 ? r.starts : null` 改回 `revealed = r.starts` → 预测**两条都红**：第一条红在 `expected [ 1, null ] to deeply equal [ 1, 8 ]`，第二条红在 `expected [ 1, [] ] to deeply equal [ 1, null ]`。
+- M8：`clip.ts:244` 的 `else delete kept[WT_LINE_STARTS]` 删掉 → 预测**只红第二条**：`expected [ 1, [ 8, 12 ] ] to deeply equal [ 1, null ]`，第一条仍绿。
+
+红得与预期不符就查清楚再往下走。
+
+- [ ] **Step 4: 把那两句说谎的注释改准**
+
+`tests/unit/markdownClip.test.ts:357-358` 现在写着「**修之前这里的每一条都是错的**，而且方向是提前」。评审把这四条用例原样搬到 `12fac2d` 上跑：**四条里三条是绿的**，只有「光标走到第二行中间」那条红（`expect(textOf(out)).toBe('引用甲\n引')` 实收 `'引用甲\n引用乙'`）。
+
+为什么那三条修前就绿：它们的窗口要么整个落在**第一行之内**（`to=5`），要么把**整条 `value`** 都包住（`to=6`、`from=3,to=12`）——这两种情形下「常量原点 + 字符数」本来就是精确的（那是 Task 1/2 的成果）。唯一红的那条是**唯一一条窗口切在两行之间**的。
+
+把话说成：**四条里只有「光标走到第二行中间」在守逐行；另外三条守的是别的东西（第一行恒精确、`from` 一侧也按行算），修前就是绿的。**
+
+- [ ] **Step 4b: 把 Task 4c 那条用例的右半边改准，并补重复行的夹具**
+
+Task 4c 的 Step 1 给了一条**假判据**（实施者量出来的）：右半边 `src.lastIndexOf(line, src.length)` 是**全源码**查找，只有当每行文字在整篇源码里**唯一**时才等于真值。四个夹具恰好各行唯一，所以交付时是绿的——但谁加一条**两行文字相同**的夹具，它就会把**对的实现判成红的**。反例（实现与按行界住的真值一致，错的是断言那半边）：
+
+| 夹具 | 实现 | 按行界住的真值 | 假判据给的 |
+|---|---|---|---|
+| `'> 甲 \n> 甲\n'` | `[2, 7]` | `[2, 7]` | `[7, 7]` |
+| `'甲 \n甲\n'` | `[0, 3]` | `[0, 3]` | `[3, 3]` |
+| `'甲 \n乙\n\n甲\n'` | `[0, 3]` | `[0, 3]` | `[6, 3]` |
+| `'> 甲 \n> 乙\n> 乙\n'` | `[2, 7, 11]` | `[2, 7, 11]` | `[2, 11, 11]` |
+
+改法：右半边**按行界住**（先按 `\n` 切出源码行，第 k 行文字在**第 k 行源码**里找，行起点由前面各行长度累加），即把 Task 4c Step 1 里已经改好的那版照过来；再**补上表里这四条夹具**（含两条重复行的）。
+
+**验收**：补进来之后**必须绿**；再跑一次变异——把实现的回验改回旧版 `lineEnd - line.length`，**这四条也要红**（否则它们没在守东西）。红的条数比预期多或少都要查清楚，别改断言去凑。
+
+- [ ] **Step 5: `lineStartsOf` 与 `valueStartOf` 的口径对齐**
+
+`valueStartOf`（`parse.ts:52`）明写「不是有限数一律 `null`」并用 `Number.isFinite` 挡；`lineStartsOf`（`parse.ts:195`）只查 `typeof n === 'number'`，`NaN` / `Infinity` 会原样当行起点。今天上游产不出这种值（所以整条回退也不红），但**两个兄弟读口一个严一个松**，下一个人按 `valueStartOf` 的注释去理解 `lineStartsOf` 就会踩。
+
+改成 `raw.every((n) => typeof n === 'number' && Number.isFinite(n))`，并在 `tests/unit/markdownParse.test.ts` 补一条用例把 `NaN` / `Infinity` 挡在门外（手工造节点即可，**别走真管线**——真管线今天产不出这种值）。
+
+- [ ] **Step 6: 三处「沿 `value` 走行」补交叉引用注释**
+
+`isContiguous`（`parse.ts:226`）、`sliceByLineStarts`（`clip.ts:110`）、`rowsOf`（`toReact.tsx`）各写了一份「沿 `value` 的 `\n` 走行、累加 `lineLen + 1`」的循环，而**行尾口径三份不同**：`isContiguous` 把换行算给上一行、`sliceByLineStarts` 用 `+ 1` 把换行括进窗口、`rowsOf` 的行长不含换行。第 4 轮那个「表比 `value` 少一行」正是这三份走样的产物。
+
+**不合并**（三份的用途不同，合了反而更难读），只在**每一份的注释里加一句**指名另外两处、并点明行尾口径的差别。写清楚「这个量有三处算法」就是这一步的全部目的。
+
+- [ ] **Step 7: 跑门禁并提交**
+
+Run: `pnpm test` → **exit 0**；Run: `pnpm typecheck` → exit 0
+
+```bash
+git add tests/unit/markdownClip.test.ts tests/unit/markdownParse.test.ts src/renderer/src/markdown/parse.ts src/renderer/src/markdown/clip.ts src/renderer/src/markdown/toReact.tsx
+git commit -F /tmp/wt-msg.txt
+```
+
+消息末尾保留 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
+
 ## Task 5: `MarkdownView.tsx` / `Page.tsx` —— 接线
 
 **对应设计：** 第 3.5 节最后一段。
