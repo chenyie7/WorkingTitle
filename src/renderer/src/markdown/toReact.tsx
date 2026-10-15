@@ -93,13 +93,16 @@ export function renderMarkdown(
     ))
   }
   const out = renderAll(root.children, { header: false, caret })
-  // 【一个都没命中就退回老位置】**实测**它走到的时候只有两类（真管线逐偏移扫过表格 /
-  // 代码块 / 行内 HTML / 纯文字四份文档，判据是「光标是不是容器最后一个子节点」）：
+  // 【一个都没命中就退回老位置】**实测**它走到的时候只有两类（真管线逐偏移扫过六份夹具
+  // 共 102 个偏移位，判据是「光标是不是容器最后一个子节点」，且每个偏移位上都**恰好一个**
+  // 光标、一个不漏）：
   //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
   //     树是空的，一个节点都没有——本来也没有别的位置可放。
-  //  2. 揭示偏移落在**所有已揭示文字的后面**（文档末尾那个换行之后、或更远）：那是真的
-  //     「内容到头了」，追加在末尾与插在中间看不出差别。实测落点：表格 `to = 38–41` 与
-  //     `44`、代码块 `to = 10–14`、行内 HTML `to = 12`、纯文字 `'甲乙丙\n'` 的 `to = 4`。
+  //  2. 揭示偏移落在**所有已揭示文字的后面**：要么下一个块还没到它的起点，要么已经过了
+  //     文档末尾那个换行。实测落点：表格 `to = 38–41`（表里最后的文字到 37 为止，而下一块
+  //     `末段` 的起点是 41）与 `44`；代码块 `to = 10–14`；纯文字 `'甲乙丙\n'` 的 `to = 4`
+  //     （那正是末尾那个换行）；硬换行 / 图片 / 行内 HTML 各自夹具体末尾那一格。这时内容
+  //     本来也到头了，追加在末尾与插在中间看不出差别。
   //  **中间那段曾经也走这里，那不是兜底而是缺陷**：揭示偏移落在「整段节点都被丢掉、只剩
   //  占位代表它」的那一格时（表格 `to = 8–20` / `28–30`、代码块 `to = 1–3`），光标被甩到
   //  占位**后面**。已经由「占位自己接光标」修掉（见 `BlankSpace`）——**这条口径要保住：
@@ -253,13 +256,24 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
               )}
             </code>
           </pre>
-          <BlankSpace
-            node={node}
-            field={WT_BLANK_LINES}
-            className="wt-md-pre-blank"
-            cssVar="--wt-md-blank-lines"
-            ctx={ctx}
-          />
+          {/*
+            【为什么是**直接调用**、不是 JSX 元素】它是个不用 hook 的纯函数。写成
+            `<BlankSpace …/>` 的话，React 要到**渲染这棵树的时候**才执行它、才置
+            `placed`；而 `renderMarkdown` 末尾那句兜底是在**建元素的时候**判
+            `caret.placed` 的，那时还是 false——于是同一次渲染里会冒出**两个**
+            `[data-testid="caret"]`（实测：本文件的六份夹具上共 19 个偏移位——表格
+            `to = 8–20` 与 `28–30`、代码块 `to = 1–3`；复审在他们那组夹具上是 81 个。
+            产物长这样：`…</table><span caret/><div class="wt-md-table-blank"/>` +
+            末尾又一个 `<span caret/>`）。`InputCapture` 取的是第一个，所以今天
+            「恰好」还对——那是运气，不是设计。直接调用让置位发生在兜底之前。
+          */}
+          {BlankSpace({
+            node,
+            field: WT_BLANK_LINES,
+            className: 'wt-md-pre-blank',
+            cssVar: '--wt-md-blank-lines',
+            ctx
+          })}
         </>
       )
     }
@@ -324,13 +338,14 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
               </tbody>
             )}
           </table>
-          <BlankSpace
-            node={node}
-            field={WT_BLANK_ROWS}
-            className="wt-md-table-blank"
-            cssVar="--wt-md-blank-rows"
-            ctx={ctx}
-          />
+          {/* 同 `case 'code'`：**直接调用**，理由（渲染时序）见那里 */}
+          {BlankSpace({
+            node,
+            field: WT_BLANK_ROWS,
+            className: 'wt-md-table-blank',
+            cssVar: '--wt-md-blank-rows',
+            ctx
+          })}
         </>
       )
     }
@@ -450,6 +465,18 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
   const caret = ctx.caret
   if (!caret || caret.placed) return null
   if (holdsCaret(node, ctx)) return null
+  /*
+    【给表格的行与格让路】它们的子文本节点会接住光标；在它们身上开火会把光标插成
+    `<tr>` 的**直接子元素**——那不是合法的表格内容，CSS 会给它套一个匿名表格盒，
+    **表格于是多出一列**（复审实测宽 115→172、第二列 x 57→114）。
+
+    这一格是本轮新引入的：旧判据在那些位置把光标放在第二个 `<th>` **里面**（合法），
+    而区间判据让 `cell.start >= caret.at` 先开火、把它挪到了格外。下面那条「插在它
+    前面」针对的是**叶子**（硬换行、图片、占位），不是容器。
+
+    实测位置：`to = 4 / 24 / 34`——正好是**每个非首单元格的起点**。
+  */
+  if (node.type === 'tableCell' || node.type === 'tableRow') return null
   const start = node.position?.start.offset
   const after = start !== undefined && start >= caret.at
   const leafAcross = isLeaf(node) && endOf(node) >= caret.at

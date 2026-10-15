@@ -397,6 +397,9 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
     expect(blank).not.toBeNull()
     // 光标在占位**前面**：从光标看，占位是 FOLLOWING
     expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 【恰好一个】占位自己接光标与末尾兜底都写了 `placed` 的判据，而两处判的时机不同
+    // （建元素 vs 渲染树）。实测这一格曾经同时冒出两个，见 `case 'code'` 那段注释。
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(1)
   })
 
   it('硬换行：光标落在 `<br>` **之前**（还在第一行），不是之后', () => {
@@ -428,6 +431,24 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
     expect(caret).not.toBeNull()
     expect(blank).not.toBeNull()
     expect(caret!.compareDocumentPosition(blank!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 【恰好一个】同表格那条
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(1)
+  })
+
+  /**
+   * 光标不能是 `<tr>` 的**直接子元素**——那不是合法的表格内容，CSS 会给它套一个匿名
+   * 表格盒，**表格于是多出一列**（复审实测：宽 115→172、第二列 x 57→114）。
+   *
+   * 【这个 `to` 是量出来的，不是推的】实施者逐偏移扫过 `TABLE`：非法父元素出现在
+   * `to = 4 / 24 / 34`，正好是**每个非首单元格的起点**（表头第二个格子 `[4..9]`、
+   * 正文两行的第二个格子 `[24..29]` 与 `[34..39]`）。那些位置上，区间判据让
+   * `caretBefore(cell)` 先于格子里的文本节点开火，把光标挪到了格外。
+   */
+  it('光标落在单元格里，不是 `<tr>` 的直接子元素', () => {
+    const c = at(TABLE, 4)
+    const caret = c.querySelector('[data-testid="caret"]')
+    expect(caret).not.toBeNull()
+    expect(caret!.closest('th, td')).not.toBeNull()
   })
 
   it('量高度那一份**永远**不带光标（`caret: null` 那条闸）', () => {
