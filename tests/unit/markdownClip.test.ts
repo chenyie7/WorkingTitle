@@ -233,7 +233,7 @@ describe('clipTree —— 代码类节点的坐标系', () => {
 /**
  * 块内的**重复单元**——表格的行、列表的项（设计 3.2，2026-10-15 修订）。
  *
- * 判据与顶层块、叶子是同一条：**按它自己的字符区间**。三条用例各守一面：
+ * 判据与顶层块、叶子是同一条：**按它自己的字符区间**。用例各守一面：
  * 没走到的丢掉、走到了就整体出现（表格整行含全部单元格）、打到了但文字没出来时
  * 结构在而文字空。
  */
@@ -281,6 +281,18 @@ describe('clipTree —— 块内的重复单元', () => {
     const out = clipTree(parseMarkdown(src)!, 0, src.length)
     const table = out.children[0] as unknown as { children: unknown[] }
     expect(table.children).toHaveLength(2)
+    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(0)
+  })
+
+  it('折点切进表格中间：已经翻上去的行不算占位（它们在上方，不在表格底下）', () => {
+    // 【为什么单补这一条】`children` 变少有**两个**来源：`to` 侧（还没走到，该留白）与
+    // `from` 侧（已经翻过去了，**不该**留白）。按 `children.length` 的差去数会把两者混在
+    // 一起——这条喂的 from 落在最后一行上，表头与前一行都被 from 挡掉，差是 2，于是表格
+    // 底下凭空多两行空白，而**不报错**。判据要的是「起始偏移 ≥ to 的行数」，这里是 0。
+    const src = '| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n'
+    const from = src.indexOf('| 3 |')
+    const out = clipTree(parseMarkdown(src)!, from, src.length)
+    const table = out.children[0] as unknown as { children: unknown[] }
     expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(0)
   })
 })

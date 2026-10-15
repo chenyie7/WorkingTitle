@@ -9,8 +9,9 @@ import { valueStartOf, WT_VALUE_START } from './parse'
  * 1. **顶层块的起始偏移 ≥ to 的整个丢掉**。光标还没走到的块，屏幕上一点都不该有
  *    ——这是「还没开始的块不存在」。
  * 2. **块内的「重复单元」（表格的行、列表的项）也按它自己的区间判**。光标走到第几行 /
- *    第几项，那一行 / 那一项才画出来；没走到的整个丢掉。丢掉的行 / 项由渲染层按
- *    「默认一行高」留白，**不留任何结构**（设计 3.2，2026-10-15 修订）。
+ *    第几项，那一行 / 那一项才画出来；没走到的整个丢掉。丢掉的**表格行 / 代码行**由渲染层
+ *    按「默认一行高」留白，**不留任何结构**；**列表项不留白**（不画符号、也不占高度），
+ *    理由见设计 3.2 那张表（2026-10-15 修订）。
  * 3. **跨越 to 的文本被截断**。剩下的部分照常显示。
  * 4. **块内的叶子（没 `value` 可裁、也没 `children`）按它自己的区间判**：没开始就丢。
  *    它们截不出「半个」，留着就等于提前把没揭示的东西弄上屏——图片会提前发 IPC 去抓
@@ -79,8 +80,15 @@ export const WT_BLANK_ROWS = 'wtBlankRows'
  *
  * 【为什么让 clip 出这个读口】字段名与「什么样的值算有效」只该有一处定义——
  * 由 `toReact.tsx` 自己拼字符串去读的话，两侧对不上时是**静默**的（占位少一截，不报错）。
+ *
+ * 【`field` 为什么收成这两个常量】它是**联合字面量类型**，不是裸 `string`：传
+ * `WT_VALUE_START` 这类别的字段名会**当场编译不过**。裸 `string` 的话那两个字段名长得
+ * 差不多、值也都是小整数，读错了没人出声。
  */
-export function readBlankCount(node: unknown, field: string): number {
+export function readBlankCount(
+  node: unknown,
+  field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
+): number {
   const raw = (node as Record<string, unknown> | null | undefined)?.[field]
   return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
 }
@@ -163,8 +171,16 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
     // 拿到它就是静默差几个字符，**不报错**。
     const shiftedStart = origin + head
     // 【代码块多挂一个占位行数】它的框只包住已揭示的行，没揭示的行由渲染层按「默认一行高」
-    // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数 ——
-    // 当前这一行的余下部分不另算一行（它已经由框里那半行占着了）。
+    // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数。
+    //
+    // 【前提：框里已经占着一行】这个数**不含**光标当前所在的那一行，理由是「当前这一行的
+    // 余下部分已经由框里那半行占着了」。**框里一个字都没有时这个前提不成立**——空 `<pre>`
+    // 没有 line box，没有谁在替那一行占位。实测：3 行的代码块在「光标还在围栏里」那一刻
+    // 报 2，比真实行数少 1。
+    //
+    // 【为什么不在这里补那 1 行】判据要保持单一：这个数就是「未揭示那一段里的换行符个数」，
+    // 不带「框里有没有内容」这个附加条件。补偿交给渲染层——CSS 给代码框一个最小高度
+    // （Task 6），空框自己撑住那一行。代价是这一窗内每次按键都少一行，是接受的。
     if (n.type === 'code') {
       const rest = n.value.slice(tail)
       const blankLines = rest === '' ? 0 : rest.split('\n').length - 1
@@ -186,15 +202,21 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
       const kept = clipInside(child, from, to)
       if (kept) children.push(kept)
     }
-    // 【表格：丢掉了几行要报出去】渲染层拿它在表格底下留白。
-    // 数的是**行数差**，不是被丢掉的那些行本身——判据与这里是不是表格无关，
-    // 只有这个数字是表格专属的。（表格的子节点只可能是 `tableRow`，所以这个差就是行数。）
+    // 【表格：还有几行没走到，要报出去】渲染层拿它在表格底下留白。
+    // 【为什么不用 children.length 的差】`children` 变少有**两个**来源：`to` 侧（还没走到，
+    // 该留白）与 `from` 侧（已经翻过去了，**不该**留白——那些行在光标上方）。用差会把两者
+    // 混在一起，`from` 切进表格时凭空多留白，而且**不报错**。所以这里只数「起始偏移 ≥ to」。
+    // 【`from` 切进表格的另一个后果，当前不可达但要写下来】那时 `children[0]` 是正文行，
+    // 而 `toReact.tsx` 把 `children[0]` 无条件当表头，那一行会被渲染成 `<th>`。今天靠
+    // `foldStart` 恒为块边界（0、块起点或 revealStart，而工作文档那一路 revealStart 恒为 0）
+    // 才不发作——而本文件开头那条注释宣称「revealStart 可能落在块中间」，接线一改就放开。
     if (n.type === 'table') {
-      return {
-        ...n,
-        children,
-        [WT_BLANK_ROWS]: n.children.length - children.length
-      } as unknown as ClipNode
+      let notYet = 0
+      for (const row of n.children) {
+        const rowPos = positionOf(row)
+        if (rowPos !== null && rowPos.start >= to) notYet++
+      }
+      return { ...n, children, [WT_BLANK_ROWS]: notYet } as unknown as ClipNode
     }
     return { ...n, children } as unknown as ClipNode
   }

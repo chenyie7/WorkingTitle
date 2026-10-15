@@ -29,7 +29,11 @@ import type { Root } from 'mdast'
 const processor = unified().use(remarkParse).use(remarkGfm)
 
 /**
- * 挂在 `code` / `inlineCode` 上的字段：`value` 的第一个字符在源码里的偏移。
+ * 挂在节点上的字段：**当前** `value` 的第一个字符在源码里的偏移。
+ *
+ * 【谁盖它，别以为只有代码节点有】解析期只有 `code` / `inlineCode` 需要（`parse.ts`
+ * 自己盖，见 `annotateValueStarts`）；而 `clip.ts` 切完片之后给**所有可裁类型**——含
+ * `text`——重新盖一遍，因为切过的 `value` 起点不再是解析期那个数了。
  *
  * 【为什么出这个口】它有两个使用者：同文件的 `valueStartOf` 读它，`clip.ts` 裁剪时
  * **写**它（`value` 切掉一段，起点要跟着后移）。两个写者意味着字段名必须只在一处定义
@@ -40,6 +44,10 @@ export const WT_VALUE_START = 'wtValueStart'
 /**
  * 读 `value` 的真实源码起点。没标注、标注不是有限数一律给 `null`——调用方据此退回
  * `position.start.offset`（普通 `text` 节点就是那一类，它们的两套坐标本来就重合）。
+ *
+ * 【读它一律走这个口，别去读裸字段】导出上面那个常量只是给第二个**写者**（`clip.ts`）
+ * 定位字段名用，**不等于读的口子也放开了**：裸读会绕过「不是有限数一律 `null`」这一步，
+ * 拿到 `undefined` / `NaN` / 字符串全都不出声。
  */
 export function valueStartOf(node: unknown): number | null {
   const raw = (node as Record<string, unknown> | null | undefined)?.[WT_VALUE_START]
