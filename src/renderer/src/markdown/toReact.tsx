@@ -27,9 +27,15 @@ interface Ctx {
  * 【为什么 `placed` 是可变字段】它要在整棵树里只命中一次，而渲染是深度优先的递归——
  * 用一个共享的小对象带下去，比让每一层返回「插过了没」再往上并简单得多。
  * 它每次 `renderMarkdown` 都新造一个，所以两次渲染之间不会互相串。
+ *
+ * 【`tail` 是「末尾兜底」该落进哪个节点】由 `tailTarget` 在渲染前算一次，渲染中按节点身份
+ * 比对——**不是**让每一层自己判「我在不在文档末尾」（渲染是自上而下的，一个容器看不到
+ * 它后面还有没有兄弟）。
  */
 interface Caret {
   readonly at: number
+  /** 末尾兜底的目标节点；`null` 表示这一趟不做那条兜底（树是空的、或者树上还有占位） */
+  readonly tail: MdNode | null
   placed: boolean
 }
 
@@ -73,7 +79,11 @@ export function renderMarkdown(
 ): ReactNode {
   const caret: Caret | null =
     typeof opts.caretAt === 'number' && Number.isFinite(opts.caretAt)
-      ? { at: opts.caretAt, placed: false }
+      ? {
+          at: opts.caretAt,
+          placed: false,
+          tail: hasPlaceholder(root) ? null : tailTarget(root.children)
+        }
       : null
   if (opts.withBlockEnds) {
     return root.children.map((node, i) => (
@@ -93,30 +103,112 @@ export function renderMarkdown(
     ))
   }
   const out = renderAll(root.children, { header: false, caret })
-  // 【一个都没命中就退回老位置】**实测**它走到的时候只有两类（真管线逐偏移扫过六份夹具
-  // 共 102 个偏移位，判据是「光标是不是容器最后一个子节点」，且每个偏移位上都**恰好一个**
-  // 光标、一个不漏）：
+  // 【这一句只在「一个能放光标的节点都没有」时才走到】它是**最后一条**兜底，落点是容器的
+  // 末尾，也就是最后一个块**下方**——正是用户最初报的那条（隐形输入框与输入法候选框都按
+  // 这个坐标摆）。所以它现在只留给两类情形：
   //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
   //     树是空的，一个节点都没有——本来也没有别的位置可放。
-  //  2. 揭示偏移落在**所有已揭示文字的后面**：要么下一个块还没到它的起点，要么已经过了
-  //     文档末尾那个换行。实测落点（Task 4d 之后按同一批判据重扫的那一遍）：表格
-  //     `to = 38–41`（表里最后的文字到 37 为止，而下一块 `末段` 的起点是 41）与 `44`；
-  //     纯文字 `'甲乙丙\n'` 的 `to = 4`（那正是末尾那个换行）；硬换行 / 图片 / 行内 HTML /
-  //     几个容器夹具各自只剩**具体末尾那一格**。这时内容本来也到头了，追加在末尾与插在
-  //     中间看不出差别。
+  //  2. 链尾是**放不下光标**的节点：文档以分隔线 / 图片 / 内嵌 HTML 收尾，或者树上还有占位
+  //     （`tail` 为 `null`，见 `tailTarget`）。这时光标落在最后一个元素**之后**，与「放在
+  //     它后面」是同一个位置。
   //
-  //     【代码块那一格的数字被 Task 4d 改掉了，别照旧抄】这一版之前这里写着「代码块
-  //     `to = 10–14`」，实测现在是**只有 `14`**：上界改成「节点源码的结束」之后，`10–13`
-  //     （揭示偏移还在闭合围栏里那几格）由**代码节点自己**接住、落在已揭示内容的末尾
-  //     （`<pre>` 里、`丙` 之后）。差别来自两个数：那个 `code` 的 `position.end.offset`
-  //     是 13（闭合围栏的末尾），而末行内容结束是 9。
-  //  **中间那段曾经也走这里，那不是兜底而是缺陷**：揭示偏移落在「整段节点都被丢掉、只剩
-  //  占位代表它」的那一格时（表格 `to = 8–20` / `28–30`、代码块 `to = 1–3`），光标被甩到
-  //  占位**后面**。已经由「占位自己接光标」修掉（见 `BlankSpace`）——**这条口径要保住：
-  //  兜底不该在文档中间开火**。
+  // 【前一版这里写的是「实测只有两类」，第二类不成立】它把「揭示偏移落在所有已揭示文字的
+  // 后面」也归进兜底、还说「内容本来也到头了，位置看不出差别」。**实测那正是缺陷**：
+  // 14 份夹具逐偏移 230 格里有 15 格落在文档**中间**（多行列表的每个列表项边界、容器里的
+  // 围栏、表格尾部、标题后面那个换行），内容都还剩很多——「下一个块还没到它的起点」时，
+  // 屏幕上明明还有一整块已渲染的内容，光标却在它下面一行。现在那些格子由 `tailTarget`
+  // 收进**最后一块已渲染的内容**里，只有上面两类才落到这里。
+  //
+  // 【这一句也**不该**在文档中间开火】占位那几格（表格 `to = 8–20` / `28–30`、代码块
+  // `to = 1–3`）曾经也走这里，被甩到占位**后面**；已经由「占位自己接光标」修掉
+  // （见 `BlankSpace`）。两条的优先级由 `tailTarget` 那句「树上有占位就返回 null」保证。
   // 外面套一层 Fragment 只为挂 `key`——`CaretSpan` 没有 props，别给它传。
   if (caret && !caret.placed) out.push(<Fragment key="caret-fallback"><CaretSpan /></Fragment>)
   return out
+}
+
+/** 节点有没有 `children`（mdast 里「容器」与「叶子」就是按这一条分的）。`Root` 也算容器。 */
+function childrenOf(node: Root | MdNode): readonly MdNode[] | null {
+  return 'children' in node ? node.children : null
+}
+
+/** 带**可裁**文本、能自己接住光标的三个节点类型（`clip.ts` 的 `VALUE_TYPES` 是同一组）。 */
+function isValueNode(node: MdNode): boolean {
+  return node.type === 'text' || node.type === 'code' || node.type === 'inlineCode'
+}
+
+/**
+ * 树上还有没有「未揭示的占位」（`wtBlankLines` / `wtBlankRows`，`clip.ts` 挂的）。
+ *
+ * 它决定 `tailTarget` 要不要整个让路——理由见那里的最后一段。
+ */
+function hasPlaceholder(node: Root | MdNode): boolean {
+  if (readBlankCount(node, WT_BLANK_LINES) > 0 || readBlankCount(node, WT_BLANK_ROWS) > 0) {
+    return true
+  }
+  const kids = childrenOf(node)
+  return kids !== null && kids.some((child) => hasPlaceholder(child))
+}
+
+/**
+ * 末尾兜底该把光标放进哪个节点里（`Caret.tail`）。
+ *
+ * 【为什么需要它】`clip` 把「起始偏移 ≥ 揭示偏移」的节点**整块丢掉**，于是设计 3.5 里
+ * 「整个在揭示偏移之后的节点 → 光标插在它前面」那条规则对被丢掉的节点永远开不了火
+ * （它们不在树上）；容器里正在敲的围栏又被 `caretIndexIn` 的左界挡掉。两头都堵上之后，
+ * 光标一路走到 `renderMarkdown` 末尾那条兜底，被追加成最后一个块的**下方**。
+ * 实测（14 份夹具 230 格、逐偏移）：文档中间有 15 格落在这里，四种形态——多行列表的
+ * 每个列表项边界、容器里的围栏、表格尾部、标题后面那个换行。
+ *
+ * 【判据：沿「最后一个孩子」一路往下走】走到头的那个节点就是**最后一块已渲染的内容**
+ * （`clip` 丢掉的节点不在树上，所以「最后一个孩子」恒是最后一个**已经开始揭示**的）：
+ * - 它带可裁文本（`text` / `code` / `inlineCode`）→ 光标落在它 `value` 的**末尾**
+ *   （`splitAtCaret` 里那条夹到上界的路）；
+ * - 它是个容器（一格里什么都没有的表格单元之类）→ 落在它最后一个孩子**之后**。
+ * 两条都让光标**留在块里**。
+ *
+ * 【链尾是 `code` / `inlineCode` 也要管】容器里的围栏那几格（`'> ```\n> 甲\n> ```\n'`
+ * 的 3–7）树上只有 `blockquote > code`，而那个 `code` 的 `value` 是空的、内容起点在揭示
+ * 偏移之后。链尾这时是 `code` 本身，光标于是进 `<pre><code>`——那正是用户最初报的
+ * 「光标不在代码块里面」。
+ *
+ * 【链尾是分隔线 / 图片 / 内嵌 HTML 这类叶子时返回 `null`】它们没有文本、也收不下一个 span；
+ * 但它们既然后面什么都没有，「追加在末尾」与「放在它后面」是同一个位置，不必区别对待。
+ * （`definition` 渲染成 `null`，跳过它接着看前一个兄弟。）
+ *
+ * 【树上有占位（`wtBlankLines` / `wtBlankRows`）时一律返回 `null`——这条必须保住】
+ * 占位代表「还没到的东西」，设计 3.5 让它**自己**接住光标（`BlankSpace`），而占位渲染在
+ * 块的内部、比链尾更深也**更晚**：不让路的话，表格剩余行、代码块剩余行那几格会被本条抢回
+ * 块里，「光标落在占位之前」这条既有口径（实测连续 13 个偏移位）当场就破。两者本来也
+ * 互斥——占位那几格里没有「最后一块已渲染的内容」可放，占位就是它。
+ */
+function tailTarget(children: readonly MdNode[]): MdNode | null {
+  for (let i = children.length - 1; i >= 0; i--) {
+    const node = children[i]
+    if (node.type === 'definition') continue // 渲染成 null，放不下光标
+    const kids = childrenOf(node)
+    if (kids) return tailTarget(kids) ?? node
+    if (isValueNode(node)) return node
+    return null
+  }
+  return null
+}
+
+/**
+ * 容器「收下」兜底光标：`Caret.tail` 命中它时，追加在最后一个已渲染的孩子**之后**。
+ *
+ * 【为什么只有容器才调它】带文本的节点自己会把光标劈开（`splitAtCaret`），那样落点更准
+ * （落在正确的字符之间）；这里管的是「容器里一个孩子都没接住」的那一半，见 `tailTarget`。
+ *
+ * 【表格与表格行**不调它**】一个 span 做成 `<tr>` / `<table>` 的直接子元素会让 CSS 套一个
+ * 匿名表格盒，**表格于是多出一列**（复审实测：宽 115→172）。与 `caretBefore` 那条
+ * 让路是同一个理由。链尾真落在表格里时，最内层的那个格子会先收下它。
+ */
+function tailCaretIn(node: MdNode, ctx: Ctx): ReactNode {
+  const caret = ctx.caret
+  if (!caret || caret.placed || caret.tail !== node) return null
+  caret.placed = true
+  return <CaretSpan />
 }
 
 /** 一段 text / html 节点的原文字符串。别处取不到——这两种节点才带 `value`。 */
@@ -239,18 +331,46 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
         node.value
       )
     }
+    // 【下面这些容器都挂了一句 `tailCaretIn(node, ctx)`】它在孩子渲染完之后跑（JSX 的孩子
+    // 按书写顺序求值），于是「孩子里一个都没接住光标」时，兜底目标就落在这个容器的末尾。
+    // 判据与理由见 `tailCaretIn` / `tailTarget`——**表格与表格行不挂**（见那里的注释）。
     case 'paragraph':
-      return <p className="wt-md-p">{renderAll(node.children, ctx)}</p>
+      return (
+        <p className="wt-md-p">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </p>
+      )
     case 'heading': {
       const Tag = HEADING_TAGS[Math.min(Math.max(node.depth, 1), 6) - 1]
-      return <Tag className={`wt-md-h wt-md-h${node.depth}`}>{renderAll(node.children, ctx)}</Tag>
+      return (
+        <Tag className={`wt-md-h wt-md-h${node.depth}`}>
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </Tag>
+      )
     }
     case 'emphasis':
-      return <em className="wt-md-em">{renderAll(node.children, ctx)}</em>
+      return (
+        <em className="wt-md-em">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </em>
+      )
     case 'strong':
-      return <strong className="wt-md-strong">{renderAll(node.children, ctx)}</strong>
+      return (
+        <strong className="wt-md-strong">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </strong>
+      )
     case 'delete':
-      return <del className="wt-md-del">{renderAll(node.children, ctx)}</del>
+      return (
+        <del className="wt-md-del">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </del>
+      )
     case 'inlineCode': {
       const parts = splitAtCaret(node, ctx)
       return (
@@ -310,14 +430,23 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
     case 'thematicBreak':
       return <hr className="wt-md-hr" />
     case 'blockquote':
-      return <blockquote className="wt-md-quote">{renderAll(node.children, ctx)}</blockquote>
+      return (
+        <blockquote className="wt-md-quote">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </blockquote>
+      )
     case 'list':
       return node.ordered ? (
         <ol className="wt-md-list" start={node.start ?? undefined}>
           {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
         </ol>
       ) : (
-        <ul className="wt-md-list">{renderAll(node.children, ctx)}</ul>
+        <ul className="wt-md-list">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </ul>
       )
     case 'listItem': {
       // `checked` 是 GFM 任务列表才有的字段：普通项是 **null**（实测，不是 undefined），
@@ -336,6 +465,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
             </span>
           )}
           {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
         </li>
       )
     }
@@ -343,11 +473,17 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
       return (
         <span className="wt-md-link" title={node.url}>
           {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
         </span>
       )
     case 'linkReference':
       // 引用的定义没找到时 remark 留着这种节点。画成链接的样子，但没有地址可给。
-      return <span className="wt-md-link">{renderAll(node.children, ctx)}</span>
+      return (
+        <span className="wt-md-link">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </span>
+      )
     case 'image':
       return <MarkdownImage url={node.url} alt={node.alt ?? ''} />
     case 'imageReference':
@@ -378,10 +514,17 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
       )
     }
     case 'tableRow':
+      // 【这里**不挂** `tailCaretIn`】光标做成 `<tr>` 的直接子元素会让表格多出一列（理由
+      // 见 `tailCaretIn`）。链尾真落在表格里时由下面那个格子收下。
       return <tr>{renderAll(node.children, ctx)}</tr>
     case 'tableCell': {
       const Tag = (ctx.header ? 'th' : 'td') as 'th'
-      return <Tag className="wt-md-cell">{renderAll(node.children, ctx)}</Tag>
+      return (
+        <Tag className="wt-md-cell">
+          {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
+        </Tag>
+      )
     }
     case 'footnoteReference':
       return <sup className="wt-md-fn">{node.label}</sup>
@@ -390,6 +533,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
         <div className="wt-md-fndef">
           <span className="wt-md-fndef__label">{node.label}</span>
           {renderAll(node.children, ctx)}
+          {tailCaretIn(node, ctx)}
         </div>
       )
     case 'html':
@@ -504,8 +648,19 @@ function rowsOf(node: MdNode, value: string, origin: number): Row[] {
  * 不属于表里任何一行；上界若取末行内容结束，它们就一个节点都接不住，光标掉出块外
  * （实测 `'> 引用甲\n> 引用乙\n'` 的 6、7、8 三格从块内跳到篇末）。
  * **「末行内容结束 + 1」不够**（评审实测）：中间还隔着 `> ` 那两个字符，掉出集合只各减一个。
+ *
+ * 【`isTail`：这一次是**夹**而不是**拒**】末尾兜底的目标节点（`Caret.tail`，见 `tailTarget`）
+ * 带这个标记：它明知揭示偏移在区间外也要接住光标，两端都夹——落在起点之前给 0、落在上界
+ * 之后给 `value.length`。整篇的最后一个字已经全部揭示、而揭示偏移落在它后面（文档末尾那个
+ * 换行、或者下一个块还没开始）时，光标于是落在**那个字的末尾**，而不是掉到最后一个块下方。
+ * 下面那个循环本来就兼着夹的功能（`rows` 一行都没有超过 `at` 时 `index` 停在 0），
+ * 所以这里只多一个闸。
  */
-function caretIndexIn(node: MdNode, at: number): { value: string; index: number } | null {
+function caretIndexIn(
+  node: MdNode,
+  at: number,
+  isTail = false
+): { value: string; index: number } | null {
   if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return null
   const value = node.value
   const rows = rowsOf(node, value, originOf(node))
@@ -514,7 +669,7 @@ function caretIndexIn(node: MdNode, at: number): { value: string; index: number 
   // 手工造的树或者位置缺失时退回 `contentEnd`，判据不因此放宽。
   const contentEnd = last.src + last.len
   const upper = Math.max(node.position?.end.offset ?? contentEnd, contentEnd)
-  if (at < rows[0].src || at > upper) return null
+  if (!isTail && (at < rows[0].src || at > upper)) return null
   let index = 0
   for (const row of rows) {
     if (at < row.src) break
@@ -525,11 +680,16 @@ function caretIndexIn(node: MdNode, at: number): { value: string; index: number 
 
 /**
  * 把一个带文本的节点的 `value` 按光标切成两段；没命中给 `null`（调用方原样渲染）。
+ *
+ * 【`isTail` 那一下是**兜底**，不是放宽】`caret.tail === node` 说明它就是**最后一块已渲染
+ * 的内容**（`tailTarget` 一路沿最后一个孩子走到的那个节点），而走到这里说明没有别的节点
+ * 接得住光标。这时夹进它的区间——`at` 落在它前面给 0、落在后面给 `value.length`——
+ * 光标于是落在块**里面**，而不是掉到最后一个块下方。
  */
 function splitAtCaret(node: MdNode, ctx: Ctx): [string, string] | null {
   const caret = ctx.caret
   if (!caret || caret.placed) return null
-  const hit = caretIndexIn(node, caret.at)
+  const hit = caretIndexIn(node, caret.at, caret.tail === node)
   if (hit === null) return null
   // 【先置位再返回】置位是「整棵树只插一个」的闸，必须在返回前落下
   caret.placed = true

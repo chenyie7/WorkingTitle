@@ -327,10 +327,36 @@ describe('renderMarkdown —— 阅读光标', () => {
     expect(li.querySelector('[data-testid="caret"]')).not.toBeNull()
   })
 
-  it('给的光标偏移超出全部文字时：退回追加在末尾（内容本来也到头了）', () => {
+  /**
+   * 【这条原来是反的，2026-10-15 按实测改（Task 4g）】原先它钉的是「偏移超出全部文字 →
+   * 退回追加在末尾」，并在注释里写着「内容本来也到头了，位置看不出差别」。**那句话不成立**：
+   * 追加在末尾落在最后一个块**下方一行、左边缘**，而隐形输入框与输入法候选框都按这个坐标
+   * 摆（设计 3.5）——用户最初报的就是这条。现在夹到**最后一块已渲染内容**的末尾上，
+   * 光标留在块里。判据由「`<p>` 里有没有光标」翻成「光标在不在 `甲乙丙` 之后、`<p>` 之内」。
+   */
+  it('给的光标偏移超出全部文字时：夹到内容的末尾，仍在块里面', () => {
     const c = render(<>{renderMarkdown(para('甲乙丙'), { caretAt: 99 })}</>).container
     expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(1)
-    expect(c.querySelector('p')!.querySelector('[data-testid="caret"]')).toBeNull()
+    const caret = c.querySelector('p')!.querySelector('[data-testid="caret"]')
+    expect(caret).not.toBeNull()
+    expect(caret!.previousSibling!.textContent).toBe('甲乙丙')
+    expect(caret!.nextSibling).toBeNull()
+    // 不是容器末尾那一下（那是缺陷的签名）
+    expect(c.previousSibling).toBeNull()
+    expect(c.lastElementChild!.tagName).toBe('P')
+  })
+
+  it('链尾放不下光标时（文档以分隔线收尾）才真的追加在末尾', () => {
+    const doc = {
+      type: 'root',
+      children: [{ type: 'thematicBreak', position: { start: { offset: 0 }, end: { offset: 4 } } }]
+    } as unknown as Root
+    // 【揭示偏移要**越过**分隔线的区间】落在它区间里那几格由 `caretBefore` 的
+    // 「提前渲染的叶子跨过了揭示偏移」接走（落在分隔线**之前**），走不到这一条
+    const c = render(<>{renderMarkdown(doc, { caretAt: 5 })}</>).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(1)
+    // 分隔线后面什么都没有，「追加在末尾」与「放在它后面」是同一个位置
+    expect(c.lastElementChild!.getAttribute('data-testid')).toBe('caret')
   })
 
   it('不传光标（量高度那份副本）：一个光标都不该有', () => {
@@ -596,5 +622,72 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
       expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
       expect(carets[0].closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
     }
+  })
+})
+
+/**
+ * 光标**不许掉到块下方**（设计 3.5；Task 5 的评审逐格扫出来的四种形态）。
+ *
+ * 【判据一：末尾兜底的签名】它把光标 `push` 进顶层数组，于是光标成为容器的**最后一个**
+ * 子元素，落点是「最后一个已渲染块下面一行、左边缘」——正是用户最初报的那条。
+ *
+ * 【判据二：顶层还允许一种落点，它必须紧挨占位】占位代表「还没到的东西」，设计 3.5 让光标
+ * 落在它**前面**（`BlankSpace` 那一格，是 Step 5 点名要回归的老账，实测连续 13 个偏移位）。
+ * 那个谱上的光标**也是**容器的直接子元素——所以「父元素是不是容器」这条判据会把它一起
+ * 判红，不能用（实测：表格夹具的 8–20 全是这种合法落点）。真正的区别是它后面**跟着**占位元素。
+ *
+ * 【为什么不写成「父元素的 class 里有没有 `wt-page__text`」】那是计划 Step 1 稿子里的写法，
+ * 在本文件的 `at()` 下**恒为绿**（这里的容器是 testing-library 造的那个无类名 div，
+ * 实测缺陷代码上 0 格变红——判据空转，测不出任何东西）。真实的 `.wt-page__text` 那一层
+ * 由 `markdownView.test.tsx` 逐偏移扫。
+ *
+ * 【为什么不能用 `closest('p')`】`<h1>` / `<li>` / `<td>` / `<pre>` 里的正确落点会被它误伤。
+ *
+ * 【`to = 0` 是唯一的例外】那时每个顶层块都满足「起始偏移 ≥ to」被 `clip` 丢掉，树是空的，
+ * 末尾兜底是**唯一**能放的位置（下面单列一条钉住它）。
+ *
+ * 【夹具为什么是这六份】前四份是计划 Step 1 给的，第六份是评审那张表里「表格尾部 32–35」
+ * 对应的夹具（那份表的数字只有它对得上）；第五份（**单行**的那种容器里的围栏）是补的：
+ * 计划那张表把「容器里的代码 3–7」列为坏格，而**多行**围栏（计划 Step 1 用的那份）实测
+ * 一格都不坏——`wtBlankLines > 0`，占位自己接住了光标（那是 Step 5 要回归的口径）。
+ * 坏格的机制是「`code` 的 `value` 为空、内容起点在揭示偏移之后、**围栏里没有第二行可留白**」，
+ * 所以复现它要用单行的那种。
+ */
+describe('光标不出块（真管线，逐偏移）', () => {
+  function at(md: string, to: number): HTMLElement {
+    const clipped = clipTree(parseMarkdown(md)!, 0, to)
+    return render(<>{renderMarkdown(clipped, { caretAt: to })}</>).container
+  }
+
+  const FIXTURES = [
+    '- 甲\n- 乙\n- 丙\n',
+    '> ```\n> 甲\n> 乙\n> ```\n',
+    '> ```\n> 甲\n> ```\n',
+    '| 甲 | 乙 |\n| - | - |\n| 1 | 2 |\n',
+    '| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n\n末段\n',
+    '# 季度汇报\n\n正文一行。\n\n又一段。\n'
+  ]
+
+  it.each(FIXTURES)('逐偏移：光标都在内容里（%s）', (src) => {
+    for (let to = 1; to <= src.length; to++) {
+      const c = at(src, to)
+      const caret = c.querySelector('[data-testid="caret"]') as HTMLElement | null
+      expect(caret, `to=${to} 没有光标`).not.toBeNull()
+      expect(c.lastElementChild === caret, `to=${to} 掉到块下方（末尾兜底开火处）`).toBe(false)
+      if (caret!.parentElement === c) {
+        // 顶层只剩「占位之前」这一种合法落点（判据二）
+        expect(
+          caret!.nextElementSibling?.className ?? '',
+          `to=${to} 顶层的光标后面不是占位`
+        ).toMatch(/wt-md-(table|pre)-blank/)
+      }
+    }
+  })
+
+  it.each(FIXTURES)('to = 0：树是空的，末尾兜底是唯一的位置（唯一的例外）', (src) => {
+    const c = at(src, 0)
+    const carets = c.querySelectorAll('[data-testid="caret"]')
+    expect(carets).toHaveLength(1)
+    expect(carets[0].parentElement).toBe(c)
   })
 })

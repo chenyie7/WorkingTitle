@@ -111,16 +111,32 @@ describe('Page —— md 分支', () => {
 /**
  * 阅读光标（设计 3.5）。
  *
- * 【判据：`closest` 查的是它在不在内容里】光标原来由 `Page` 追加在 `.wt-page__text`
- * 的末尾，落在最后一个块**下方**。修好之后它必须落在**块里面**——这一条用
- * `closest('p')` 钉住，光数个数钉不住。
+ * 【判据一：不是 `.wt-page__text` 的**最后一个**子元素】光标原来由 `Page` 追加在内容末尾，
+ * 落在最后一个块**下方**；`renderMarkdown` 那条末尾兜底是同一个签名。修好之后它落在
+ * **块里面**——`<h1>` / `<p>` / `<li>` / `<pre>` / `<td>` 里。
+ *
+ * 【为什么不用 `closest('p')`】它把正确地待在标题、列表项、单元格、代码框里的落点全判成失败
+ * （本文件这份 DOC 上实测 5 格不成立、10 格误伤——评审逐偏移量过）。
+ *
+ * 【为什么不用「父元素是不是 `.wt-page__text`」】顶层还允许「占位**之前**」这一种落点
+ * （设计 3.5，`BlankSpace` 接的那几格），它同样是直接子元素；靠「是不是最后一个」才分得开。
+ *
+ * 【`cursor = 0` 是唯一的例外】那时树是空的，末尾兜底是唯一能放的位置。
  */
 describe('Page —— 阅读光标', () => {
-  it('md 那条路：光标恰好一个，且插在内容里面', () => {
-    const c = page(source({ cursor: DOC.indexOf('本季度') + 2 })).container
-    const carets = c.querySelectorAll('[data-testid="caret"]')
-    expect(carets).toHaveLength(1)
-    expect(carets[0].closest('p')).not.toBeNull()
+  it('md 那条路：逐偏移扫，光标恰好一个，且不是末尾兜底那一下', () => {
+    for (let cursor = 0; cursor <= DOC.length; cursor++) {
+      const c = page(source({ cursor })).container
+      const text = c.querySelector('[data-testid="page-text"]')!
+      const carets = text.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `cursor=${cursor} 光标数不对`).toHaveLength(1)
+      if (cursor === 0) {
+        // 树是空的（每个顶层块都满足「起始偏移 ≥ to」被丢掉），兜底是唯一的位置
+        expect(text.firstElementChild, `cursor=0 应当是末尾兜底`).toBe(carets[0])
+        continue
+      }
+      expect(text.lastElementChild === carets[0], `cursor=${cursor} 掉到块下方`).toBe(false)
+    }
   })
 
   it('纯文本那条路照旧：末尾那个光标还在', () => {
