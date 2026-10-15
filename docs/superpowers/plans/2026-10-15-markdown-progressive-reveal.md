@@ -941,7 +941,8 @@ describe('renderMarkdown —— 阅读光标', () => {
     // 段落的子节点顺序必须是 [文字, 光标, 文字] —— 光标在段落**里面**
     const caret = p.querySelector('[data-testid="caret"]')
     expect(caret).not.toBeNull()
-    expect(caret!.previousSibling!.textContent).toBe('甲')
+    // `caretAt: 2` ⇒ `at = clamp(2 − 0, 0, 3) = 2` ⇒ 切成 ['甲乙', '丙']
+    expect(caret!.previousSibling!.textContent).toBe('甲乙')
     expect(caret!.nextSibling!.textContent).toBe('丙')
   })
 
@@ -1000,8 +1001,11 @@ describe('renderMarkdown —— 阅读光标', () => {
     expect(pre.textContent).toBe('第一行')
     const caret = pre.querySelector('[data-testid="caret"]')
     expect(caret).not.toBeNull()
-    expect(caret!.previousSibling!.textContent).toBe('第')
-    expect(caret!.nextSibling!.textContent).toBe('一行')
+    // `caretAt: 6`、`wtValueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
+    // 【这两个字面量差一个字符就整条失效】原计划写的是 `'第'` / `'一行'`，
+    // 那与实现自相矛盾——实施者量出来了。这条用例的真正作用是**守住 `origin`**。
+    expect(caret!.previousSibling!.textContent).toBe('第一')
+    expect(caret!.nextSibling!.textContent).toBe('行')
   })
 })
 ```
@@ -1075,7 +1079,13 @@ export function renderMarkdown(
         key={i}
         data-block-end={node.position?.end.offset ?? ''}
       >
-        {renderNode(node, { header: false, caret })}
+        {/*
+          【这里显式传 `caret: null`，不是省事】量高度那一份是**整篇未裁剪**的树，
+          多一个光标不但没用，还会让 `[data-testid="caret"]` 在文档里出现两次——
+          而 `InputCapture` 取的是**第一个**。今天靠「调用方永不传 `caretAt`」这条
+          自觉，显式写 `null` 才有机器保证。
+        */}
+        {renderNode(node, { header: false, caret: null })}
       </div>
     ))
   }
@@ -1093,7 +1103,7 @@ export function renderMarkdown(
 **改法四：`renderAll` 整个函数替换掉。**
 
 ```tsx
-function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode {
+function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
   const out: ReactNode[] = []
   let i = 0
   while (i < nodes.length) {
@@ -1142,7 +1152,12 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode {
 
 （`renderAll` 上面那段长注释照旧保留。）
 
-**改法五：`renderNode` 里的四处分支。** `text`、`inlineCode`、`code`、`table` 各换成：
+**改法五：`renderNode` 里的五处分支。** `text`、`inlineCode`、`code`、`table`、`tableRow` 各换成：
+
+> **`tableRow` 那一处原计划漏了**（实施者量出来的）。它也在造 `Ctx`——
+> `renderAll(node.children, { header: ctx.header })` 少了 `caret`，**编译不过**；
+> 而且照原文整张表格的**正文**都收不到光标（只有表头那条路带了）。改成把 `ctx`
+> 整个传下去：`ctx.header` 此刻已经是该行的值，等价，而且把 `caret` 带下去了。
 
 ```tsx
     case 'text': {
@@ -1329,9 +1344,11 @@ Run: `pnpm typecheck` → exit 0
 **先写下预期**：
 
 - 变异甲：把 `BlankSpace` 里的 `if (count <= 0) return null` 改成 `if (false) return null`。预期红：**「表格一行不缺时：一个占位元素都不多出」这一条**，其余两条不该红。
-- 变异乙：把 `splitAtCaret` 里的 `if (origin + value.length < caret.at) return null` 改成 `if (value.length < caret.at - origin) return null`（**看起来等价**——但 `origin` 非 0 时不等价，这正是代码块那条用例守的东西）。预期红：**「光标插进代码框里」这一条**（它的 `wtValueStart` 是 4 而 `caretAt` 是 6——用 `value.length` 判会漏掉）。其余不该红。
+- 变异乙：把 `splitAtCaret` 里的 `if (origin + value.length < caret.at) return null` 改成 `if (value.length < caret.at) return null`（**把 `origin` 整个丢掉**）。预期红：**「光标落在空节点上也算命中」与「光标插进代码框里」两条**。
 
-  这条变异是**故意选一个看着等价的写法**：如果它一条都不红，说明代码块那条用例其实没守住原点，要回头补。
+  **别用「`origin + 长度 < at` → `长度 < at − origin`」那种写法**——那是**同一个不等式**（两边同减 `origin`），恒等价、任何用例都区分不了。实施者实测 Δ = 0，并据此指出原计划里「`origin` 非 0 时不等价」那句话是错的。
+
+  这条变异的意义：**如果它一条都不红，说明没有任何用例守住 `origin`，那条链就是零覆盖**。实施者量过一次，结论值得记：把代码块那条的断言修对**之前**，真正守住 `origin` 的是**空节点那条**（文本起点 2、长度 0、`caretAt` 2），而代码块那条因为断言差一个字符、什么都判不了；断言修对之后两条都红。
 
 - [ ] **Step 6: 提交**
 
