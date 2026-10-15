@@ -352,3 +352,40 @@ describe('clipTree —— 裁剪后起点跟着挪', () => {
     expect(valueStartOf(out.children[0])).toBe(SRC.indexOf('第一行'))
   })
 })
+
+/**
+ * 逐行切片（设计 3.6.1）：容器里的文字在窗口两侧都要按**行**求交，不能按字符数硬减。
+ * 修之前这里的每一条都是错的，而且方向是**提前**——未揭示的字上屏。
+ */
+describe('clipTree —— 容器里的文字按行切', () => {
+  const QUOTE = '> 引用甲\n> 引用乙\n'
+
+  it('光标停在第一行结尾：第二行一个字都不显示', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('引用甲') + 3)
+    expect(textOf(out)).toBe('引用甲')
+  })
+
+  it('光标走到第二行中间：只显示到那里', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('引用乙') + 1)
+    expect(textOf(out)).toBe('引用甲\n引')
+  })
+
+  /**
+   * 【换行符算谁的】两行之间那个 `\n` 在源码里位于「行 k 的源码结束偏移」处，所以它挂在
+   * **行 k 名下**：`to` 越过它才显示。行 0 的内容到源码 5 为止、`\n` 就在 5，于是
+   * `to = 5` 不含它、`to = 6` 含它。
+   *
+   * 【为什么单独钉一条】这条判据在**已经揭示的中间几行**上看不出来——那些行的 `tail` 会被
+   * 后面某一行的 `tail` 覆盖掉，只有窗口正好收在「某行末尾那个 `\n`」上时才分得出。
+   * 计划里那条变异（把 `+ 1` 去掉）在原来那三条用例上**一条都不红**，就是漏了这一格。
+   */
+  it('中间的换行符属于它上面那一行：越过它才显示', () => {
+    expect(textOf(clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('\n')))).toBe('引用甲')
+    expect(textOf(clipTree(parseMarkdown(QUOTE)!, 0, QUOTE.indexOf('\n') + 1))).toBe('引用甲\n')
+  })
+
+  it('折点切进第一行中间：窗口起点也按行算，前面的字不显示', () => {
+    const out = clipTree(parseMarkdown(QUOTE)!, QUOTE.indexOf('用'), QUOTE.length)
+    expect(textOf(out)).toBe('用甲\n引用乙')
+  })
+})

@@ -3,7 +3,7 @@ import type { Root } from 'mdast'
 import { tokenizeHtml, type HtmlToken } from './html'
 import { MarkdownImage } from './MarkdownImage'
 import { readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from './clip'
-import { valueStartOf } from './parse'
+import { lineStartsOf, valueStartOf } from './parse'
 
 /** mdast 的节点联合。`Root['children'][number]` 就是 `Content`，写出来更直白。 */
 type MdNode = Root['children'][number]
@@ -163,7 +163,10 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
       if (n.type === 'html') hasHtml = true
       // 【光标落在这串里就放在这一串的末尾】一个接受的近似，理由见设计 3.5：
       // 揭示偏移之后的节点要么是空的、要么已被整条丢掉，所以末尾与中间看不出差别。
-      if (n.type === 'text' && ctx.caret && !ctx.caret.placed && originOf(n) + n.value.length >= ctx.caret.at) {
+      // **判据与 `holdsCaret` 共用 `caretIndexIn`**：这一格问的是同一个问题（这个文本节点
+      // 接得住揭示偏移吗），而「有没有逐行表」会让「起点 + 长度」那个算术与真实区间分岔
+      // （容器里的多行文字，见 `caretIndexIn` 的注释）。两处各写一份 = 两处会各自走样。
+      if (ctx.caret && !ctx.caret.placed && caretIndexIn(n, ctx.caret.at) !== null) {
         caretHere = true
       }
       i++
@@ -200,7 +203,7 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
 function renderNode(node: MdNode, ctx: Ctx): ReactNode {
   switch (node.type) {
     case 'text': {
-      const parts = splitAtCaret(node.value, originOf(node), ctx)
+      const parts = splitAtCaret(node, ctx)
       return parts ? (
         <>
           {parts[0]}
@@ -224,7 +227,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
     case 'delete':
       return <del className="wt-md-del">{renderAll(node.children, ctx)}</del>
     case 'inlineCode': {
-      const parts = splitAtCaret(node.value, originOf(node), ctx)
+      const parts = splitAtCaret(node, ctx)
       return (
         <code className="wt-md-code-inline">
           {parts ? (
@@ -240,7 +243,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
       )
     }
     case 'code': {
-      const parts = splitAtCaret(node.value, originOf(node), ctx)
+      const parts = splitAtCaret(node, ctx)
       return (
         <>
           <pre className="wt-md-pre">
@@ -397,10 +400,48 @@ function originOf(node: MdNode): number {
   return valueStartOf(node) ?? node.position?.start.offset ?? 0
 }
 
+/** 摊平后的一行：它在 `value` 里的下标、长度（不含行尾换行），以及它在源码里的起点。 */
+interface Row {
+  /** 这一行首字符在 `value` 里的下标 */
+  readonly base: number
+  /** 这一行在 `value` 里的长度（**不含**行尾换行） */
+  readonly len: number
+  /** 这一行首字符在源码里的偏移 */
+  readonly src: number
+}
+
 /**
- * 把一个带文本的节点的 `value` 按光标切成两段；没命中给 `null`（调用方原样渲染）。
+ * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1）。
  *
- * 【判据是**区间包含**】`起点 ≤ 揭示偏移 ≤ 起点 + 长度` 才接得住，与 `holdsCaret` 同一套。
+ * 【没有逐行表时摊成**一行**】那时候「起点 + 字符数」本来就是线性的，退化成一行正好等价于
+ * 旧算法（下标 `= 揭示偏移 − 起点`、区间 `[起点, 起点 + 长度]`），所以下面两处调用都不必
+ * 分岔——分岔两份判据就等于两份会各自走样的东西。
+ *
+ * 【有表时一行一行走】`value` 的行与表一一对应：表是 `clip.ts` **跟着切片一起切的**，
+ * 所以切后的 `value` 有几行，表就有几个数。
+ *
+ * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
+ * 走空表会拿到不存在的 `rows[0]`。
+ */
+function rowsOf(node: MdNode, value: string, origin: number): Row[] {
+  const starts = lineStartsOf(node)
+  if (starts === null || starts.length === 0) return [{ base: 0, len: value.length, src: origin }]
+  const rows: Row[] = []
+  let base = 0
+  for (const src of starts) {
+    const nl = value.indexOf('\n', base)
+    const len = (nl < 0 ? value.length : nl) - base
+    rows.push({ base, len, src })
+    base += len + 1
+  }
+  return rows
+}
+
+/**
+ * 揭示偏移落在这个带文本节点上的哪里；**接不住给 `null`**。
+ *
+ * 【判据是**区间包含**】`首行起点 ≤ 揭示偏移 ≤ 末行内容的结束偏移` 才接得住，
+ * 它是同一条规则的两处使用者（`splitAtCaret` 与 `holdsCaret`）共用的唯一实现。
  * 它同时管住两件事，少任何一边都不行：
  * - **空节点照样接得住**：列表项刚开始、文字还没出来时，那个空文本节点的起点 = 结束 =
  *   揭示偏移，区间退化成一点、仍然包含它，光标于是落在序号后面而不是掉到列表下面；
@@ -409,27 +450,48 @@ function originOf(node: MdNode): number {
  *   吸进它里面。实测过这个形态：表格里那一串空单元格文字节点就是这么把光标接走的。
  *   `caretBefore` 靠 `holdsCaret` 让路，走的正是同一套判据。设计 3.5 是这条规则的正本。
  *
- * 【为什么切的是**裁后**的 `value`】树上已经没有未揭示的字了，所以
- * 「内容结束偏移」= 内容起点 + 裁后的长度 = 光标该在的位置。
+ * 【有逐行表时下标要**查表**，不能做减法】`揭示偏移 − 内容起点` 只在**行内**成立：容器里
+ * 逐行剥前缀的文字（引用块的 `> `、列表项的续行缩进），第二行起每行差一个前缀宽度
+ * （设计 3.6.1）。查表的算法是「找到**起点不超过揭示偏移的最后一行**，下标 = 该行在
+ * `value` 里的起点 +（揭示偏移 − 该行起点），并夹到该行长度」。
+ *
+ * 【揭示偏移落在末行之后是对的一格】末尾那一行已经揭示完、下一行的字还没到时，循环停在
+ * 末行，光标落在**已揭示文字的末尾**——正是该在的地方。没有表时这一格由 `Math.min` 夹住，
+ * 两条路给的是同一个数。
+ *
+ * 【为什么量的是**裁后**的 `value`】树上已经没有未揭示的字了，所以末行内容的结束偏移就是
+ * 光标该在的位置；有表时这个位置与「起点 + 长度」不再相等，差的就是逐行前缀那一段。
  */
-function splitAtCaret(value: string, origin: number, ctx: Ctx): [string, string] | null {
-  const caret = ctx.caret
-  if (!caret || caret.placed) return null
-  // 判据与 `holdsCaret` 一致：**区间包含**揭示偏移才算接得住
-  if (caret.at < origin || caret.at > origin + value.length) return null
-  const at = Math.max(0, Math.min(caret.at - origin, value.length))
-  // 【先置位再返回】置位是「整棵树只插一个」的闸，必须在返回前落下
-  caret.placed = true
-  return [value.slice(0, at), value.slice(at)]
+function caretIndexIn(node: MdNode, at: number): { value: string; index: number } | null {
+  if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return null
+  const value = node.value
+  const rows = rowsOf(node, value, originOf(node))
+  const last = rows[rows.length - 1]
+  if (at < rows[0].src || at > last.src + last.len) return null
+  let index = 0
+  for (const row of rows) {
+    if (at < row.src) break
+    index = row.base + Math.min(at - row.src, row.len)
+  }
+  return { value, index }
 }
 
-/** 这个节点能不能**自己**接住光标：它带可裁文本，且区间 `[起点, 起点 + 长度]` 包含揭示偏移。 */
-function holdsCaret(node: MdNode, ctx: Ctx): boolean {
+/**
+ * 把一个带文本的节点的 `value` 按光标切成两段；没命中给 `null`（调用方原样渲染）。
+ */
+function splitAtCaret(node: MdNode, ctx: Ctx): [string, string] | null {
   const caret = ctx.caret
-  if (!caret) return false
-  if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return false
-  const origin = originOf(node)
-  return origin <= caret.at && caret.at <= origin + node.value.length
+  if (!caret || caret.placed) return null
+  const hit = caretIndexIn(node, caret.at)
+  if (hit === null) return null
+  // 【先置位再返回】置位是「整棵树只插一个」的闸，必须在返回前落下
+  caret.placed = true
+  return [hit.value.slice(0, hit.index), hit.value.slice(hit.index)]
+}
+
+/** 这个节点能不能**自己**接住光标：它带可裁文本，且 `caretIndexIn` 那条区间包含揭示偏移。 */
+function holdsCaret(node: MdNode, ctx: Ctx): boolean {
+  return ctx.caret !== null && caretIndexIn(node, ctx.caret.at) !== null
 }
 
 /** 节点的源码结束偏移。**没有位置的一律算「在揭示偏移之后」**。 */

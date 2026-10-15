@@ -1,5 +1,5 @@
 import type { Content, Root } from 'mdast'
-import { valueStartOf, WT_VALUE_START } from './parse'
+import { lineStartsOf, valueStartOf, WT_LINE_STARTS, WT_VALUE_START } from './parse'
 
 /**
  * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
@@ -98,6 +98,45 @@ export function clipTree(root: Root, from: number, to: number): Root {
 }
 
 /**
+ * 逐行切片（设计 3.6.1）：`value` 的下标与源码偏移**逐行**是 +1 线性的（每行差一个
+ * 前缀宽度），所以窗口两侧都要**按行求交**，不能按字符数硬减。
+ *
+ * 【换行符算谁的】行 k 与行 k+1 之间那个 `\n` 在源码里位于「行 k 的源码结束偏移」处，
+ * 所以它挂在**行 k 名下**：`to` 越过它才显示。
+ *
+ * 【返回值里的 `starts`】已揭示那几行的行起点（第一行按窗口起点裁过的那个算）。
+ * 光标的「偏移 → 下标」换算要用它，否则多行容器里的光标会差一个前缀宽度。
+ */
+function sliceByLineStarts(
+  value: string,
+  starts: readonly number[],
+  from: number,
+  to: number
+): { head: number; tail: number; starts: number[] } {
+  let head = -1
+  let tail = -1
+  const revealed: number[] = []
+  let base = 0
+  for (let k = 0; k < starts.length; k++) {
+    const nl = value.indexOf('\n', base)
+    const lineLen = (nl < 0 ? value.length : nl) - base
+    const srcStart = starts[k]
+    const lo = Math.max(from, srcStart)
+    const hi = Math.min(to, srcStart + lineLen + 1)
+    if (lo < hi) {
+      const i0 = base + (lo - srcStart)
+      const i1 = base + (hi - srcStart)
+      if (head < 0) head = i0
+      tail = i1
+      revealed.push(lo)
+    }
+    base += lineLen + 1
+  }
+  if (head < 0) return { head: 0, tail: 0, starts: [] }
+  return { head, tail, starts: revealed }
+}
+
+/**
  * 顶层块：**保留还是丢掉只在这一层判**（设计 3.2）。
  * 留下来的块交给 `clipInside`，那里只截断、不丢整块。
  */
@@ -157,19 +196,52 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
     // （围栏、反引号），而 `position` 从定界符起算。真实起点由 `parse.ts` 在解析时算好
     // 挂在节点上（设计 3.6），这里取用。
     // **别把它读成「差一个定界符的长度」**：围栏块差的是「定界符 + 换行」（4 或 6），
-    // 缩进块根本没有定界符（差一段缩进），容器里的还会逐行变。设计 3.6 的残留那一段
-    // 讲了哪些形态是精确的、哪些不是。
+    // 缩进块根本没有定界符（差一段缩进），容器里的还会逐行变。它只保证**首行**的那个数，
+    // 逐行那一半由下面的逐行表补（设计 3.6.1）。
     const origin = valueStartOf(n) ?? start
     // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
     if (origin === undefined) return node
-    const head = Math.max(0, from - origin)
-    const tail = Math.max(head, to - origin)
+    // 【挂逐行表的节点要按行求交，不能按字符数硬减】容器里逐行剥前缀的文字（引用块的
+    // `> `、列表项的续行缩进）与带前缀的代码块，`value` 的下标与源码偏移**逐行**才是
+    // +1 线性的，每行差一个前缀宽度。按 `to − origin` 硬减会**提前**把未揭示的字上屏
+    // （设计 3.6.1）。没有表的节点（本来就是线性的）走下面那条老路，两个结果一致。
+    const lines = lineStartsOf(n)
+    let head: number
+    let tail: number
+    // 【表要跟着切片走】它描述的是**这个节点当前的** `value` 的行；不切的话下游
+    // （`toReact.tsx` 的光标换算）会拿一张错位的表算，多行容器里的光标差一个前缀宽度。
+    let revealed: number[] | null = null
+    if (lines) {
+      const r = sliceByLineStarts(n.value, lines, from, to)
+      head = r.head
+      tail = r.tail
+      // 【窗口与这个节点一行都不相交时给的是空数组，而空数组是真值】照直用会写出
+      // `wtValueStart: undefined` 与一张空表——起点那条是**静默**失真，下游
+      // （设计 3.5 的光标）拿着它算位置不报错、只是差几个字符。这一格可达：容器里的
+      // 围栏块 `'> ```\n> 甲\n…'` 的 `position.start` 是围栏起点（2），而表的第一行
+      // 起点在围栏之后（8），`to` 落在 2–7 那一段里就是这个情形。**空表按「没有表」算**，
+      // 那一步退回 `origin + head`（此时 `head` 为 0，指的是首行起点，仍然是对的）。
+      revealed = r.starts.length > 0 ? r.starts : null
+    } else {
+      head = Math.max(0, from - origin)
+      tail = Math.max(head, to - origin)
+    }
     const value = n.value.slice(head, tail)
     // 【切完之后起点要跟着挪】`wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个
     // 字符在源码里的偏移」。切掉了前 `head` 个字符，起点就后移 `head`——不挪的话这棵树上的
     // 节点会带着一个**失真**的起点，而下游（设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）
-    // 拿到它就是静默差几个字符，**不报错**。
-    const shiftedStart = origin + head
+    // 拿到它就是静默差几个字符，**不报错**。有表时同理，报的是**已揭示那几行的首行起点**。
+    const shiftedStart = revealed ? revealed[0] : origin + head
+    // 【表要么跟着切成这一份，要么整个摘掉，不能留原样】`...n` 会把解析期那张原表带过去，
+    // 而它描述的是**整条** `value` 的行——与切后的 `value` 对不上时下游（光标换算）会静默
+    // 算错。`revealed` 为 `null` 有两种来源（本来没有表 / 空窗口），两种都不该留字段。
+    const kept: Record<string, unknown> = {
+      ...(n as unknown as Record<string, unknown>),
+      value,
+      [WT_VALUE_START]: shiftedStart
+    }
+    if (revealed) kept[WT_LINE_STARTS] = revealed
+    else delete kept[WT_LINE_STARTS]
     // 【代码块多挂一个占位行数】它的框只包住已揭示的行，没揭示的行由渲染层按「默认一行高」
     // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数。
     //
@@ -183,15 +255,9 @@ function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
     // （Task 6），空框自己撑住那一行。代价是这一窗内每次按键都少一行，是接受的。
     if (n.type === 'code') {
       const rest = n.value.slice(tail)
-      const blankLines = rest === '' ? 0 : rest.split('\n').length - 1
-      return {
-        ...n,
-        value,
-        [WT_VALUE_START]: shiftedStart,
-        [WT_BLANK_LINES]: blankLines
-      } as unknown as ClipNode
+      kept[WT_BLANK_LINES] = rest === '' ? 0 : rest.split('\n').length - 1
     }
-    return { ...n, value, [WT_VALUE_START]: shiftedStart } as unknown as ClipNode
+    return kept as unknown as ClipNode
   }
   // 第二支：容器——递归下去裁。重复单元按自己的区间判（规则 2），其余结构不丢
   if (Array.isArray(n.children)) {

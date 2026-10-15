@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { parseMarkdown, isMarkdownPath, valueStartOf } from '../../src/renderer/src/markdown/parse'
+import {
+  parseMarkdown,
+  isMarkdownPath,
+  valueStartOf,
+  lineStartsOf
+} from '../../src/renderer/src/markdown/parse'
 
 /**
  * 【这一批用例断言的是**关系**，不是字面数字】
@@ -199,5 +204,45 @@ describe('parseMarkdown —— 代码节点 value 的真实起点（设计 3.6�
   it('普通文本节点没有这个标注 —— 读出来是 null，调用方退回 position', () => {
     const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
     expect(valueStartOf(para.children[0])).toBeNull()
+  })
+})
+
+/**
+ * 逐行偏移表（设计 3.6.1）。**每一行的 `value` 都贴在该行源码的尾部**，前缀
+ * （`> `、缩进、围栏）全在它前面——所以「行尾往前走该行长度」就是行起点。
+ */
+describe('parseMarkdown —— 逐行偏移表', () => {
+  it('多行引用块：第二行的起点是那一行自己的位置，不是第一行加字符数', () => {
+    const src = '> 引用甲\n> 引用乙\n'
+    const text = (parseMarkdown(src)!.children[0] as never as { children: { children: unknown[] }[] })
+      .children[0].children[0]
+    expect(lineStartsOf(text)).toEqual([src.indexOf('引用甲'), src.indexOf('引用乙')])
+    // `'引用甲\n引用乙'` 里第 4 个字符是第二行的「引」——它的源码位置是 8，不是 2+4=6
+    expect(src.indexOf('引用乙')).toBe(8)
+  })
+
+  it('普通的单行文本：不挂表（用 `position` 就够，挂了也只是重复信息）', () => {
+    const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
+    expect(lineStartsOf(para.children[0])).toBeNull()
+  })
+
+  /**
+   * 【夹具为什么是**容器里的**围栏块，不是顶格那个】顶格的围栏块逐行是**连续**的
+   * （三行前缀一样长），`isContiguous` 判定「按 `valueStartOf` + 字符数就能推」于是
+   * **不挂表**——挂了只是重复信息。挂表的是前缀**逐行不同**的那些：容器里的围栏块每行
+   * 多一个 `> `。所以这条用容器里的，下面一条钉顶格那个形态。
+   */
+  it('围栏代码块（在引用块里）：挂表，第一行起点在围栏之后', () => {
+    const src = '> ```\n> 甲\n> 乙\n> ```\n'
+    const quote = parseMarkdown(src)!.children[0] as unknown as { children: unknown[] }
+    expect(lineStartsOf(quote.children[0])).toEqual([src.indexOf('甲'), src.indexOf('乙')])
+  })
+
+  it('顶格的围栏代码块：逐行连续，不挂表；首行起点仍然在围栏之后', () => {
+    const src = '```\n第一行\n第二行\n```\n'
+    const code = parseMarkdown(src)!.children[0]
+    expect(lineStartsOf(code)).toBeNull()
+    // 不挂表不等于没坐标：首行起点由 `valueStartOf` 给，退回按字符数切是精确的
+    expect(src.slice(valueStartOf(code)!, valueStartOf(code)! + '第一行'.length)).toBe('第一行')
   })
 })

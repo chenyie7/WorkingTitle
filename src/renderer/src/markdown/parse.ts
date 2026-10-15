@@ -92,10 +92,11 @@ export function isMarkdownPath(filePath: string): boolean {
  * remark 怎么从源码得到 `value`，只有它知道。算一次挂在节点上，`clip.ts` 与
  * `toReact.tsx` 各自取用。
  *
- * 【已知残留，别当成没修干净】带前缀的块（引用块、列表项里）与超过四格的缩进块，
- * remark 是**逐行**剥前缀/缩进的，不是常量偏移；这里只给一个常量原点，所以**首行精确、
- * 第二行起仍差一个前缀宽度**。代码块放进引用块或列表项是很常见的写法，不是罕见格式。
- * 设计 3.6 记着这条，是接受的；用例「已知偏差：……」把它钉住了。
+ * 【常量原点只对首行精确，逐行那一半由逐行表兜】带前缀的块（引用块、列表项里）与超过
+ * 四格的缩进块，remark 是**逐行**剥前缀/缩进的，不是常量偏移；这里给的是常量原点，
+ * 所以**首行精确、第二行起差一个前缀宽度**（用例「已知偏差：……」钉的就是这一条）。
+ * 这一层由本函数末尾挂的逐行表补齐（设计 3.6.1）——**读 `valueStartOf` 的下游要连同
+ * `lineStartsOf` 一起读**，只读前者在多行容器里会错。
  */
 function annotateValueStarts(node: unknown, source: string): void {
   const n = node as {
@@ -104,17 +105,18 @@ function annotateValueStarts(node: unknown, source: string): void {
     children?: unknown[]
     position?: { start: { offset?: number }; end: { offset?: number } }
   }
-  if (n.type === 'code' || n.type === 'inlineCode') {
-    const start = n.position?.start.offset
-    const end = n.position?.end.offset
-    if (start !== undefined && end !== undefined) {
-      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(
-        n.type,
-        source,
-        start,
-        end,
-        n.value ?? ''
-      )
+  const start = n.position?.start.offset
+  const end = n.position?.end.offset
+  if (typeof n.value === 'string' && start !== undefined && end !== undefined) {
+    if (n.type === 'code' || n.type === 'inlineCode') {
+      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(n.type, source, start, end, n.value)
+    }
+    if (n.type === 'text' || n.type === 'code') {
+      const starts = buildLineStarts(n.type, source, start, end, n.value)
+      const base = n.type === 'code' ? (valueStartOf(n) as number) : start
+      if (!isContiguous(starts, base, n.value)) {
+        ;(n as Record<string, unknown>)[WT_LINE_STARTS] = starts
+      }
     }
   }
   for (const child of n.children ?? []) annotateValueStarts(child, source)
@@ -184,4 +186,49 @@ function inlineContentStart(source: string, start: number, end: number, value: s
     return from + 1
   }
   return from
+}
+
+/** 挂在节点上的逐行偏移表（设计 3.6.1）：每个 value **行**的首字符在源码里的偏移。 */
+export const WT_LINE_STARTS = 'wtLineStarts'
+
+/** 读逐行偏移表：没有、不是数组一律给 `null`（调用方退回按字符数切）。 */
+export function lineStartsOf(node: unknown): number[] | null {
+  const raw = (node as Record<string, unknown> | null | undefined)?.[WT_LINE_STARTS]
+  return Array.isArray(raw) && raw.every((n) => typeof n === 'number') ? (raw as number[]) : null
+}
+
+/**
+ * 建逐行偏移表：每个 value 行的首字符在源码里的偏移。
+ *
+ * 【依据】**每一行的 `value` 都贴在该行源码的尾部**——前缀（引用块的 `> `、列表项的续行
+ * 缩进、围栏、缩进块的缩进）全在它前面。所以「该行源码的结束偏移 − 该行在 value 里的
+ * 长度」就是行起点。这与 3.6 给代码块算首部起点用的是同一条技巧，推广到逐行。
+ *
+ * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
+ */
+function buildLineStarts(kind: string, source: string, start: number, end: number, value: string): number[] {
+  const lines = value.split('\n')
+  const nl = source.indexOf('\n', start)
+  const firstLineEnd = nl >= 0 && nl < end ? nl : end
+  const fenced = kind === 'code' && /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
+  let lineStart = fenced ? (firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd) : start
+  const out: number[] = []
+  for (const line of lines) {
+    const next = source.indexOf('\n', lineStart)
+    const lineEnd = next >= 0 && next < end ? next : end
+    out.push(lineEnd - line.length)
+    lineStart = lineEnd + 1
+  }
+  return out
+}
+
+/** 这张表能不能由「起点 + 字符数」直接推出来。能的话不挂——挂了也只是重复信息。 */
+function isContiguous(starts: readonly number[], base: number, value: string): boolean {
+  let v = 0
+  for (const s of starts) {
+    if (s !== base + v) return false
+    const nl = value.indexOf('\n', v)
+    v = nl < 0 ? value.length : nl + 1
+  }
+  return true
 }

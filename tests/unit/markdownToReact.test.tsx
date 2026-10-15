@@ -475,4 +475,51 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
     expect(caret.previousSibling).toBe(c.querySelector('b'))
     expect(p.firstChild!.textContent).toBe('前 ')
   })
+
+  /**
+   * 容器里**逐行剥前缀**的文字，下标要按行换算（设计 3.6.1）。
+   *
+   * 【为什么用整棵树、不裁】裁到 `to = 9` 时 `clip` 自己就把 `value` 切到了那一格，光标
+   * 靠 `Math.min` 夹到末尾也会落到对的地方——两条路都对，就分不出守的是哪一条。整棵树
+   * 才能把 `toReact` 这一段的换算单独逼出来：`value` 是完整的 `'引用甲\n引用乙'`，而下标
+   * 必须落在**第二行**里，不能拿 `揭示偏移 − 起点 = 7` 一路减到底。
+   */
+  it('引用块里的多行文字：下标记在**那一行**上，不做全局减法', () => {
+    const c = render(
+      <>{renderMarkdown(parseMarkdown('> 引用甲\n> 引用乙\n')!, { caretAt: 9 })}</>
+    ).container
+    const caret = c.querySelector('[data-testid="caret"]')!
+    expect(caret).not.toBeNull()
+    expect(caret.closest('blockquote')).not.toBeNull()
+    // 源码偏移 9 落在第二行的第二个字上（第二行从 8 起）⇒ 切在 value 下标 5
+    expect(caret.previousSibling!.textContent).toBe('引用甲\n引')
+    expect(caret.nextSibling!.textContent).toBe('用乙')
+  })
+
+  /**
+   * 容器里**逐行剥前缀**的多行文字 + 行内 HTML：光标仍落在**这一串的末尾**。
+   *
+   * 【为什么单独钉一条】`renderAll` 那个「这一串接得住光标吗」的判据，与
+   * `splitAtCaret` / `holdsCaret` 是**同一个问题**。算术版「起点 + 长度 ≥ 揭示偏移」在有
+   * 逐行表的节点上会**偏小**（那个长度不再等于「揭示偏移 − 起点」），于是光标被判定不在
+   * 这一串里、一路掉到整篇末尾——掉出 `<blockquote>` 外面去了。
+   *
+   * 【夹具为什么长这样】条件有三个，缺一个就测不到那条判据：
+   * 1. 那一串里**得有活着的 html 节点**（`clip` 对 html 是「等它整个抽完才留」，
+   *    `end > to` 的直接丢掉）——所以 `</b>`（end = 10）必须已经在揭示范围里，
+   *    `<b>x</b>` 得排在多行文字**前面**；
+   * 2. 多行文字要**挂得上逐行表**（前缀逐行不同）；
+   * 3. 揭示偏移要落在算术版够不着、真区间够得着的那一段：`to = 16` 时那个文本节点的
+   *    `value` 是 `'甲一\n乙'`（起点 10、长度 4 ⇒ 算术版说「到 14 为止」），而它第二行
+   *    的内容一直伸到源码 16。**`to = 14` 及以下两条判据一致，测不出差别**。
+   */
+  it('引用块里多行文字 + 行内 HTML：光标没掉出容器', () => {
+    const SRC = '> <b>x</b>甲一\n> 乙二\n'
+    const c = at(SRC, SRC.indexOf('二'))
+    const caret = c.querySelector('[data-testid="caret"]')!
+    expect(caret).not.toBeNull()
+    expect(caret.closest('blockquote')).not.toBeNull()
+    // 落在这一串的末尾（`</b>` 之后、'甲一\n乙' 之后），不是掉到整篇末尾
+    expect(caret.closest('p')!.textContent).toBe('x甲一\n乙')
+  })
 })
