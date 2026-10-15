@@ -99,10 +99,17 @@ export function renderMarkdown(
   //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
   //     树是空的，一个节点都没有——本来也没有别的位置可放。
   //  2. 揭示偏移落在**所有已揭示文字的后面**：要么下一个块还没到它的起点，要么已经过了
-  //     文档末尾那个换行。实测落点：表格 `to = 38–41`（表里最后的文字到 37 为止，而下一块
-  //     `末段` 的起点是 41）与 `44`；代码块 `to = 10–14`；纯文字 `'甲乙丙\n'` 的 `to = 4`
-  //     （那正是末尾那个换行）；硬换行 / 图片 / 行内 HTML 各自夹具体末尾那一格。这时内容
-  //     本来也到头了，追加在末尾与插在中间看不出差别。
+  //     文档末尾那个换行。实测落点（Task 4d 之后按同一批判据重扫的那一遍）：表格
+  //     `to = 38–41`（表里最后的文字到 37 为止，而下一块 `末段` 的起点是 41）与 `44`；
+  //     纯文字 `'甲乙丙\n'` 的 `to = 4`（那正是末尾那个换行）；硬换行 / 图片 / 行内 HTML /
+  //     几个容器夹具各自只剩**具体末尾那一格**。这时内容本来也到头了，追加在末尾与插在
+  //     中间看不出差别。
+  //
+  //     【代码块那一格的数字被 Task 4d 改掉了，别照旧抄】这一版之前这里写着「代码块
+  //     `to = 10–14`」，实测现在是**只有 `14`**：上界改成「节点源码的结束」之后，`10–13`
+  //     （揭示偏移还在闭合围栏里那几格）由**代码节点自己**接住、落在已揭示内容的末尾
+  //     （`<pre>` 里、`丙` 之后）。差别来自两个数：那个 `code` 的 `position.end.offset`
+  //     是 13（闭合围栏的末尾），而末行内容结束是 9。
   //  **中间那段曾经也走这里，那不是兜底而是缺陷**：揭示偏移落在「整段节点都被丢掉、只剩
   //  占位代表它」的那一格时（表格 `to = 8–20` / `28–30`、代码块 `to = 1–3`），光标被甩到
   //  占位**后面**。已经由「占位自己接光标」修掉（见 `BlankSpace`）——**这条口径要保住：
@@ -163,11 +170,29 @@ function renderAll(nodes: readonly MdNode[], ctx: Ctx): ReactNode[] {
       if (n.type === 'html') hasHtml = true
       // 【光标落在这串里就放在这一串的末尾】一个接受的近似，理由见设计 3.5：
       // 揭示偏移之后的节点要么是空的、要么已被整条丢掉，所以末尾与中间看不出差别。
-      // **判据与 `holdsCaret` 共用 `caretIndexIn`**：这一格问的是同一个问题（这个文本节点
-      // 接得住揭示偏移吗），而「有没有逐行表」会让「起点 + 长度」那个算术与真实区间分岔
+      // **第一条判据与 `holdsCaret` 共用 `caretIndexIn`**：这一格问的是同一个问题（这个文本
+      // 节点接得住揭示偏移吗），而「有没有逐行表」会让「起点 + 长度」那个算术与真实区间分岔
       // （容器里的多行文字，见 `caretIndexIn` 的注释）。两处各写一份 = 两处会各自走样。
-      if (ctx.caret && !ctx.caret.placed && caretIndexIn(n, ctx.caret.at) !== null) {
-        caretHere = true
+      //
+      // 【第二条判据：串里有节点**整个在揭示偏移之后**】它就是设计 3.5 那条「光标插在它
+      // 前面」的规则（`caretBefore` 对逐个节点正是这么做的），在这一串上必须显式补一次——
+      // 因为 `!hasHtml` 那条路才有逐节点的 `caretBefore`，而这一串是**当成一整段 token 流
+      // 渲染**的，光标只能落在串尾。
+      //
+      // 【为什么少了它会掉出容器】**不是 text 的节点会被 `clip` 整条丢掉**（内嵌 HTML 要等
+      // 整个抽完、硬换行与图片按自己的区间判），于是树上留下一段**没有节点的缝**；缝后面的
+      // 那个文本节点起点比揭示偏移大，第一条判据够不着它，这一串就一个光标都不插，整篇落到
+      // `renderMarkdown` 末尾的兜底。实测 `'> <b>x</b>甲一\n> 乙二\n'` 的 7、8、9（正好落在
+      // 还没抽完的 `</b>` 那四个字符里）：修前光标从 `<blockquote>` 里跳到篇末，`12fac2d` 上
+      // 是在块内的——那时这一格判的是「起点 + 长度 ≥ 揭示偏移」的算术版，**没有下界**，
+      // 所以漏不出来。位置仍取串尾是对的：被丢掉的那几个字符不上屏、缝后面的节点又都是空的，
+      // 「串尾」与「插在它前面」落的是同一个 DOM 位置。
+      if (ctx.caret && !ctx.caret.placed) {
+        const at = ctx.caret.at
+        const nodeStart = n.position?.start.offset
+        if (caretIndexIn(n, at) !== null || (nodeStart !== undefined && nodeStart >= at)) {
+          caretHere = true
+        }
       }
       i++
     }
@@ -417,8 +442,11 @@ interface Row {
  * 旧算法（下标 `= 揭示偏移 − 起点`、区间 `[起点, 起点 + 长度]`），所以下面两处调用都不必
  * 分岔——分岔两份判据就等于两份会各自走样的东西。
  *
- * 【有表时一行一行走】`value` 的行与表一一对应：表是 `clip.ts` **跟着切片一起切的**，
- * 所以切后的 `value` 有几行，表就有几个数。
+ * 【行数由 `value` 定，**不是**由表长定】这两者会差一行：`clip` 把末行那个换行也算进
+ * revealed，于是切出来的 `value` 会多出一个**空行**，而表里只有「起点 < 揭示偏移」的那几行
+ * 的起点（实测 `'> 引用甲\n> 引用乙\n'` 在 `to=6` 上是 `value='引用甲\n'`、表 `[2]`）。
+ * 差出来的那一行恒为空行，用「上一行起点 + 上一行长度 + 1」兜即可——它的**长度是 0**，
+ * 所以这个兜法不会把任何字符划给它。
  *
  * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
  * 走空表会拿到不存在的 `rows[0]`。
@@ -428,11 +456,13 @@ function rowsOf(node: MdNode, value: string, origin: number): Row[] {
   if (starts === null || starts.length === 0) return [{ base: 0, len: value.length, src: origin }]
   const rows: Row[] = []
   let base = 0
-  for (const src of starts) {
+  for (let i = 0; ; i++) {
     const nl = value.indexOf('\n', base)
     const len = (nl < 0 ? value.length : nl) - base
-    rows.push({ base, len, src })
-    base += len + 1
+    const prev = rows[rows.length - 1]
+    rows.push({ base, len, src: starts[i] ?? (prev ? prev.src + prev.len + 1 : origin) })
+    if (nl < 0) break
+    base = nl + 1
   }
   return rows
 }
@@ -461,13 +491,24 @@ function rowsOf(node: MdNode, value: string, origin: number): Row[] {
  *
  * 【为什么量的是**裁后**的 `value`】树上已经没有未揭示的字了，所以末行内容的结束偏移就是
  * 光标该在的位置；有表时这个位置与「起点 + 长度」不再相等，差的就是逐行前缀那一段。
+ *
+ * 【上界取**节点源码的结束**，不是末行内容的结束】末行内容之后到节点结束之间只剩语法：
+ * 尾随换行，以及**下一行还没揭示的行前缀**（引用块的 `> `、列表项的续行缩进）。逐行表只收
+ * 「起点小于揭示偏移」的行，而前缀的偏移比它所属那一行的内容起点还靠前，所以那几个偏移位
+ * 不属于表里任何一行；上界若取末行内容结束，它们就一个节点都接不住，光标掉出块外
+ * （实测 `'> 引用甲\n> 引用乙\n'` 的 6、7、8 三格从块内跳到篇末）。
+ * **「末行内容结束 + 1」不够**（评审实测）：中间还隔着 `> ` 那两个字符，掉出集合只各减一个。
  */
 function caretIndexIn(node: MdNode, at: number): { value: string; index: number } | null {
   if (node.type !== 'text' && node.type !== 'code' && node.type !== 'inlineCode') return null
   const value = node.value
   const rows = rowsOf(node, value, originOf(node))
   const last = rows[rows.length - 1]
-  if (at < rows[0].src || at > last.src + last.len) return null
+  // 【`Math.max` 那一下是防位置失真】正常情形 `position.end` 一定不小于末行内容结束；
+  // 手工造的树或者位置缺失时退回 `contentEnd`，判据不因此放宽。
+  const contentEnd = last.src + last.len
+  const upper = Math.max(node.position?.end.offset ?? contentEnd, contentEnd)
+  if (at < rows[0].src || at > upper) return null
   let index = 0
   for (const row of rows) {
     if (at < row.src) break

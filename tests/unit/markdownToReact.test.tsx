@@ -522,4 +522,52 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
     // 落在这一串的末尾（`</b>` 之后、'甲一\n乙' 之后），不是掉到整篇末尾
     expect(caret.closest('p')!.textContent).toBe('x甲一\n乙')
   })
+
+  /**
+   * 揭示偏移落在**下一行还没开始、而它的行前缀已经揭示**的那几个偏移位上（设计 3.5 第三轮）。
+   *
+   * 【为什么这几格会掉出去】`clip` 的逐行表只收「起点 < 揭示偏移」的行，而前缀（`> `、续行
+   * 缩进）的偏移比它所属那一行的**内容起点**还靠前——于是那几个偏移位不属于表里任何一行。
+   * 接受窗口的上界若取「末行内容结束」，它们就一个节点都接不住，光标掉到篇末。
+   * （把上界写成「末行内容结束 + 1」也不够：中间还隔着 `> ` 那两个字符。）
+   *
+   * 【为什么这几格非修不可】隐形输入框与输入法候选框都按这个坐标摆：光标从引用块里跳出去，
+   * 候选框跟着跳。它与用户报的「光标不在代码块里面」是同一个缺陷类，只是粒度更细。
+   */
+  it('引用块：揭示偏移落在第二行的 `> ` 上，光标不出块', () => {
+    const SRC = '> 引用甲\n> 引用乙\n'
+    for (const to of [6, 7, 8]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      // 【「恰好一个」不是顺手写的】置位闸（`caret.placed`）与 `caretBefore` 的让路判据
+      // 共用 `caretIndexIn`；上界一放宽，两条路若不同步就会**各插一个**，而多出来的那个
+      // 谁都不报错。本批次已经栽过一次（组件惰性求值 → 81 个偏移位上双光标）。
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      const caret = carets[0] as HTMLElement
+      expect(caret.closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
+      expect(caret.closest('p'), `to=${to} 掉出段落`).not.toBeNull()
+      // 已揭示文字的**末尾**（`'引用甲\n'` 之后）——与「没有逐行表」那条路给同一个数
+      expect(caret.previousSibling?.textContent, `to=${to} 落点不是已揭示文字的末尾`).toBe('引用甲\n')
+    }
+  })
+
+  it('多行列表项：同样的偏移位同样不出列表项', () => {
+    const SRC = '- 甲甲甲\n  乙乙乙\n'
+    for (const to of [6, 7, 8]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      expect(carets[0].closest('li'), `to=${to} 掉出列表项`).not.toBeNull()
+    }
+  })
+
+  it('引用块 + 行内 HTML：前缀上的偏移同样不出容器', () => {
+    const SRC = '> <b>x</b>甲一\n> 乙二\n'
+    for (const to of [7, 8, 9, 13, 14, 15]) {
+      const c = at(SRC, to)
+      const carets = c.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `to=${to} 光标数不对`).toHaveLength(1)
+      expect(carets[0].closest('blockquote'), `to=${to} 掉出引用块`).not.toBeNull()
+    }
+  })
 })
