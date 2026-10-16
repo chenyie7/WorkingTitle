@@ -186,8 +186,10 @@ export function SettingsDialog({
    * 挂载时起作用。放进 `[open, reset]` 那条 effect 里的话，effect 跑在**提交之后**，所以
    * 「打开」的那一次提交里 page 还是上一次的值、阅读设置面板仍带着 `hidden`；而
    * **对 `hidden`（display:none）子树里的元素调 `focus()` 是 no-op**，`autoFocus` 就此
-   * 静默失效——焦点留在 body 上，`InputCapture` 那条「当前焦点已经在对话框里」的闸跟着
-   * 失守，用户敲的键会在遮罩后面抽进小说。
+   * 静默失效——焦点**原地留在关闭时被交还的那个隐形输入框上**（下面那条 `if (open) return`
+   * 的 effect 在关闭时把焦点交给了它），而那个输入框**本来就是抽字那条路的入口**：
+   * `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的 `focusIfNotTextInput` 上，
+   * `handleKeyDown` / `handleInput` 一条都没有。焦点一落在那儿，按键**立刻**开始抽字。
    *
    * 渲染期就地重置（React 官方的「props 变了就地调整 state」写法）会让 React 当场重跑一次
    * 渲染再提交，于是「打开」那一次提交里第一页**本来就是可见的**，`autoFocus` 落得下去。
@@ -823,7 +825,7 @@ export function SettingsDialog({
               data-testid="settings-tabpanel-shortcuts"
               hidden={page !== 'shortcuts'}
             >
-              {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
+              {/* 快捷键：一条一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
               {SHORTCUTS.map((def) => {
                 const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
                 const isRecording = recording === def.id

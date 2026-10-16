@@ -1239,11 +1239,18 @@ describe('设置对话框的左栏分页', () => {
     // 【这条守的不是「焦点在对话框里」那件老事，而是它的一个**新**破口】`page` 是持久状态、
     // 组件在 open 为假时不卸载，所以重开的那一次提交里 page 可能还是旧值——非当前页带着
     // `hidden`，而**对 hidden（display:none）子树里的元素调 focus() 是 no-op**，于是
-    // `autoFocus` 静默失效。焦点留在 body 之后，InputCapture 那条「焦点已经在对话框里」的
-    // 闸就失守了，用户敲的键会在遮罩后面抽进小说。
+    // `autoFocus` 静默失效。
+    //
+    // 【焦点落在哪儿：隐形 textarea，不是 body】**实测**出来的（这条用例第一次跑、
+    // 修还没上时，红灯里 `document.activeElement` 就是 `<textarea data-testid="input-capture">`）：
+    // `SettingsDialog` 自己那条 effect 在**关闭**时把焦点交给了它，重开时 `autoFocus` 失效，
+    // 焦点就原地留在那个 textarea 上。这比「落在 body 上」更糟——落在 body 上还要用户再点
+    // 一下才会被抢回去，而隐形 textarea **本来就是抽字那条路的入口**：`InputCapture` 里那道
+    // `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**，`handleKeyDown` 与
+    // `handleInput` 上**一条都没有**。所以焦点一落在那儿，按键**立刻**开始抽字。
     //
     // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
-    // 所以修法是让「打开」的那一次提交本身就是对的（见组件里那段渲染期重置）。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见下面那段渲染期重置）。
     setup({ capture: true })
     openViaButton()
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
