@@ -504,9 +504,17 @@
  * 设置面板。680px 是「152px 左栏 + 约 500px 内容区」的宽度；内容区那一侧要放得下
  * 「当前书 1 键显示 [10] 字」这种整行不折的组合。
  *
- * 【max-height 不能省】三页之后单页最高的还是「阅读设置」那 6 行，小窗口里照样会把
- * 面板顶出屏幕、footer 的按钮够不着。那是本次顺带修的既有毛病：现在 9 行一页到底，
- * 更早就已经会溢出。配合下面 `.wt-modal__body` 的 `overflow-y: auto` 生效。
+ * 【max-height 修的是**缩放**，不是小窗口】窗口本身下不去——`src/main/index.ts` 的
+ * `minHeight: 620`，而改动前那版一页到底的对话框在最小窗口高度上是**放得下**的
+ * （footer 够得着）。真正会把它顶出屏幕的是**页面缩放**：视图菜单里就有
+ * resetZoom / zoomIn / zoomOut 三条 role，⌘+ 把视口压到 400 出头时，面板那一坨内容
+ * （固定高的 header + footer + 按内容高的 body）并不会跟着变矮，于是上下都出界、
+ * footer 够不着。将来某一页变高同理。
+ *
+ * 【别照字面去最小窗口高度上试】那儿什么都看不出来，于是很容易判定这条是死代码而删掉——
+ * 而删掉之后 200% 缩放下 footer 当场够不着（实测）。
+ *
+ * 配合下面 `.wt-modal__body` 的 `overflow-y: auto` 生效。
  */
 .wt-modal__panel {
   width: 680px;
@@ -522,12 +530,24 @@
   overflow: hidden;
 }
 
-/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感。
+ *
+ * 【flex 不能省】它是面板这个 column flex 容器的第一项，而面板的高度是 auto 被 max-height
+ * 夹出来的——夹紧的那一刻 main 的 `flex-basis: 0%` 在**高度不确定**的容器里解不出 0，会退回
+ * 内容高（实测 316px），于是出现负自由空间、进入收缩相：标题条按 (38 : 内容高) 的比例被压扁
+ * （实测 150% 缩放 → 34.06px；200% → 26px，正好是下面那个 26px 的 ✕ 按钮的高度，也就是它
+ * 自己的自动最小尺寸，压到那儿就停）。footer 的内容是 30px 按钮 + 18px 下内边距、自动最小
+ * 尺寸正好 48px，所以从不参与收缩。钉成 `0 0 auto` 后全部溢出落到 main（它已有 min-height: 0）。
+ *
+ * 【判据】压缩与不压缩时 `header + main + footer` 都等于面板高度（flex 本来就这样），
+ * 有区分度的只有 `header.offsetHeight === 38`。
+ */
 .wt-modal__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 38px;
+  flex: 0 0 auto;
   padding: 0 8px 0 16px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
@@ -576,9 +596,13 @@
  * `.wt-tabpanel`**（见下）——行间距的来源没变，只是从「body 直接管着行」变成
  * 「每个页各管自己那一组行」。
  *
- * 【min-width: 0 不能省】它是 flex 子项，而 flex 子项的默认 `min-width: auto` 会让
- * 最小内容宽度顶破面板：「阅读替换」那一行是 96px 固定标签 + 一串固定宽元素。
- * 【overflow-y: auto】与面板的 max-height 配套，见上。
+ * 【min-width: 0 与下面的 overflow-y 是同一个保险的两半】overflow 一旦不是 visible，
+ * flex 子项的自动最小尺寸按规范就是 0，所以本条**在这条规则里是冗余的**——实测把它删掉，
+ * 无论内容多宽（试到 4300px 不可断行）body 宽度都不变。留着是因为它与 `overflow-y: auto`
+ * 互为保险：谁将来把 `overflow-y` 拿掉，它立刻开始承重（实测那种组合下 body 会被顶到 4326px）。
+ *
+ * 【overflow-y: auto】与面板的 max-height 配套，见上。反过来，它也是上面那句
+ * 「min-width 冗余」成立的前提——两半拆开都别单删。
  */
 .wt-modal__body {
   flex: 1;
