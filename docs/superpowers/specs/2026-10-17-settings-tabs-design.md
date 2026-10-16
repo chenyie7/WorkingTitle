@@ -1,7 +1,7 @@
 # 设置界面分页 —— 设计文档
 
 日期：2026-10-17
-状态：待用户审阅
+状态：已实现（2026-10-17）
 
 ## 1. 目标
 
@@ -99,7 +99,22 @@ type SettingsPage = (typeof PAGES)[number]['id']
 
 ## 5. 交互
 
-- **默认停「阅读设置」**，不记住上次。注意 `SettingsDialog` 在 `open` 为假时只是 `return null`——**组件并不卸载，`useState` 会跨开关保留**。所以「固定打开第一页」要靠现有的 `useEffect(() => { if (open) reset() }, [open, reset])` 那条一起把 `page` 重置回 `'reading'`，不能只靠 `useState` 的初值。
+- **默认停「阅读设置」**，不记住上次。注意 `SettingsDialog` 在 `open` 为假时只是 `return null`——**组件并不卸载，`useState` 会跨开关保留**。所以 `useState` 的初值不管用，每次打开都得把 `page` 拉回 `'reading'`。
+
+  **这个重置必须写在渲染期，不能写在 effect 里。**（本条是 2026-10-17 修订的，初稿写的是「放进 `[open, reset]` 那条 effect」，那个写法不成立。）
+
+  原因：effect 跑在**提交之后**，所以「打开」的那一次提交里 `page` 还是上一次的值、阅读设置面板仍带着 `hidden`。而两条叠在一起会让焦点丢掉：
+
+  1. **对 `hidden`（`display:none`）子树里的元素调 `focus()` 是 no-op**（jsdom 实测，浏览器与规范一致）；
+  2. **React 的 `autoFocus` 只在挂载那一次跑**——事后把 `page` 拉回 `reading` 不会重新挂载那个 input，`autoFocus` 不会重跑。
+
+  后果不是「不方便」，是**漏**，而且是最直接的那一种：焦点**原地留在关闭时被交还的那个隐形 textarea 上**（`SettingsDialog` 自己那条 effect 在关闭时把焦点交给了 `input-capture`，重开时 `autoFocus` 失效），而那个 textarea 就是抽字那条路的入口。`InputCapture` 里那道 `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**，`handleKeyDown` / `handleInput` 上一条都没有——所以焦点一落在那儿，按键**立刻**开始抽字，用户敲的字在遮罩后面进小说，屏幕上完全看不出来。
+
+  **推论（比本条更值钱）：那道 `role="dialog"` 闸只防「焦点被抢走」，从来不防「按键被抽走」。** 真正拦住「对话框开着时打字不抽字」的，是「焦点必须待在对话框里」这个前提——所以「打开即聚焦」不是锦上添花，是这条不变量的一半。
+
+  **真机验证（2026-10-17 补上）**：修完之后，`tests/e2e/app.spec.ts` 里那条 e2e 走的是「切到快捷键页 → 关闭 → 点『设置』重开 → 断言文档名 `toBeFocused` → 敲 `xxx` 且 `revealed` 仍为 0」，**在真 Electron 上通过**。这条是整件事里**只有真机判得了**的那一半（jsdom 判得了「`focus()` 对 `[hidden]` 子树是 no-op」与「渲染期重置和 effect 重置的差别」，判不了「Chromium 是否同样如此」）。它过了，所以这条修订不再是推断。
+
+  所以用 React 官方的「props 变了就地调整 state」写法（`if (open !== wasOpen) { setWasOpen(open); if (open) setPage('reading') }`），让「打开」的那一次提交本身就是对的。**只为 `page` 这么做**——草稿的 `reset()` 不参与「哪一页可见」，仍留在 effect 里。
 - **草稿跨页保留。** 切页签不碰草稿。「保存」按钮在 footer 里，与当前是哪一页无关——在阅读设置改了字号、切去外观设置，它照样亮着，点下去照样提交。这正是 `useDeferredSettings` 把草稿放在对话框这一层的好处，本次不动它。
 - **切页签＝取消正在进行的快捷键录制。** 录制框在快捷键页上，切走就看不见了；留着录制态只会让分发器一直哑着，而用户完全看不出为什么快捷键失效了。这是既有语义（点别处＝放弃录制，见录制框的 `onBlur`）的直接延伸，用 `useEffect(() => setRecording(null), [page])` 落。
 - **左栏 ↑ / ↓ 移动并当场切页**（ARIA tabs 的「自动激活」），Home / End 跳首尾。左栏只有一个 Tab 停靠点（roving tabindex：选中的那一项 `tabIndex={0}`，其余 `tabIndex={-1}`），Tab 从它进内容区。
@@ -117,12 +132,20 @@ type SettingsPage = (typeof PAGES)[number]['id']
 
 ### 6.1 尺寸
 
-- `.wt-modal__panel`：`width: 680px`，`max-width: calc(100% - 48px)`（小窗口下照旧自动缩），新增 `max-height: calc(100vh - 48px)` 与 `display: flex; flex-direction: column`。
+- `.wt-modal__panel`：`width: 680px`，`max-width: calc(100% - 48px)`（小窗口下照旧自动缩），新增 `max-height: calc(100vh - 48px)`。
+
+  **`max-height` 修的是缩放，不是小窗口**（2026-10-17 修订，初稿写的是「小窗口」）。窗口本身下不去——`src/main/index.ts` 的 `minHeight: 620`，而改动前那版一页到底的对话框在最小窗口高度上是放得下的。真正可达的触发是**页面缩放**（视图菜单里就有 `resetZoom` / `zoomIn` / `zoomOut`）或某一页变高：⌘+ 把视口压下去时，面板那一坨（固定高的 header + footer + 按内容高的 body）并不会跟着变矮。**这条注释写错的代价**是维护者会去最小窗口高度上试一次、发现无事发生，进而判定 `max-height` 是死代码删掉——而删掉之后 200% 缩放下 footer 当场够不着（评审的变异实验实测）。
+
+- `.wt-modal__header`：**新增 `flex: 0 0 auto`**（2026-10-17 修订新增的一处，见下）。它是 `max-height` 的**连带回归**的修法，改的是一条既有规则，落在本项目「按需最小改动」的偏好之外——之所以还是做，是因为这个回归是**本次自己引入的**，而修法一行、按的是病根不是症状。
+
+  机制：面板是 `height: auto` + `max-height`，flex 布局跑的时候容器主尺寸**不确定**、`max-height` 是**事后**才夹的；而百分比 flex-basis 在容器主尺寸不确定时**解不出来**，Blink 退回该项的**内容尺寸**。于是 `main` 的基准不是 0 而是内容高 `H`，`38 + H + 48` 一超过 `max-height` 就出现**负自由空间**、进入**收缩相**，标题条按 `(38 : H)` 的比例被压扁（实测 150% → 34.06px；200% → 26px，正好是它自己的自动最小尺寸，也就是那个 26px 的 ✕ 按钮）。阈值 `夹紧 ⟺ H > 100vh − 134`。钉成 `0 0 auto` 之后全部溢出落到 `main`（它已有 `min-height: 0`）。
+
+  **判据**：压缩与不压缩时 `header + main + footer` **都**等于面板高度（flex 本来就这样），有区分度的只有 `header.offsetHeight === 38`。
 - `.wt-modal__main`：`flex: 1; min-height: 0; display: flex`。`min-height: 0` 不能省——flex 子项的默认 `min-height: auto` 会让内容把面板撑破，而不是让内容区滚动。
 - `.wt-modal__nav`：`flex: 0 0 152px`，`padding: 8px 0`，`border-right: 1px solid var(--wt-chrome-border)`，白底（与面板同色）。分隔线用既有的 token，深浅两套自动跟着翻。
 - `.wt-modal__body`：`flex: 1; min-width: 0; overflow-y: auto`，保留 `padding: 20px 18px`。**`min-width: 0` 同样不能省**，否则「阅读替换」那一行（96px 固定标签 + 一串固定宽元素）的最小内容宽度会把面板顶宽。
 - `.wt-tabpanel`：`display: flex; flex-direction: column; gap: 16px`（从 `.wt-modal__body` 挪过来的那两条）。
-- `.wt-tabpanel[hidden]`：`display: none`（见第 4 节，**必须排在 `.wt-tabpanel` 那条之后**）。
+- `.wt-tabpanel[hidden]`：`display: none`（见第 4 节）。它靠**特异度** (0,2,0) 压过 `.wt-tabpanel` 的 (0,1,0)，**与两条的先后无关**——顺序在这件事上不是生效原因，别把它当成原因记。（初稿写的是「必须排在 `.wt-tabpanel` 之后」，那是拿错了机制，2026-10-17 更正。）
 
 内容区加滚动是顺带修的一个既有毛病：现在 9 行在小窗口里会把面板顶出屏幕，footer 的按钮够不着。三页之后最高的是阅读设置（6 行，其中「阅读替换」与「工作文档」两行本身就占两行高），仍然会超。
 
@@ -199,7 +222,8 @@ jsdom 没有布局，「可见/不可见」判不了。但 `hidden` 是**DOM 属
 4. **切页保留草稿**：在阅读设置改字号 → 切到外观设置 → 「保存」按钮仍在 → 点保存 → `onPageFontSizeChange` 收到新值。
 5. **切页取消录制**：点开某条快捷键的录制 → 切到外观设置 → `onRecordingChange` 收到 `false`。
 6. **关掉再打开回到第一页**：切到快捷键设置 → 关闭 → 再打开 → 停在阅读设置。
-7. **方向键**：左栏 ↑ / ↓ / Home / End 切页且焦点跟着落到新页签上（`document.activeElement`）。
+7. **关掉再打开焦点仍在文档名上**：同上那条路径，再断言 `document.activeElement` 就是文档名输入框。**这一条与第 6 条不是重复**——第 6 条只判 `hidden`，而「`hidden` 判对了、焦点却仍在 `body` 上」正是第 5 节修订记的那种坏法。两条都要有。
+8. **方向键**：左栏 ↑ / ↓ / Home / End 切页且焦点跟着落到新页签上（`document.activeElement`）。
 
 ### 8.2 必须仍然全绿的既有用例
 
@@ -219,3 +243,51 @@ jsdom 没有布局，「可见/不可见」判不了。但 `hidden` 是**DOM 属
 - **不给非当前页做懒加载。** 三个页面加起来是十来个原生控件，没有可省的。
 - **不动**：关闭路径、`Esc` 语义、录制期间的静音、`useDeferredSettings` 的草稿模型、任何持久化字段、`Ribbon.tsx` 里开对话框那个按钮。
 - **不给老板键的 `bossFillPercent` 加界面**（它现在只由两条快捷键加减）。不在本次范围内。
+- **不补焦点陷阱。** 对话框写着 `aria-modal="true"`，但功能区那 7 个页签在模态开着时**仍在 Tab 顺序里**，Tab 能从左栏/内容区跑出去。这是**既有**状况（本次之前那 9 行也一样能 Tab 出去），不是本次引入的。真要补是独立一次改动——本次只保证「从页签 Tab 进内容区」这一段顺序是对的。（评审记录，2026-10-17。）
+
+## 10. 实现记录（2026-10-17）
+
+### 10.1 落地了哪些文件
+
+九个提交，全部在 `feat/reading-font` 上：
+
+| 提交 | 改了什么 |
+|---|---|
+| `6e1ab70` | `SettingsDialog.tsx`：`PAGES` 表、`page`/`wasOpen` 状态、左栏 JSX、三个 `.wt-tabpanel`（`role="tabpanel"` / `id` / `aria-labelledby` / `hidden`）；`settings.test.tsx`：新增「左栏分页」一组 |
+| `6e52643` | `SettingsDialog.tsx`：「打开时拉回第一页」从 effect 挪到**渲染期**；`settings.test.tsx`：两条判据用例 |
+| `a125597` | `ribbon.css`：面板 680px + `max-height`、左栏与页签项、内容区滚动、`.wt-tabpanel[hidden]` |
+| `98023ee` | `SettingsDialog.tsx` / `settings.test.tsx`：两处注释订正（「焦点落在哪儿」此前自相矛盾） |
+| `6bcbd9b` | `settings.test.tsx`：一处跨文件指代订正 |
+| `c222498` | `ribbon.css`：`.wt-modal__header` 加 `flex: 0 0 auto`（修本次引入的回归）+ 两条注释的机制订正 |
+| `bfedb6d` | `SettingsDialog.tsx`：方向键导航、切页取消录制；`settings.test.tsx`：新增「左栏的键盘与录制」一组 |
+| `9a43444` | `app.spec.ts`：e2e 点击坐标换成 `.wt-modal__footer` 的 `(4,10)` + `activeElement === 'BODY'` 自证断言 + 「重开焦点仍在对话框 + 敲字不抽小说」实机判据 |
+| `5da2ace` | `settings.test.tsx`：两条用例加固（逐键断言、Home/End 的焦点断言） |
+
+**明确没动**：`src/core/**`、`src/main/**`、`src/preload/**`、`state/deferredSettings.ts`、`Ribbon.tsx`、`icons.tsx`、任何持久化字段（`settings.json` 一个字段都没加）。设计第 5 节说「不记住上次停留的页」——因此没有任何新落盘字段。
+
+### 10.2 门禁实测（一律看 exit code）
+
+| 命令 | exit | 结果 |
+|---|---|---|
+| `pnpm typecheck` | **0** | 两个 tsconfig 都过 |
+| `pnpm test` | **0** | `Test Files 32 passed (32)` / `Tests 659 passed (659)`，汇总行**没有** `Errors` 那一行 |
+| `pnpm build`（经 `test:e2e` 带跑） | **0** | — |
+| `pnpm test:e2e` | **0** | `8 passed` |
+
+### 10.3 与设计的落地差异
+
+设计本身的修订都在第 5 节与第 6 节里（就地改了，并在那里注明了「2026-10-17 修订」）。**计划文档**的「修订记录」一节记了三轮评审各查出了什么、怎么处置的，那是这一批最有价值的记录，实施细节一律看那儿。摘要：
+
+1. **修订一**：`autoFocus` 在「上次停在非首页」时重开会静默失效，而原计划的修法（在 effect 里重置 `page`）**修不掉**——effect 跑在提交之后。改成渲染期就地重置。这一条定级 **Critical**：焦点留在关闭时被交还的**隐形 textarea** 上，而 `InputCapture` 的抽字路径上没有任何 `role="dialog"` 闸，所以用户敲的字会**在遮罩后面进小说**，屏幕上完全看不出来。
+2. **修订二**：`max-height` 的两条注释机制写错了（触发条件是**页面缩放**不是小窗口；`min-width: 0` 是**等价冗余**不是「不能省」），以及 `max-height` 带出来的一处**回归**——标题条会被压扁，修法一行 `flex: 0 0 auto`。
+3. **修订三**：两条用例**守不住自己声称守的东西**（一条因「3 键 : 3 页」的模数巧合只断言末态而假绿；另一条 Home/End 的「焦点跟过去」零覆盖），两条都已加固，且加固本身也过了变异验证。
+
+**一处已知的、未从「推理」升级为「实测」的东西**：`app.spec.ts` 里那条 `document.activeElement === 'BODY'` 断言的**判别力**是推理的（推理：点到 `<button>` 时 Chromium 会把焦点给它）。坐标落在空白上这件事本身是**实测**的（`elementFromPoint`，六档缩放），但那个反事实没跑过。理由与详情见计划里 Task 4 的说明。
+
+### 10.4 围栏回写
+
+按仓库硬约定，四个被改文件在 `2026-10-06-word-disguised-typing-reader.md` 里的**逐字节围栏**（各一面，已实测确认）已从交付源码重抽回写。
+
+- **正向判据**（`git ls-files src tests` 的 79 个源/测试文件，与**七份**计划的全部围栏比 md5、原样含末尾换行）：**回写后 0 个**没有围栏的文件。
+- **片段判据**：06 里 67 面 `ts`/`tsx`/`css` 围栏中失配 **14** 面（7 面等于某个文件的某个**历史版本**、7 面是从未等于任何源码的**示意稿**）。**回写前是 18 面**——也就是说这次回写**修好了 4 面、没有新造出任何一面**；剩下 14 面是先前的批次留下的，与本次无关。
+- **围栏配对**：七份计划的围栏行数全为偶数；源码里没有任何顶格 ``` 行。

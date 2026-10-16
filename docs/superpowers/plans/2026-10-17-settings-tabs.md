@@ -176,8 +176,9 @@ describe('设置对话框的左栏分页', () => {
 
     expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
   })
-})
 ```
+
+**注意：这个 `describe` 这里先不要闭合。** Step 6b 还要往**同一组**里再追加两条用例，由那一步收尾——初稿在 Step 1 就把 `})` 写上了，照字面做会拼出「describe 提前闭合 + 两条游离的 `it`」（落地时更正）。
 
 这一组用到 `SHORTCUTS`，而文件顶部现在只 import 了两个名字。把这一句（现在是**第 9 行**）改成：
 
@@ -359,6 +360,105 @@ Run: `pnpm vitest run tests/unit/settings.test.tsx tests/unit/ribbon.test.tsx`
 
 Expected: 全绿，**既有用例一条都不用改**。这正是选 `hidden` 而不是条件渲染的理由——红了就是这一步走错了，别去改断言。
 
+- [ ] **Step 6b: 加两条测试（它们现在是红的）**
+
+> **这一条是计划写完之后补的，原因见文末的修订记录。** 它原本排在 Task 3，但代码质量评审查出「只在 effect 里把 `page` 拉回第一页」**修不掉下面这个缺陷**，所以连缺陷带修法一起前移到了 Task 1（`page` 这个持久状态本来就是 Task 1 引入的）。
+
+在 `describe('设置对话框的左栏分页')` 里那 7 条**之后**追加：
+
+```tsx
+  it('关掉再打开，回到「阅读设置」（不记住上次那一页）', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
+    // 【这条守的不是「焦点在对话框里」那件老事，而是它的一个**新**破口】`page` 是持久状态、
+    // 组件在 open 为假时不卸载，所以重开的那一次提交里 page 可能还是旧值——非当前页带着
+    // `hidden`，而**对 hidden（display:none）子树里的元素调 focus() 是 no-op**，于是
+    // `autoFocus` 静默失效。
+    //
+    // 【焦点落在哪儿：隐形 textarea，不是 body】**实测**出来的（这条用例第一次跑、
+    // 修还没上时，红灯里 `document.activeElement` 就是 `<textarea data-testid="input-capture">`）：
+    // `SettingsDialog` 自己那条 effect 在**关闭**时把焦点交给了它，重开时 `autoFocus` 失效，
+    // 焦点就原地留在那个 textarea 上。这比「落在 body 上」更糟——落在 body 上还要用户再点
+    // 一下才会被抢回去，而隐形 textarea **本来就是抽字那条路的入口**：`InputCapture` 里那道
+    // `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**，`handleKeyDown` 与
+    // `handleInput` 上**一条都没有**。所以焦点一落在那儿，按键**立刻**开始抽字。
+    //
+    // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见 `SettingsDialog` 里那段渲染期重置）。
+    setup({ capture: true })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
+  })
+})
+```
+
+**末尾那个 `})` 收的是 Step 1 留下的、故意没闭合的 `describe`。** 这两条要加在那一组**里面**（源码里就是这样：9 条在同一个 `describe('设置对话框的左栏分页')` 下）。
+
+Run: `pnpm vitest run tests/unit/settings.test.tsx -t '设置对话框的左栏分页'`
+
+Expected: 这两条**必须红**（第一条红在 `[true, true, false]`、第二条红在 `activeElement` 是 `body`）。**这一对红灯就是那个缺陷存在与否的判据**——第二条要是绿的，先停下重估机制，别径直往下修。
+
+- [ ] **Step 6c: 把「拉回第一页」写在渲染期，不要写在 effect 里**
+
+把 Step 3 加的那两行：
+
+```tsx
+  /** 当前显示哪一页。默认「阅读设置」；每次重新打开都拉回它，见下面那条 effect。 */
+  const [page, setPage] = useState<SettingsPage>('reading')
+```
+
+整段换成：
+
+```tsx
+  /** 当前显示哪一页。默认「阅读设置」。 */
+  const [page, setPage] = useState<SettingsPage>('reading')
+  /** 上一次渲染时对话框开着没有。只服务于下面那一段「打开」时的就地重置。 */
+  const [wasOpen, setWasOpen] = useState(open)
+
+  /*
+   * 「每次打开都拉回第一页」。**必须写在渲染期，不能放进 effect。**
+   *
+   * `open` 为假时本组件只是 `return null`——**它并不卸载**，`useState` 的初值只在第一次
+   * 挂载时起作用。放进 `[open, reset]` 那条 effect 里的话，effect 跑在**提交之后**，所以
+   * 「打开」的那一次提交里 page 还是上一次的值、阅读设置面板仍带着 `hidden`；而
+   * **对 `hidden`（display:none）子树里的元素调 `focus()` 是 no-op**，`autoFocus` 就此
+   * 静默失效——焦点**原地留在关闭时被交还的那个隐形输入框上**（下面那条 `if (open) return`
+   * 的 effect 在关闭时把焦点交给了它），而那个输入框**本来就是抽字那条路的入口**：
+   * `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的 `focusIfNotTextInput` 上，
+   * `handleKeyDown` / `handleInput` 一条都没有。焦点一落在那儿，按键**立刻**开始抽字。
+   *
+   * 渲染期就地重置（React 官方的「props 变了就地调整 state」写法）会让 React 当场重跑一次
+   * 渲染再提交，于是「打开」那一次提交里第一页**本来就是可见的**，`autoFocus` 落得下去。
+   * 光在事后把 page 拉回去补不回来：input 没有重新挂载，`autoFocus` 不会重跑。
+   */
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setPage('reading')
+  }
+```
+
+（`jsdom` 实测：`<div hidden><input></div>` 里对 `input.focus()` 之后 `document.activeElement` 原地不动；去掉 `hidden` 之后同一句就生效。浏览器与规范一致。）
+
+- [ ] **Step 6d: 两条转绿，且既有那条 autoFocus 用例仍然绿**
+
+Run: `pnpm vitest run tests/unit/settings.test.tsx`
+
+Expected: 全绿，**特别确认既有的「打开时焦点就落在对话框里（autoFocus），不在隐形输入框上」还在**。
+
 - [ ] **Step 7: 提交**
 
 ```bash
@@ -389,9 +489,17 @@ git commit -F /tmp/wt-msg.txt
  * 设置面板。680px 是「152px 左栏 + 约 500px 内容区」的宽度；内容区那一侧要放得下
  * 「当前书 1 键显示 [10] 字」这种整行不折的组合。
  *
- * 【max-height 不能省】三页之后单页最高的还是「阅读设置」那 6 行，小窗口里照样会把
- * 面板顶出屏幕、footer 的按钮够不着。那是本次顺带修的既有毛病：现在 9 行一页到底，
- * 更早就已经会溢出。配合下面 `.wt-modal__body` 的 `overflow-y: auto` 生效。
+ * 【max-height 修的是**缩放**，不是小窗口】窗口本身下不去——`src/main/index.ts` 的
+ * `minHeight: 620`，而改动前那版一页到底的对话框在最小窗口高度上是**放得下**的
+ * （footer 够得着）。真正会把它顶出屏幕的是**页面缩放**：视图菜单里就有
+ * resetZoom / zoomIn / zoomOut 三条 role，⌘+ 把视口压到 400 出头时，面板那一坨内容
+ * （固定高的 header + footer + 按内容高的 body）并不会跟着变矮，于是上下都出界、
+ * footer 够不着。将来某一页变高同理。
+ *
+ * 【别照字面去最小窗口高度上试】那儿什么都看不出来，于是很容易判定这条是死代码而删掉——
+ * 而删掉之后 200% 缩放下 footer 当场够不着（实测）。
+ *
+ * 配合下面 `.wt-modal__body` 的 `overflow-y: auto` 生效。
  */
 .wt-modal__panel {
   width: 680px;
@@ -408,6 +516,40 @@ git commit -F /tmp/wt-msg.txt
 }
 ```
 
+- [ ] **Step 1b: 给标题条钉住高度（本次 `max-height` 的连带回归，评审实测确认）**
+
+> **这一条是计划写完之后补的**，原因见文末修订记录二。它改的是一条**既有规则**，落在本次「不许动其它任何既有规则」之外——这是 lead 的决定：它是**本次自己引入的回归**（面板第一次有了确定高度），修法一行，且按的是病根不是症状。
+
+`.wt-modal__header`（现在是 527-536 行）上面那条注释改写成下面这样，并**在规则体末尾加一条 `flex: 0 0 auto`**：
+
+```css
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感。
+ *
+ * 【flex 不能省】它是面板这个 column flex 容器的第一项，而面板的高度是 auto 被 max-height
+ * 夹出来的——夹紧的那一刻 main 的 `flex-basis: 0%` 在**高度不确定**的容器里解不出 0，会退回
+ * 内容高（实测 316px），于是出现负自由空间、进入收缩相：标题条按 (38 : 内容高) 的比例被压扁
+ * （实测 150% 缩放 → 34.06px；200% → 26px，正好是下面那个 26px 的 ✕ 按钮的高度，也就是它
+ * 自己的自动最小尺寸，压到那儿就停）。footer 的内容是 30px 按钮 + 18px 下内边距、自动最小
+ * 尺寸正好 48px，所以从不参与收缩。钉成 `0 0 auto` 后全部溢出落到 main（它已有 min-height: 0）。
+ *
+ * 【判据】压缩与不压缩时 `header + main + footer` 都等于面板高度（flex 本来就这样），
+ * 有区分度的只有 `header.offsetHeight === 38`。
+ */
+.wt-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  flex: 0 0 auto;
+  padding: 0 8px 0 16px;
+  background: var(--wt-titlebar);
+  color: var(--wt-titlebar-text);
+  font-size: 13px;
+}
+```
+
+**阈值（夹紧什么时候发生）**：`38 + H + 48 > 100vh − 48`，即 `H > 100vh − 134`（`H` = 最高那一页的 `body.scrollHeight`）。在应用的最小窗口（`minHeight: 620`）下：100% 缩放需 `H > 486`（永不）、**150% 需 `H > 279`**、**200% 需 `H > 176`**、250% 需 `H > 90`。阅读页那 6 行远超这个数，所以在 150% 起就会发生。
+
 - [ ] **Step 2: 内容区交出「排列行」的职责，改成可滚动**
 
 把 `.wt-modal__body`（现在是 565-570 行）改成：
@@ -418,9 +560,13 @@ git commit -F /tmp/wt-msg.txt
  * `.wt-tabpanel`**（见下）——行间距的来源没变，只是从「body 直接管着行」变成
  * 「每个页各管自己那一组行」。
  *
- * 【min-width: 0 不能省】它是 flex 子项，而 flex 子项的默认 `min-width: auto` 会让
- * 最小内容宽度顶破面板：「阅读替换」那一行是 96px 固定标签 + 一串固定宽元素。
- * 【overflow-y: auto】与面板的 max-height 配套，见上。
+ * 【min-width: 0 与下面的 overflow-y 是同一个保险的两半】overflow 一旦不是 visible，
+ * flex 子项的自动最小尺寸按规范就是 0，所以本条**在这条规则里是冗余的**——实测把它删掉，
+ * 无论内容多宽（试到 4300px 不可断行）body 宽度都不变。留着是因为它与 `overflow-y: auto`
+ * 互为保险：谁将来把 `overflow-y` 拿掉，它立刻开始承重（实测那种组合下 body 会被顶到 4326px）。
+ *
+ * 【overflow-y: auto】与面板的 max-height 配套，见上。反过来，它也是上面那句
+ * 「min-width 冗余」成立的前提——两半拆开都别单删。
  */
 .wt-modal__body {
   flex: 1;
@@ -513,10 +659,14 @@ git commit -F /tmp/wt-msg.txt
 }
 
 /*
- * 【这一条必须写，而且必须排在 `.wt-tabpanel` 之后】
- * `hidden` 属性本身不带任何样式，它靠的是 UA 默认样式表里的 `[hidden] { display: none }`；
- * 任何一条给该元素设了 `display` 的规则都会盖掉它——上面那条 `.wt-tabpanel` 正是如此。
- * 少了这一条，三个面板会同时显示、`hidden` 形同虚设（而单测只看属性，照样全绿）。
+ * 【这一条必须写】`hidden` 属性本身不带任何样式，它靠的是 **UA 样式表**里的
+ * `[hidden] { display: none }`。而级联里**来源（origin）**比特异度更优先：任何一条
+ * **作者**样式表里的规则都能盖掉 UA 的那条——上面 `.wt-tabpanel` 的 `display: flex`
+ * 正是如此。少了这一条，三个面板会同时显示、`hidden` 形同虚设（而单测只看属性，照样全绿）。
+ *
+ * 【它为什么赢：靠特异度，不是靠源码顺序】`.wt-tabpanel[hidden]` 是 (0,2,0)、
+ * `.wt-tabpanel` 是 (0,1,0)，**高的恒赢、与先后无关**。所以这条写在前写在后都成立——
+ * 但**不能删**：删了就没有任何作者规则去盖 UA 那条了。
  */
 .wt-tabpanel[hidden] {
   display: none;
@@ -539,9 +689,9 @@ git commit -F /tmp/wt-msg.txt
 
 ---
 
-## Task 3: 左栏的交互 —— 默认页、切页取消录制、方向键
+## Task 3: 左栏的交互 —— 切页取消录制、方向键
 
-**对应设计：** 第 5 节（交互）、第 5.1 节（无障碍）。
+**对应设计：** 第 5 节（交互）、第 5.1 节（无障碍）。**「默认页」那一条已在 Task 1 落地**（渲染期重置），本 Task 不再碰它。
 
 **Files:**
 - Modify: `src/renderer/src/components/SettingsDialog.tsx`
@@ -556,7 +706,7 @@ git commit -F /tmp/wt-msg.txt
  * 左栏的键盘与录制。
  *
  * 【这一组里几条为什么单测判得了】
- * - `hidden` 是 DOM 属性，判得了（Task 1 那组同理）。
+ * - `hidden` 是 DOM 属性，判得了（上面那一组同理）。
  * - 方向键换页之后焦点跟不跟过去，判的是 `document.activeElement`——**jsdom 里判得了**，
  *   因为那是我们自己在 keydown 处理里显式 `focus()` 的，不依赖浏览器的命中测试。
  * - 「切页取消录制」判的是报给外面的布尔值，与真机行为无关。
@@ -611,15 +761,21 @@ describe('设置对话框左栏的键盘与录制', () => {
     expect(hiddenPages()).toEqual([false, true, true])
   })
 
-  it('Home / End 跳到第一页 / 最后一页', () => {
+  it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
+    // 【「焦点也跟着」这半句不能省】设计第 8.1 节第 8 条要求的是 ↑/↓/Home/End **都**把焦点
+    // 带过去，而只断言 `hiddenPages` 是不够的——变异实测过：把 `focus()` 限制成只对
+    // ArrowUp / ArrowDown 调，只断言 `hiddenPages` 的那一版**全绿**。也就是说那半句此前
+    // 无人看住。
     setup()
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
     expect(hiddenPages()).toEqual([true, true, false])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-shortcuts'))
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
     expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
   })
 
   it('方向键之外的键不动页签（左栏不该吃掉别的按键）', () => {
@@ -627,32 +783,26 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
     const reading = screen.getByTestId('settings-tab-reading')
 
-    fireEvent.keyDown(reading, { key: 'ArrowLeft' })
-    fireEvent.keyDown(reading, { key: 'a' })
-    fireEvent.keyDown(reading, { key: 'Enter' })
-
-    expect(hiddenPages()).toEqual([false, true, true])
-  })
-
-  it('关掉再打开，回到「阅读设置」（不记住上次那一页）', () => {
-    setup()
-    openViaButton()
-    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
-    expect(hiddenPages()).toEqual([true, true, false])
-
-    fireEvent.click(screen.getByTestId('settings-close'))
-    openViaButton()
-
-    expect(hiddenPages()).toEqual([false, true, true])
+    // 【逐键断言，绝不能只断言末态】三个键连着按、每键各前进一页的话，3 键 ≡ 0 (mod 3)，
+    // 末态与「一个都没动」**长得一模一样**——变异实测过：把认不出的键也改成前进一页，
+    // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
+    for (const key of ['ArrowLeft', 'a', 'Enter']) {
+      fireEvent.keyDown(reading, { key })
+      expect(hiddenPages()).toEqual([false, true, true])
+    }
   })
 })
 ```
+
+**「关掉再打开」那两条不在这里**——它们随那段渲染期重置一起前移到了 Task 1（Step 6b），原因见文末的修订记录。
 
 - [ ] **Step 2: 跑测试确认它红**
 
 Run: `pnpm vitest run tests/unit/settings.test.tsx -t '设置对话框左栏的键盘与录制'`
 
-Expected: 6 条全红。方向键那三条会红在 `expect(hiddenPages()).toEqual(...)`（按了没反应）；「关掉再打开」那条会红在第二次打开时停在 `shortcuts`。
+Expected: **4 条红、1 条绿**。（计划初稿写的是「5 条全红」，**实测是 4 红**——落地时更正。）方向键那三条红在 `expect(hiddenPages()).toEqual(...)`（按了没反应），「切页取消录制」那条红在 `onRecordingChange` 没收到 `false`。
+
+**第 5 条「方向键之外的键不动页签」天然是绿的**：它断言的是「什么都没变」，没实现时当然没有东西会变。它是一条**防误吃按键的守卫**，不是驱动实现的用例——**别因为它绿了就以为实现对了**，也别为了让「预期 5 红」成立而去改它。
 
 - [ ] **Step 3: 实现方向键、切页取消录制、打开时拉回第一页**
 
@@ -723,31 +873,9 @@ import {
                 >
 ```
 
-**3d.** 找到现在这条 effect：
+**3d.** ~~把「打开时拉回第一页」放进 `[open, reset]` 那条 effect。~~ **这一步已经作废，改由 Task 1 的 Step 6c 在渲染期做。** 原因：effect 跑在提交之后，所以「打开」的那一次提交里第一页还是 `hidden`，而 `autoFocus` 只在挂载那一次跑——焦点会静默落在 `body` 上。详见文末的修订记录。**Task 3 不要再去动那条 effect。**
 
-```tsx
-  // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
-  useEffect(() => {
-    if (open) reset()
-  }, [open, reset])
-```
-
-改成：
-
-```tsx
-  // 每次打开都从当前值起稿：上次关掉时没保存的草稿不该留到下一次（关闭＝丢弃，是刻意的）
-  useEffect(() => {
-    if (open) {
-      reset()
-      // 【「固定打开第一页」必须在这里做】`open` 为假时本组件只是 `return null`——
-      // **它并不卸载**，`useState` 的初值只在第一次挂载时起作用。少了这一句，用户上次
-      // 停在快捷键那一页、关掉再打开就还在那一页。
-      setPage('reading')
-    }
-  }, [open, reset])
-```
-
-**3e.** 在它**之后**再加一条：
+**3e.** 在 `[open, reset]` 那条 effect **之后**再加一条：
 
 ```tsx
   /**
@@ -764,11 +892,13 @@ import {
 
 **3f.** 给左栏的容器 `div` 补一个 `onKeyDown` 兜底**不需要**——事件从按钮冒泡上来时 `e.target` 已经是按钮，而处理函数挂在每个按钮上。这一条只是提醒：**别把 `handleNavKeyDown` 挂到左栏容器上**，那样按 Tab 之外的东西也会被当成页签键处理。
 
+**3g.** ~~顺手改准两句已经不准确的注释。~~ **这一步已经作废——两条注释在 Task 1 的第三个提交里就改掉了。** 它们是：①焦点落在哪儿那句（源码里两处写着 `body`，实测是隐形 textarea，而**这句正是整个修复的立论**，评审把它当成「同一提交里自相矛盾」报了出来）；②快捷键那块上面那条既有注释的「三条各一行」（`SHORTCUTS` 是 6 条）。**Task 3 不要再动这两处。**
+
 - [ ] **Step 4: 跑测试确认它绿**
 
 Run: `pnpm vitest run tests/unit/settings.test.tsx -t '设置对话框左栏的键盘与录制'`
 
-Expected: 6 passed。
+Expected: 5 passed。
 
 - [ ] **Step 5: 跑整个文件 + 相邻文件，确认没坏别的**
 
@@ -834,6 +964,52 @@ git commit -F /tmp/wt-msg.txt
 ```
 
 **注意那个 `panel` 变量**：它只用来在末尾补一句「面板还开着」——原用例在这一段之后还要按 Escape 并断言对话框关掉，中间任何一步让面板没了都会让后面那几条红得更难懂。不想留这个变量的话，把最后一行删掉即可，但**不要**删中间那条 `activeElement === 'BODY'`。
+
+**这条断言的判别力是「推理的」，不是「实测的」——落地时如实记下来。** 它的推理是「点到 `<button>` 时 Chromium 会把焦点给它 ⇒ `activeElement` 是 BUTTON ⇒ 断言红」，所以坐标哪天又落回按钮上会被抓到。**但没有人跑过那个反事实**（把坐标改回 `(4,60)` 看它是否变红），而且这条恰恰是本仓库自己标注过平台差异的地方——`SettingsDialog` 里那条注释就写着「点一个 `<button>` 在有些平台**根本不给它焦点**（macOS 上的 Safari 就是这样）」。**如果 Chromium-on-macOS 也不给按钮焦点，这条断言的判别力就是零**（落回按钮上照样绿）。
+
+**已确证的那一半**：坐标本身落在空白上是**实测过的**——评审用 `elementFromPoint` 量过 `(4,10)` 命中 `.wt-modal__footer`（一个普通 div），且在 1×/1.25×/1.5×/2×/2.5×/3× 六档缩放全部命中。e2e 在 1× 下实际跑过一次，`BODY` 那条绿。
+
+**若要把它从「推理的判据」变成「实测的判据」**，唯一办法是在共享树之外跑一次反事实（临时把坐标改回 `(4,60)`、只跑那一条、再还原）——按本仓库口径那是变异实验，**得在隔离副本里做**，别在共享树上改已提交的文件。这一条留给 lead 判断值不值。
+
+- [ ] **Step 1b: 在同一个 test 末尾补一条「重开之后焦点仍在对话框里」——这一条只有真机判得了**
+
+同一个 `test(...)` 的最后几行现在是：
+
+```ts
+  // 快捷键⌘/Ctrl + , 同样能开
+  await win.keyboard.press('Meta+Comma')
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+})
+```
+
+在 `await expect(...toBeVisible())` **之后**、`})` **之前**追加：
+
+```ts
+  // 重开之后焦点必须仍在对话框里——**这一条只有真机判得了**。
+  //
+  // `page` 是持久状态、组件在 open 为假时不卸载，而 `autoFocus` 落在 `hidden`
+  // （display:none）子树里的元素上是 no-op，且只在挂载那一次跑。单测已经判到了
+  // 「jsdom 里焦点会留在 body 上」，但**「Chromium 会不会也这样」jsdom 判不了**。
+  // 焦点漏到 body 的后果是用户敲的键会在遮罩后面抽进小说（InputCapture 那条「焦点已经在
+  // 对话框里」的闸失守），而屏幕上完全看不出来——所以这条实机判据不能省。
+  await win.locator('[data-testid="settings-tab-shortcuts"]').click()
+  await win.locator('[data-testid="settings-close"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+  await expect(win.locator('[data-testid="doc-title-input"]')).toBeFocused()
+
+  // 【只断言「焦点在文档名上」不够，还要断言**后果】**——这才是设计第 5 节那条修订在真机上
+  // 的判据。焦点没回来的话，下面这几个字母会在遮罩后面抽进小说，`revealed` 就从 0 变成 3
+  // （`.wt-input` 那个隐形 textarea 就是抽字那条路的入口，`InputCapture` 的抽字路径上
+  // 没有任何 `role="dialog"` 闸）。
+  await win.keyboard.type('xxx')
+  await expect.poll(revealed).toBe(0)
+```
+
+**这条会红吗？** 在这批全部落地（Task 1 的渲染期重置已进）之后**应当是绿的**。如果前一条 `toBeFocused()` 红了，说明 Chromium 的行为与 jsdom 判定的那版不一致——**先别改断言**，把红灯原文贴回来，那意味着设计第 5 节那条修订要重估。
+
+**这一条为什么必须在这里（而不能只靠单测）**：评审明确划过边界——整条链里**只有「jsdom 对 `[hidden]` 子树的 `focus()` 是 no-op」「渲染期重置与 effect 重置的差别」「红的是哪一条用例」三步是实跑过的**；**「Chromium 上会不会同样漏字」没有任何实测**。上面这条 e2e 断的就是那一步。少了它，这次修复的立论在真机上就是**未验证**的。
 
 - [ ] **Step 2: 构建 + 跑 e2e**
 
@@ -916,6 +1092,72 @@ git commit -F /tmp/wt-msg.txt
 
 ---
 
+## 修订记录
+
+### 修订一（2026-10-17，Task 1 的代码质量评审查出来的）：默认页的修法从 effect 前移到渲染期
+
+**原来的写法**（本文件初稿的 Task 3 Step 3d）：在 `[open, reset]` 那条 effect 里 `setPage('reading')`。
+
+**为什么不成立**：那条 effect 跑在**提交之后**。而 `open` 为假时 `SettingsDialog` 只是 `return null`——**它并不卸载**，所以「打开」的那一次提交里 `page` 还是上一次的值、阅读设置面板仍带着 `hidden`。此时：
+
+- **对 `hidden`（`display:none`）子树里的元素调 `focus()` 是 no-op。** jsdom 30.1.2 实测：`<div hidden><input></div>` 里对 `input.focus()` 之后 `document.activeElement` 原地不动；去掉 `hidden` 之后同一句才生效。浏览器与规范一致。
+- **React 的 `autoFocus` 只在挂载那一次跑。** 事后把 `page` 拉回 `reading` 不会重新挂载那个 input，`autoFocus` 也不会重跑。
+
+两条叠起来的后果：`autoFocus` 静默失效、焦点**原地留在关闭时被交还的那个隐形 textarea 上**。
+
+> **落地时实测更正（比上面推的更糟）**：修之前那两条用例跑出来的第二条红灯，`document.activeElement` 是 `input-capture` 那个 textarea，**不是 `body`**——`SettingsDialog` 自己那条 effect（`if (open) return; …[data-testid="input-capture"]?.focus(…)`）在**关闭**时把焦点交给了它，重开时 `autoFocus` 失效，焦点就留在原地。
+>
+> 这比「落在 body 上」严重一档：落在 body 上还要用户再点一下才会被抢回去，而隐形 textarea **本来就是抽字那条路的入口**——`InputCapture` 里那道 `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**（`InputCapture.tsx:103-107`），`handleKeyDown` 与 `handleInput` 上**一条都没有**（它们的闸只有 `isComposing` / `mode !== 'key'` / 修饰键 / `NON_CHAR_KEYS`）。所以隐形 textarea 一拿到焦点，按键**立刻**开始抽字，不需要任何额外动作。
+>
+> 顺带一条与结论无关但值得记住的事实：**那道 `role="dialog"` 闸只防「焦点被抢走」，从来不防「按键被抽走」。** 真正拦住「对话框开着时打字不抽字」的，是「焦点必须待在对话框里」这个前提。
+
+**修法**：把「打开时拉回第一页」写在**渲染期**（React 官方的「props 变了就地调整 state」写法），这样「打开」的那一次提交本身就是对的，`autoFocus` 落得下去。落在 **Task 1 Step 6c**，连同两条判据用例（Step 6b）。Task 3 那一步作废。
+
+**为什么前移到 Task 1**：`page` 这个持久状态是 Task 1 引入的，缺陷在 Task 1 那一提交里就已经存在（与 Task 3 无关）。留在 Task 3 意味着这份计划要带着一条已知 Important 缺陷跨两个 Task。
+
+**这条同时也证明了原 Task 3 那条用例（「关掉再打开回到阅读设置」）不够**：它只判 `hidden`，而 `hidden` 对的那一版焦点照样是坏的。新加的第二条判 `document.activeElement` 才咬得住。
+
+**顺带记两条 Task 1 阶段确认的事实**：
+
+- `.wt-tabpanel[hidden] { display: none }` 在 Task 1 落地时**还不是必需的**——那时没有任何规则给 `.wt-tabpanel` 设 `display`，UA 默认样式表的那条照样生效。Task 2 一加 `display: flex` 它就变成必需的，漏了就是三页同时显示。
+- Task 1 单独落地时左栏是三个没有样式的普通按钮、行间距也还没跟着 `.wt-tabpanel` 走。这是 Task 2 的范围。
+
+### 修订二（2026-10-17，Task 2 的评审查出来的）：`max-height` 带出来的两处修正
+
+Task 2 的评审在 `/tmp/wtprobe/` 里用**仓库自带的 Electron 44.5.1** 起了个隐藏窗口，页面 `<link>` 直接加载仓库里那四个真实 CSS 文件（逐字节就是交付物），DOM 按 `SettingsDialog.tsx` 手抄骨架，并在副本上做变异实验。三件事：
+
+**① `max-height` 那条注释把触发条件写错了（M-1）。** 初稿写「小窗口里照样会把面板顶出屏幕」。实测：应用允许的最小窗口是 `minHeight: 620`，而改动前那版一页到底的对话框在**最小窗口高度上是放得下的**（footer 够得着）。真正可达的触发是**页面缩放**（视图菜单里就有 `resetZoom` / `zoomIn` / `zoomOut`）或某一页变高。这条注释必须改准——照字面读，维护者会在最小窗口高度上试一次、发现什么都没发生，进而判定 `max-height` 是死代码删掉，而删掉之后 200% 缩放下 footer **当场够不着**（变异实测）。已按评审给的措辞改（**去掉了它复刻行高量出来的 `540px`**，只留源码可查的 `minHeight: 620` 与三条 zoom role）。
+
+**② `min-width: 0` 那句「不能省」不成立（M-2）。** `overflow-y: auto` 让 overflow 不再是 `visible`，按规范该 flex 子项的**自动最小尺寸已经是 0**，所以 `min-width: auto` 与 `min-width: 0` 在这条规则里**完全等价**——差分实验（塞一行约 4300px 不可断行内容）实测四种组合：交付态 440、`min-width:auto`+`overflow-y:auto` 440（**无差别**）、`min-width:auto`+`overflow-y:visible` 4326、`min-width:0`+`overflow-y:visible` 440。所以它是**冗余但无害的保险**，不是零覆盖、也不该删（谁将来把 `overflow-y` 拿掉，它立刻开始承重）。注释已改成「同一个保险的两半」那套写法。
+
+**③ 新引入了一处回归：面板被夹紧时标题条会被压扁（M-3）。** 这是 `max-height` 让面板**第一次有了确定高度**的连带结果——改动前面板从不夹紧、也就从不收缩。机制（评审在 7 个缩放档上用同一个公式对上，误差 ≤0.03px）：
+
+面板是 `height: auto` + `max-height`，flex 布局跑的时候容器主尺寸**不确定**，`max-height` 是**事后**才夹的；百分比 flex-basis 在容器主尺寸不确定时**解不出来**，Blink 退回该项的**内容尺寸**。于是 `main` 的基准不是 0 而是内容高，`38 + H + 48` 一旦超过 `max-height` 就出现**负自由空间**、进入**收缩相**，标题条按 (38 : H) 的比例被压扁（150% → 34.06px；200% → 26px，正好是它自己的自动最小尺寸、也就是那个 26px 的 ✕ 按钮）。阈值：`夹紧 ⟺ H > 100vh − 134`。
+
+修法是一行 `flex: 0 0 auto`（**落在 Task 2 的 Step 1b**）。它按的是**病根**不是症状：标题条被压是因为它自己可收缩；钉死之后全部溢出落到 `main`（已有 `min-height: 0`），body 照旧滚、footer 不动。
+
+**加固后的实测（七档缩放，100% → 300%）**：`header` **七档全是 38**（使用值从 `34.06 / 27.73 / 26px` 回到 `38px`）；footer 恒 48 且可见、几何逐位与加固前相同；不夹紧的两档（100% / 125%）**逐像素相同**（全字段几何差异只有 `headerFlex` 这一项）；夹紧档的差异恰好是「header、main、bodyClientH，以及坐在 main 里的 nav / navItem 的**纯垂直位移**」——**所有宽度一位没变**。
+
+**一处要实现者与评审都容易预期反的取舍**：夹紧档里 `main` 是**变小**（150% −4px、175% −11px、200% 起 −12px），**不是变大**。因为面板高度是被 `max-height` 夹死的**恒量**，`header + main + footer` 不变——标题条拿回的那几像素正是从 main 的**滚动视口**里出。方向是想要的（用 4–12px 滚动视口换回一个诚实的 38px 标题条，溢出仍全部落在 main），但**别把「阅读区矮了几个像素」当成新 bug**。
+
+**这条加固不依赖复刻行高**（论证是结构性的）：它只在**收缩相**里起作用——不夹紧时什么都不动（实测逐像素相同），夹紧时把挤压从标题条挪到 main。所以**无论真实那一页比复刻的更高还是更矮，都不存在可达的回归**：更矮只会让「不夹紧」的档更多（那时前后相同），更高只会让夹紧来得更早（那正是它该起作用的地方）。依赖复刻 DOM 的只有「夹紧从第几档开始」与那几个增量，而真机判据（DevTools 读 `header.offsetHeight` 应为 38）已写进验收清单第四条。
+
+**一个方法论上的教训（我自己的）**：我最初提的判据是「`header + main + footer` 是否等于面板高度」，评审指出它**没有区分度**——flex 本来就让三者之和等于容器，被压与不被压都成立；唯一有区分度的是 `header.offsetHeight === 38`。**「看着像是自证的判据」要先用两个世界各验一遍再拿去用。**
+
+### 修订三（2026-10-17，Task 3 的规格评审查出来的）：两条用例守不住自己声称守的东西
+
+评审在 `bfedb6d` 的副本上跑了一整套变异（删 `[page]` effect / 删 `focus()` / 删 `ref` / 删 `onKeyDown` / 删 `setPage` / Home→末页 / ↑↓ 互换），代码本身**逐条有 witness**。但它同时实测出**两条断言的强度不够**，而且都不是代码缺陷、是**用例的问题**：
+
+**① 「方向键之外的键不动页签」对它命名的那个坏法是假绿。** 变异成「认不出的键也前进一页」→ **80/80 全绿、exit 0**。根因是一个**模数巧合**：它连按 `ArrowLeft` / `a` / `Enter` 三个键，而只有 3 页，每键 +1 ≡ 0 (mod 3)，**末态与「一个都没动」长得一模一样**。修法是**逐键断言**（改为循环，每个键之后各查一次）。
+
+它原来的敏感度不是零（只让 `ArrowLeft` 前进会红），但**它守不住它自己名字里那件事**——这正是本仓库「用例声称自身输入时要自检前提」那条忌讳的形态。
+
+**② 「Home / End 时焦点跟着落过去」此前零覆盖。** 设计第 8.1 节第 8 条要求的是 ↑/↓/Home/End **都**把焦点带过去，但只有 ↑/↓ 那条断言了 `document.activeElement`。变异：把 `focus()` 限制成只对 `ArrowUp` / `ArrowDown` 调 → **全绿**。修法是把那两句 `document.activeElement` 断言补进 Home / End 那条。
+
+**③ 有一处零覆盖是 jsdom 的边界，不要追**：注释里写的「不认的键直接 `return`、不做 `preventDefault`」，其中 `preventDefault` 那半句**jsdom 观察不到**（它不建模默认行为），所以「认不出的键调了 `preventDefault` 但不换页」这个变异也全绿。**代码本身是对的**（`preventDefault()` 严格在 `if (next < 0) return` 之后、只对认出的四个键生效）。这一条**只能靠读代码**，别为它写用例。
+
+---
+
 ## 交给用户的真机验收清单
 
 这几条 jsdom 判不了，**由用户跑**（本仓库惯例）。**等 Task 5 做完再跑。**
@@ -924,10 +1166,18 @@ git commit -F /tmp/wt-msg.txt
 2. **点一下就切**：点「外观设置」，右边只剩「外观」和「纸张」两行；点「快捷键设置」，右边是 6 条快捷键。
 3. **加宽之后不挤**：面板明显比原来宽。特别看「阅读替换」那一行的「当前书 1 键显示 [ ] 字」和「工作文档」那一行（状态 + 导入 + 移除三个东西）**有没有折行或被截断**。
 4. **小窗口不溢出**：把窗口拖矮（高度压到 500px 左右），面板底部那两个按钮应当**始终够得着**，内容区自己出滚动条。
+
+   **但真正会顶出屏幕的是缩放，不是小窗口**（窗口高度最低就是 620，拖不到 500——那一步其实是拖不动，别误判成「修好了」）。所以要**再按两下 `⌘+` 到 200% 缩放**再看一次：footer 仍要够得着、内容区出滚动条，而且**标题条那一行的高度不能变**。标题条被压扁过（本次的连带回归），判据在 DevTools 控制台里一行：
+
+   ```js
+   document.querySelector('.wt-modal__header').offsetHeight   // 38 = 没被压；26 = 又被压了
+   ```
+
+   （顺带核：`⌘0` 是复位缩放，`src/main/menu.ts` 里那三条 role。）
 5. **深色主题**：切到深色，看左栏选中的那一项——**底色应当是一块深灰蓝（`#2b2b34`），不是浅蓝、也不是刺眼的白**；左缘那道竖条与文字应当是提亮过的蓝。切换外观三选一之后单独再看一眼。
 6. **键盘**：焦点在左栏上时按 `↑` / `↓` 应当当场换页、且焦点跟着走到新的那一项；`Home` / `End` 跳首尾。按 `Tab` 应当从当前页签进到右边内容区。
 7. **方向键不误伤**：焦点在内容区的输入框里（例如「正文字号」）按 `↑` / `↓`，**不该**换页。
 8. **切页取消录制**：在「快捷键设置」里点开某条开始录制（按钮变成「请按下组合键…」），然后点「外观设置」——回到快捷键那一页，那个按钮应当已经退出录制态；此后再按 `⌘O` 之类应当照常触发导入（说明分发器没有一直哑着）。
 9. **草稿跨页**：在「阅读设置」把正文字号改成 20（先别保存），切到「外观设置」再切回来——框里应当还是 20，「保存」按钮应当一直亮着；点保存之后字号真的变了。
-10. **关掉再打开**：切到「快捷键设置」，关掉对话框，再打开——应当回到「阅读设置」。
+10. **关掉再打开**：切到「快捷键设置」，**点「设置」按钮**关掉对话框再点开——应当回到「阅读设置」；而且**光标应当在「文档名」输入框里**，随便敲几个字母应当只进那个框、小说一个字都不抽（焦点没回到对话框时，敲的字会在遮罩后面抽进小说，屏幕上看不出来——这是本条真正要试的东西）。
 11. **打字不受影响**：整个对话框开着的时候，敲键盘（不带修饰键的那些）**不该**有字抽进小说；关掉对话框之后，不用点阅读区也能直接接着打字。
