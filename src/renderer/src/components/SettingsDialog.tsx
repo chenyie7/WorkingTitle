@@ -174,8 +174,29 @@ export function SettingsDialog({
 
   const kind = platformKind(platform)
 
-  /** 当前显示哪一页。默认「阅读设置」；每次重新打开都拉回它，见下面那条 effect。 */
+  /** 当前显示哪一页。默认「阅读设置」。 */
   const [page, setPage] = useState<SettingsPage>('reading')
+  /** 上一次渲染时对话框开着没有。只服务于下面那一段「打开」时的就地重置。 */
+  const [wasOpen, setWasOpen] = useState(open)
+
+  /*
+   * 「每次打开都拉回第一页」。**必须写在渲染期，不能放进 effect。**
+   *
+   * `open` 为假时本组件只是 `return null`——**它并不卸载**，`useState` 的初值只在第一次
+   * 挂载时起作用。放进 `[open, reset]` 那条 effect 里的话，effect 跑在**提交之后**，所以
+   * 「打开」的那一次提交里 page 还是上一次的值、阅读设置面板仍带着 `hidden`；而
+   * **对 `hidden`（display:none）子树里的元素调 `focus()` 是 no-op**，`autoFocus` 就此
+   * 静默失效——焦点留在 body 上，`InputCapture` 那条「当前焦点已经在对话框里」的闸跟着
+   * 失守，用户敲的键会在遮罩后面抽进小说。
+   *
+   * 渲染期就地重置（React 官方的「props 变了就地调整 state」写法）会让 React 当场重跑一次
+   * 渲染再提交，于是「打开」那一次提交里第一页**本来就是可见的**，`autoFocus` 落得下去。
+   * 光在事后把 page 拉回去补不回来：input 没有重新挂载，`autoFocus` 不会重跑。
+   */
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setPage('reading')
+  }
 
   /**
    * 「导入小说」按钮 title 里那条快捷键的显示文本。

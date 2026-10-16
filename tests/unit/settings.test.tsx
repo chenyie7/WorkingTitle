@@ -1222,4 +1222,34 @@ describe('设置对话框的左栏分页', () => {
 
     expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
   })
+
+  it('关掉再打开，回到「阅读设置」（不记住上次那一页）', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
+    // 【这条守的不是「焦点在对话框里」那件老事，而是它的一个**新**破口】`page` 是持久状态、
+    // 组件在 open 为假时不卸载，所以重开的那一次提交里 page 可能还是旧值——非当前页带着
+    // `hidden`，而**对 hidden（display:none）子树里的元素调 focus() 是 no-op**，于是
+    // `autoFocus` 静默失效。焦点留在 body 之后，InputCapture 那条「焦点已经在对话框里」的
+    // 闸就失守了，用户敲的键会在遮罩后面抽进小说。
+    //
+    // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见组件里那段渲染期重置）。
+    setup({ capture: true })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
+  })
 })
