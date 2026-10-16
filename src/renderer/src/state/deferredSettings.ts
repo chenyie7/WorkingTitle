@@ -54,7 +54,7 @@ export function useDeferredSettings(fields: DeferredField[]): DeferredSettings {
    * 【为什么不能直接用 `fields`】那张表每次渲染都是新数组（它闭包着 `docTitle` / `ratio`），
    * 于是这三个回调每次渲染都换身份；而对话框里 `useEffect(…, [open, reset])` 要靠 `reset`
    * 的稳定身份才只在「打开」那一下跑——身份一变就成了每次渲染都重置草稿，用户打一个字就被
-   * 拉回去。渲染期写 ref 是本仓库既有的写法（`App.tsx` 的 `engineRef.current = engine`）。
+   * 拉回去。渲染期写 ref 是本仓库既有的写法（`App.tsx` 的 `novelEngineRef.current = engine`）。
    */
   const fieldsRef = useRef(fields)
   fieldsRef.current = fields

@@ -506,3 +506,80 @@ describe('随机序列下的不变量（播种，确定性）', () => {
     expect(violations).toEqual([])
   })
 })
+
+describe('revealTo', () => {
+  it('把光标设到指定位置，可增可减', () => {
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(5)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(0, 5))
+    // 【可减是刻意的】按 +/- 调铺满量时要把已经铺出来的字收回去
+    e.revealTo(3)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(0, 3))
+  })
+
+  it('夹紧到 [0, 全文长度]', () => {
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(-10)
+    expect(e.visibleText).toBe('')
+    // 【为什么单独钉一条】游标是字符下标，不该有小数：3.7 会透传进 toSession 与 slice。
+    // 去掉 Math.round 的话这条是唯一会红的用例。
+    e.revealTo(3.7)
+    expect(e.getSnapshot().cursor).toBe(4)
+    expect(Number.isInteger(e.getSnapshot().cursor)).toBe(true)
+    e.revealTo(99999)
+    expect(e.visibleText).toBe(e.novel.flatText)
+  })
+
+  it('下界是 revealStart 而不是 0：跳章后不许把窗口起点甩在游标后面', () => {
+    const e = new TypingEngine(makeNovel())
+    e.jumpToChapter(1)                     // revealStart = chapters[1].start
+    const start = e.getSnapshot().revealStart
+    e.revealTo(0)
+    const s = e.getSnapshot()
+    expect(s.cursor).toBe(start)
+    expect(s.revealStart).toBeLessThanOrEqual(s.cursor)
+    expect(e.visibleText).toBe(e.novel.flatText.slice(s.revealStart, s.cursor))
+  })
+
+  it('非有限值是无操作，不会把游标写成 NaN', () => {
+    // 【这条是承重的】Math.min(NaN, total) 与 Math.max(revealStart, NaN) 都返回 NaN，
+    // 一路传到 commit 之后游标就成了 NaN——visibleText 变成空串、
+    // 状态栏百分比变成 NaN%，而且再也恢复不了（后面每次 pump 都在 NaN 上算）。
+    const e = new TypingEngine(makeNovel())
+    e.revealTo(5)
+    e.revealTo(Number.NaN)
+    expect(e.getSnapshot().cursor).toBe(5)
+    // 【这一条才是「再也恢复不了」的判据】NaN 若真的写进了游标，后面每一次 pump 都在 NaN 上算，
+    // 游标永远回不到 5。前面那条 toBe(5) 只说明「这一次没写进去」，不足以说明「之后也回不来」。
+    e.pump(1)
+    expect(e.getSnapshot().cursor).toBe(15)
+    expect(Number.isFinite(e.getSnapshot().cursor)).toBe(true)
+
+    // 【Infinity 要单独钉】非有限值有两个入口，只测 NaN 的话，把闸收窄成 `Number.isNaN(n)`
+    // 全套用例照样全绿——而 Infinity 放行会被夹到 total，游标一路走到底。
+    e.revealTo(Number.POSITIVE_INFINITY)
+    expect(e.getSnapshot().cursor).toBe(15)
+  })
+
+  it('走的是 commit，所以 chapterPos 与 activeChapter 跟着更新', () => {
+    // 与 pump / backspace 共用同一条「统一收尾规则」：越过整章要把那些章标成读完
+    const e = new TypingEngine(makeNovel())
+    const second = e.novel.chapters[1]
+    e.revealTo(second.start + 1)
+    const s = e.getSnapshot()
+    expect(s.activeChapter).toBe(1)
+    expect(s.chapterPos[1]).toBe(1)
+    // 第一章被整个越过 → 标成已读完
+    expect(s.chapterPos[0]).toBe(e.novel.chapters[0].charCount)
+  })
+
+  it('光标没变时不 emit', () => {
+    const e = new TypingEngine(makeNovel())
+    const spy = vi.fn()
+    e.subscribe(spy)
+    e.revealTo(5)
+    expect(spy).toHaveBeenCalledTimes(1)
+    e.revealTo(5)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+})

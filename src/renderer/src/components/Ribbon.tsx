@@ -1205,6 +1205,8 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
  */
 const ignoreShortcutsChange = (): void => {}
 const ignoreRecordingChange = (): void => {}
+/** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
+const ignoreAction = (): void => {}
 
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
@@ -1224,6 +1226,7 @@ function hostPlatform(): string {
 
 export function Ribbon({
   docTitle,
+  displayTitle,
   onDocTitleChange,
   darkPaper,
   onDarkPaperChange,
@@ -1236,15 +1239,33 @@ export function Ribbon({
   platform = hostPlatform(),
   onShortcutsChange = ignoreShortcutsChange,
   onRecordingChange = ignoreRecordingChange,
+  workDocTitle = null,
+  workDocPath = null,
+  workDocBroken = false,
+  onImportWorkDoc = ignoreAction,
+  onRemoveWorkDoc = ignoreAction,
   settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
+  /**
+   * 标题条上显示的文档名。**不传时等于 `docTitle`**。
+   *
+   * 【为什么要与 `docTitle` 拆开】本组件把 `docTitle` 既用于标题条、又原样转手给
+   * `SettingsDialog` 的「文档名」输入框。老板模式下只覆盖前者——两者共用一个 prop 的话，
+   * 设置里那个输入框会跟着变成工作文档的文件名，而用户存的其实是「文档1」。
+   */
+  displayTitle?: string
   onDocTitleChange: (next: string) => void
   darkPaper: boolean
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
-  /** 有没有打开小说。设置里「当前书」的比例框据此禁用——没有书就没有「当前书」。 */
+  /**
+   * 有没有打开文档。设置里「当前书」的比例框据此禁用——没有文档就没有「当前书」。
+   *
+   * 【措辞是「文档」不是「小说」】它由 `App` 传 `shownNovel !== null`：老板模式下屏幕上
+   * 摊着的是一份工作文档，那时这个框照样该能用。
+   */
   novelOpen: boolean
   /**
    * 设置对话框开不开。**从 Task 6 起由调用方持有**：原先这个状态住在本组件内部，而
@@ -1262,6 +1283,16 @@ export function Ribbon({
   platform?: string
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   onRecordingChange?: (recording: boolean) => void
+  /**
+   * 工作文档那一组。与上面四个同属「可选带默认值」——`App` 是唯一的真调用方，
+   * 而既有测试不必为了这一组改动。不传＝「没导入、也没坏、点了没反应」。
+   */
+  workDocTitle?: string | null
+  /** 只用于那行的悬停提示（设计 §8）。与 `workDocTitle` 分开：坏掉那一路只有路径还在。 */
+  workDocPath?: string | null
+  workDocBroken?: boolean
+  onImportWorkDoc?: () => void
+  onRemoveWorkDoc?: () => void
   /**
    * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
    * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
@@ -1281,7 +1312,7 @@ export function Ribbon({
         {/* 这里显示的是用户可改的文档名，**不是小说文件名**——那是导入时唯一的泄露点。
             它现在是一段静态文本：改名挪进了设置对话框，蓝条上不再有可点的东西。 */}
         <span className="wt-ribbon__title-doc" data-testid="doc-title">
-          {docTitle}
+          {displayTitle ?? docTitle}
         </span>
         {/* 分隔符**单独成一个元素**，不并进上面那个 span：`doc-title` 的 textContent 必须
             ***正好*** 是文档名（设置对话框与多条测试都按这个口径断言），并进去就变成
@@ -1323,6 +1354,11 @@ export function Ribbon({
         platform={platform}
         onShortcutsChange={onShortcutsChange}
         onRecordingChange={onRecordingChange}
+        workDocTitle={workDocTitle}
+        workDocPath={workDocPath}
+        workDocBroken={workDocBroken}
+        onImportWorkDoc={onImportWorkDoc}
+        onRemoveWorkDoc={onRemoveWorkDoc}
       />
     </div>
   )

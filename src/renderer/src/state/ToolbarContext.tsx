@@ -32,6 +32,12 @@ export interface ToolbarValue {
 
 const ToolbarContext = createContext<ToolbarValue | null>(null)
 
+/**
+ * toast 自动消失的时间。**两处共用这一个常量**：provider 未受控时的内部实现用它，
+ * `App` 里那份也用——两边各写一个数的话，改了一边不会有任何东西报错。
+ */
+export const TOAST_MS = 1800
+
 export function clampRatioInput(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_RATIO
   return Math.max(MIN_RATIO, Math.min(MAX_RATIO, Math.round(n)))
@@ -47,6 +53,15 @@ export interface ToolbarProviderProps {
   onModeChange?: (m: InputMode) => void
   onImport?: () => void
   onClearSession?: () => void
+  /**
+   * toast 的受控入口。**不传就自己持有**——与 `ratio` 那几个同形，让既有测试不必改动。
+   *
+   * 【为什么这两项要能受控】老板键的提示是从 `App` 那一层的快捷键分发器里弹的，而
+   * `notify` 原先住在本 provider 内部、`App` 又在 provider **外面**（它就是渲染
+   * `<ToolbarProvider>` 的那个组件），拿不到 `useToolbar()`。
+   */
+  toast?: string | null
+  notify?: (message: string) => void
 }
 
 export function ToolbarProvider({
@@ -58,11 +73,13 @@ export function ToolbarProvider({
   onGlobalRatioChange,
   onModeChange,
   onImport,
-  onClearSession
+  onClearSession,
+  toast: toastProp,
+  notify: notifyProp
 }: ToolbarProviderProps) {
   const [toggles, setToggles] = useState<Record<string, boolean>>({})
   const [choices, setChoices] = useState<Record<string, string>>({})
-  const [toast, setToast] = useState<string | null>(null)
+  const [innerToast, setInnerToast] = useState<string | null>(null)
   const [innerRatio, setInnerRatio] = useState(DEFAULT_RATIO)
   const [innerGlobalRatio, setInnerGlobalRatio] = useState(DEFAULT_RATIO)
   const [innerMode, setInnerMode] = useState<InputMode>('ime')
@@ -79,12 +96,36 @@ export function ToolbarProvider({
     setChoices((prev) => ({ ...prev, [id]: value }))
   }, [])
 
-  const notify = useCallback((message: string) => {
-    setToast(message)
+  const innerNotify = useCallback((message: string) => {
+    setInnerToast(message)
     window.setTimeout(() => {
-      setToast((current) => (current === message ? null : current))
-    }, 1800)
+      setInnerToast((current) => (current === message ? null : current))
+    }, TOAST_MS)
   }, [])
+
+  /**
+   * 【`??` 在这里是错的，必须按 `!== undefined` 判】`toast` 的**有效值包含 `null`**
+   * （＝当前没有提示），用 `??` 会把它当成「没传」而回落到内部状态——于是**内部那条旧提示
+   * 会在 prop 传 `null` 时再冒出来**。
+   *
+   * 【症状要说准，别写成「永远不消失」】那两条（「永远不消失」「下一次 notify 也改不动」）
+   * 都**不是**这个变异会产生的结果，而且它们描述的 App 那条路根本不可达——`innerToast` 只被
+   * `innerNotify` 写，而 `innerNotify` 只在 `notifyProp === undefined` 时用得上，shipped 的
+   * `App` 恒传 `notify`。唯一的判别症状就是上面那句，钉它的用例是第三条（先不受控写一次、
+   * 再切受控传 `null`）。
+   *
+   * 【这两项要传就一起传】类型允许只传 `toast` 不传 `notify`，那种组合下 `notify` 落回
+   * `innerNotify`，内部定时器会往 `innerToast` 里写——正好就是上面那个残留场景。
+   *
+   * 【这两行为什么排在 `innerNotify` 之后、而不是与上面 `ratio` 那三行并排】`notifyProp ?? innerNotify`
+   * 在 `notifyProp` 为 `undefined` 时会真的去读 `innerNotify`，而 `const` 声明之前是 TDZ：
+   * 排到它前面，所有「不传 notify」的地方（既有测试全部如此）当场 `ReferenceError`。
+   * 实测：放在 `ratio` 那三行下面，settings.test.tsx 51 条里红 49 条（活下来的 2 条都是显式
+   * 传了 `notify` 的——`??` 短路，读不到那个 `const`），报的正是
+   * `Cannot access 'innerNotify' before initialization`。
+   */
+  const toast = toastProp !== undefined ? toastProp : innerToast
+  const notify = notifyProp ?? innerNotify
 
   const setRatio = useCallback(
     (n: number) => {

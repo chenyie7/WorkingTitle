@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { Mock } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
+import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
+import type { WtApi } from '../../src/renderer/src/types/global'
+
+/** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
+const FILL_CHARS = fillCharsFor(100)
 
 function makeNovel(): Novel {
   const text = '第一章 甲\nAAAAAAAAAA\n第二章 乙\nBBBBBBBBBB\n'
@@ -29,10 +35,40 @@ let saved: PersistedSession | null = null
 /** 最近一次 `loadSession` 是【按哪本书的路径】去取的。null = 从没按路径取过。 */
 let sessionAskedFor: string | null = null
 
-function installApi(novel: Novel | null, session: PersistedSession | null = null): void {
+/**
+ * `loadWorkDoc` 的桩。`waitForWorkDocLoaded` 要靠它判断「启动把文档读进来了没有」。
+ *
+ * 【类型为什么写成 `Mock<签名>` 而不是 `ReturnType<typeof vi.fn>`】后者在本仓库这份 vitest
+ * 里是 `Mock<Procedure | Constructable>`，**赋给 `WtApi['loadWorkDoc']` 会当场 TS2322**
+ * ——而按计划原文写就是那样，实测 `pnpm typecheck` exit 2。带上真实签名之后，下面那个对象
+ * 字面量的 `WtApi` 目标类型才继续对它有效（少写 / 写错签名都会报）。
+ */
+let loadWorkDocMock: Mock<(path: string) => Promise<Novel | null>>
+
+function installApi(
+  novel: Novel | null,
+  session: PersistedSession | null = null,
+  settings: AppSettings = defaultSettings(),
+  workDoc: Novel | null = null
+): void {
   saved = null
   sessionAskedFor = null
-  ;(window as unknown as { api: unknown }).api = {
+  loadWorkDocMock = vi.fn(async (_path: string) => workDoc)
+  // 【目标类型写成 WtApi，不要写 unknown】写成 unknown 的话，这个字面量**两个方向都不查**：
+  // 多写一个成员（TS2353）与少写一个（TS2739）都不报。而这个替身正是「替身漏一个方法」最
+  // 容易发生的地方。实测：把这里改成 WtApi，`pnpm typecheck` 会当场报
+  // `TS2739: … is missing the following properties from type 'WtApi': platform, importWorkDoc, loadWorkDoc`
+  // ——下面那三个成员就是为此补的。
+  //
+  // 【别改成 `{ ...benignApi, … }`】那样虽然能少写几行，却把「忘了某个方法」从**响亮的
+  // undefined TypeError** 变成**静默的错误值**（例如漏了 loadSettings 会悄悄拿到
+  // benignApi 的 `defaultSettings()`，而不是本用例传进来的那份）——正是 tests/setup.ts
+  // 里那段注释要防的「用的是别人的数据、于是静默通过」。
+  ;(window as unknown as { api: WtApi }).api = {
+    // platform 是 TS2739 点名的三个缺失成员之一（另两个是这个对象里本来就有的
+    // importWorkDoc / loadWorkDoc）。**只补它**——那两个已经在下头，再写一遍就是对象字面量
+    // 重复键（TS1117）。
+    platform: 'darwin',
     importNovel: vi.fn(async () => novel),
     openNovelPath: vi.fn(async () => novel as Novel),
     initialNovelPath: vi.fn(async () => null),
@@ -53,12 +89,21 @@ function installApi(novel: Novel | null, session: PersistedSession | null = null
      *
      * 需要「设置指路 → 启动恢复」那一条路径的用例（目前只有一条）在自己的体内显式覆盖它。
      */
-    loadSettings: vi.fn(async () => defaultSettings()),
+    loadSettings: vi.fn(async () => settings),
     saveSettings: vi.fn(async () => {}),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
     setThemeSource: vi.fn(async () => {}),
-    onThemeChange: vi.fn(() => () => {})
+    onThemeChange: vi.fn(() => () => {}),
+    // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
+    // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
+    importWorkDoc: vi.fn(async () => workDoc),
+    loadWorkDoc: loadWorkDocMock,
+    // 【Task 9 补的第三个有闸的替身】本文件这个对象字面量的目标类型是 `WtApi`（见上面那段
+    // 说明），所以少写一个成员同样报 TS2741——计划 Task 9 Step 6 只点了 `tests/setup.ts`
+    // 与 `types/global.d.ts` 两处，实测漏了这一处（`pnpm typecheck` exit 2）。姿态与
+    // setup.ts 那份一致：单测里一律「取不到图」，渲染层于是走占位框那条路。
+    loadWorkDocImage: vi.fn(async () => null)
   }
 }
 
@@ -403,7 +448,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, shortcuts: { import: 'Ctrl+KeyI' } })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -419,6 +464,48 @@ describe('设置的持久化', () => {
     // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
     // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
     expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+  })
+
+  // 【这条守的是「不回退」，与上一条同形，但守的是另外两个字段】`settings` memo 就是防抖
+  // 落盘的载荷，「读进来了却没写进 memo」的后果是把磁盘上那个值无声冲成默认值。这条性质
+  // 此前**没有任何用例守着**：实测（变异＝把 memo 里的 `workDocPath` 换成写死的 `null`）
+  // 在补上本条之前全套 372 条**照样全绿**，补上之后这一条单独变红。
+  it('磁盘上的 workDocPath / bossFillPercent 原样写回，不被默认值冲掉', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      workDocPath: '/tmp/周报.txt',
+      bossFillPercent: 40
+    }))
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    // 【读第一条，不读最后一条】第一条正是「读盘之后第一次落盘」那一发；取最后一条的话，
+    // 后面任何一次重算排的防抖写都会把它顶掉，断言就漂到别的那一发上了。
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.workDocPath).toBe('/tmp/周报.txt')
+    expect(payload.bossFillPercent).toBe(40)
+  })
+
+  // 【守的是读盘那一夹】`settingsProblem` 只判「是不是有限数字」，值域夹紧归 core——所以
+  // 一个手改出来的 `bossFillPercent: 500` 能一路通过校验。少了 `clampBossFillPercent`，
+  // 它原样进状态、再照原样写回磁盘，而第一次按「铺满 −」会从 500 一步跳到 100。
+  // 实测（变异＝把那一夹去掉）：在补上本条之前全套 373 条**照样全绿**。
+  it('磁盘上超出值域的 bossFillPercent 进状态时就夹紧，写回的也是夹紧后的值', async () => {
+    installApi(null)
+    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      bossFillPercent: 500
+    }))
+    ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
+    render(<App />)
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled())
+    const payload = saveSettings.mock.calls[0][0] as AppSettings
+    expect(payload.bossFillPercent).toBe(100)
   })
 
   it('改了文档名之后会把设置写回去', async () => {
@@ -704,5 +791,705 @@ describe('快捷键接线', () => {
     // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
     fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+})
+
+function makeWorkDoc(): Novel {
+  // 【正文刻意长过 CHARS_PER_SHEET（1330）】短于它的话，「铺满 100%」会被 revealTo 夹到
+  // 全文长度——「铺满了一页」这句话在夹具上退化成「恰好一篇」，下面那些
+  // FILL_CHARS / FILL_CHARS + 10 的断言就全都测不出东西了。
+  const body = Array.from(
+    { length: 60 },
+    (_, i) => `${i + 1}. 本季度把导入管线与老板键做完了，细节见周报附件。`
+  ).join('\n')
+  const { flatText, chapters } = splitChapters(`季度汇报\n${body}\n`, '季度汇报')
+  return {
+    title: '季度汇报',
+    sourcePath: '/tmp/季度汇报.txt',
+    encoding: 'UTF-8',
+    hadBom: false,
+    flatText,
+    chapters
+  }
+}
+
+/** 按一次老板键（macOS 默认是 ⌘⇧B） */
+function pressBossKey(): void {
+  fireEvent.keyDown(window, { code: 'KeyB', key: 'B', metaKey: true, shiftKey: true })
+}
+
+/**
+ * 等启动流程把工作文档读进来。
+ *
+ * 【为什么不能只等 `page-empty`】那个元素在 boot 的**第二个** await（`loadWorkDoc`）之前
+ * 就已经渲染出来了，等它等于没等——紧接着按老板键会撞上「工作文档还没进内存」，用例收到的
+ * 是一条 toast 而不是切换。这个竞态在真机上不存在（人不会在启动那一瞬间按键）。
+ */
+async function waitForWorkDocLoaded(): Promise<void> {
+  await waitFor(() => expect(loadWorkDocMock).toHaveBeenCalled())
+  await act(async () => {})
+}
+
+describe('老板键', () => {
+  it('没导入工作文档时只提示，不切换', async () => {
+    installApi(makeNovel())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('还没导入工作文档'))
+    // 阅读区照旧是小说
+    expect(screen.getByTestId('doc-title').textContent).toBe('文档1')
+  })
+
+  it('没导入小说也能按老板键——它只要求工作文档在', async () => {
+    const doc = makeWorkDoc()
+    installApi(null, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+
+    const shown = screen.getByTestId('page-text').textContent ?? ''
+    expect(shown.length).toBe(FILL_CHARS)
+    expect(doc.flatText.startsWith(shown)).toBe(true)
+  })
+
+  it('再按一次切回小说，且小说的进度原封不动', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 在小说里打 1 个字 → 默认比例 10 → 10 字
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    await act(async () => {
+      pressBossKey()
+    })
+    // 【这一条是「两份进度互不干扰」的判据】切回来必须还是那 10 个字——
+    // 不是 0，也不是被工作文档的铺满量污染过的值
+    await waitFor(() => expect(revealedChars()).toBe(10))
+  })
+
+  it('老板模式下打字抽的是工作文档', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 10))
+
+    // 抽出来的一定是工作文档的正文，不是小说的
+    const shown = screen.getByTestId('page-text').textContent ?? ''
+    expect(doc.flatText.startsWith(shown)).toBe(true)
+  })
+
+  it('老板模式下关窗，落盘的是【小说】的进度而不是工作文档的', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    // 【必须真等到切过去】没切过去时 shownEngine 仍是小说那本，这条用例就白测了
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: [PersistedSession][] }
+    }
+    const before = saveSession.mock.calls.length
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    // 【为什么取 before 那一条、而不是读 `saved`】600ms 那个防抖 effect 也会写小说那本；
+    // 读 `saved` 的话它随后一落盘就把值覆盖回小说，于是变异照样通过。
+    expect(saveSession.mock.calls.length).toBe(before + 1)
+    expect(saveSession.mock.calls[before][0].sourcePath).toBe(novel.sourcePath)
+  })
+
+  it('铺满 +/-：到端点只提示，在端点内则当场重铺', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    // 已经在 100%：按 + 是空转，只留一句提示，正文一个字都不动
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowUp', key: 'ArrowUp', metaKey: true, shiftKey: true })
+    })
+    expect(screen.getByTestId('toast').textContent).toContain('铺满已是 100%')
+    expect(revealedChars()).toBe(FILL_CHARS)
+
+    // 100% → 90%：钉的是「改设置的同时立刻重铺」（adjustBossFill 里那个 bossActive 分支）
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(fillCharsFor(90)))
+  })
+
+  it('设置里的「当前书」比例改的是【当前显示的那一份】', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10)) // 小说的比例是 10
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    // 在老板模式里把比例改成 30（Enter 走的就是保存那条 `handleSave()`，与本文件里
+    // 「改比例后同样的击键抽出更多字」用的是同一个交互）
+    openSettings()
+    const ratioInput = screen.getByTestId('ratio-input')
+    fireEvent.change(ratioInput, { target: { value: '30' } })
+    fireEvent.keyDown(ratioInput, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('settings-close'))
+
+    // 【判据落在打字上，不落在状态栏上】Task 7 之后老板模式下状态栏那格会被藏起来，
+    // 而「一次击键抽多少」是同一件事的、且不随界面口径变化的观测点。
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 30))
+
+    // 【这一半才是「回归」的判据】切回小说再打一次：小说的比例必须还是 10（10 → 20），
+    // 若 setter 改错了对象，小说已经被设成 30，这里会是 40。
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBe(20))
+  })
+
+  it('工作文档的起始比例取自【全局】比例，不是写死的 10', async () => {
+    const doc = makeWorkDoc()
+    // 没有小说：这一条只关心工作文档那台引擎的初值从哪来
+    installApi(null, null, { ...defaultSettings(), ratio: 3, workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    await act(async () => {
+      fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    })
+    // 【为什么这一条分辨得出来】现有夹具的比例都是默认的 10，写死 `10` 与读全局值在它们
+    // 身上同形。全局设成 3 之后，「打一个是 +3」才把两者分开。
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS + 3))
+  })
+
+  it('老板模式下按 ⌘O 打开一本小说，会回到小说那一份', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    importViaSettings()
+    // 【判据】`openNovel` 里那句 `setBossMode(false)` 是「⌘O 回到小说」的唯一原因：
+    // 少了它，这里仍是老板模式，值会是 FILL_CHARS 而不是 0。
+    await waitFor(() => expect(revealedChars()).toBe(0))
+    // 前提自检：屏幕上确实是**小说**那一份（它有两章，工作文档只有一章）——少了这一句，
+    // 「小说压根没打开」也会让上面那条断言为 0 而假绿。
+    expect(screen.getByTestId('chapter-item-1')).toBeTruthy()
+  })
+
+  it('配了路径但读不出来时，按老板键给的是【读不出来】那句提示', async () => {
+    // 路径配上了、`loadWorkDoc` 却读不出来（文件被移走/删掉）——与「压根没配」那句提示不同
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: '/tmp/绝对不存在.txt' }, null)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toContain('工作文档读不出来了')
+    )
+  })
+
+  it('老板模式下：标题条换成工作文档名、章节栏收起、状态栏少三格', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+
+    // 章节栏收起：`ChapterList` 收起时渲染的是那条 rail 按钮，不是 aside
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+    expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
+
+    // 状态栏三格消失
+    expect(screen.queryByTestId('status-ratio')).toBeNull()
+    expect(screen.queryByTestId('status-encoding')).toBeNull()
+    expect(screen.queryByTestId('status-mode')).toBeNull()
+
+    // 切回来全部复原
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('文档1'))
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+    expect(screen.getByTestId('status-ratio')).toBeTruthy()
+  })
+
+  it('设置里的文档名字段不被老板模式带偏', async () => {
+    // Ribbon 现在把同一个 docTitle 既用于标题条又转手给 SettingsDialog，
+    // 只覆盖前者的话，设置里那个输入框会跟着变成工作文档名
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+
+    openSettings()
+    const input = screen.getByTestId('doc-title-input') as HTMLInputElement
+    expect(input.value).toBe('文档1')
+  })
+
+  it('老板模式下只配了工作文档、没开小说时，「当前书」比例框仍然可用', async () => {
+    const doc = makeWorkDoc()
+    installApi(null, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBe(FILL_CHARS))
+
+    openSettings()
+    // 【这条钉的是 novelOpen】Task 7 把它改成 shownNovel !== null。屏幕上摊着的是工作
+    // 文档，所以那个框不该被禁用——改回 `novel !== null` 的话这里会红。
+    expect((screen.getByTestId('ratio-input') as HTMLInputElement).disabled).toBe(false)
+    expect(screen.queryByText('未打开文档')).toBeNull()
+  })
+
+  /**
+   * 【老板模式下两条折叠入口都失效，却仍会**写**偏好】
+   *
+   * `collapsed={sidebarCollapsed || bossActive}` 只是把「收起」强制覆盖掉，它拦不住
+   * `onCollapsedChange` 与 `toggle-sidebar` 那两条写入路径。症状是**退出老板模式那一刻**
+   * 侧栏反着用户的意展开——而两条路径在老板模式下屏幕上都没有任何反馈，所以没有任何
+   * 界面迹象能提示「刚才那一下记下来了」。
+   *
+   * 两条都要挡：只挡一条的话，两个入口会变成「一个写、一个不写」——那是比全写更难查的形态。
+   */
+  it('老板模式下两条折叠路径都不写偏好，退出后侧栏仍是收起的', async () => {
+    const novel = makeNovel()
+    const doc = makeWorkDoc()
+    installApi(novel, null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
+
+    const enterBoss = async (): Promise<void> => {
+      await act(async () => {
+        pressBossKey()
+      })
+      await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('季度汇报'))
+    }
+    const exitBoss = async (): Promise<void> => {
+      await act(async () => {
+        pressBossKey()
+      })
+      await waitFor(() => expect(screen.getByTestId('doc-title').textContent).toBe('文档1'))
+    }
+
+    // 前提自检：正常模式下这个按钮真的能把侧栏收起来。少了它，下面两段在「侧栏压根收
+    // 不起来」的世界里照样绿（那时 chapter-list 本来就一直是 null）。
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+
+    // 路径一：⌘⇧H。老板模式下 `collapsed` 是强制覆盖的，这个动作屏幕上没有反馈。
+    await enterBoss()
+    fireEvent.keyDown(window, { code: 'KeyH', key: 'H', metaKey: true, shiftKey: true })
+    await exitBoss()
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+
+    // 路径二：细缝里那个 rail 按钮——老板模式下 `sidebar-toggle` 正是它
+    // （`ChapterList` 收起时渲染的是 rail，不是 aside 里那个）。
+    await enterBoss()
+    fireEvent.click(screen.getByTestId('sidebar-toggle'))
+    await exitBoss()
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
+  })
+
+  /**
+   * 【这两条为什么要「先进老板模式、再按 ⌘⇧↓」，而不是像计划原文那样只按一下老板键】
+   *
+   * `applyFill` 判定「要不要量高度」看的是**当前显示的那一份**的 `mdDoc`，而按老板键那
+   * 一下它看到的还是**小说**那一份（`setBossMode` 还没提交）——小说是 `.txt`，`mdDoc`
+   * 为 null，于是直接走「不是 md：按字符数铺」那一支。**进老板模式那一下从来不开
+   * `measuring`**（实测：把那两处 `revealTo` 从 `applyFill` 里删掉，进老板模式后屏幕
+   * 一个字的没有；量到非空只可能来自别处）。要走到「量高度 → 量不出 → 退回按字符数」
+   * 那条降级路，必须**已经在老板模式里**再动一次铺满量，也就是 ⌘⇧↓。
+   *
+   * 夹具因此必须是 `.md`：`.txt` 的工作文档 `mdDoc` 恒为 null，`applyFill` 永远进不了
+   * 量高度那一支（计划原文用的是 `makeWorkDoc()`，那是 `.txt`）。这里只改 `sourcePath`
+   * 一个字段，正文 / 章节 / 助手全不动——Task 10 那两条 md 用例也是这个写法。
+   *
+   * 【与设计第 7 节「进入老板模式时量一次」的出入】照上一条实测，**进入那一下是按字符
+   * 数铺的**，量高度只发生在 ⌘⇧↑/↓ 上。根因是 `shownNovel = bossActive ? workNovel : novel`
+   * ——按下老板键那一刻 `bossActive` 还是 false，`mdDoc` 于是还是**小说**那一份的（`null`）。
+   * 实测：没有小说、工作文档是 md 时也照样不进量高度那一支（`shownNovel` 那时是 `null`）。
+   * 这条只有真机能判（jsdom 量不出高度，「按字符数」与「量不出所以按字符数」在屏幕上同形），
+   * 判据是计划末尾验收清单第 2 条。**别当成已实现。**
+   */
+  it('量不出块高时按 ⌘⇧↓：退回按字符数铺，屏幕上的字当场变少（不是空白）', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), bossFillPercent: 100, workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+    const before = revealedChars()
+
+    // 此刻真的在老板模式里了：这一发才会进 applyFill 的量高度那一支
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+
+    // 【这条守的是降级路径本身】jsdom 里 `offsetHeight` / `offsetTop` 恒为 0，
+    // `measureBlocks` 返回 null，于是走 `fillCharsFor(90)` = 1197 字那条老路：光标从
+    // 1330 退到 1197，屏幕上的字**变少**（md 渲染吃掉记号，所以只判方向、不判具体字数）。
+    //
+    // 【它同时是「开关真的开过」的证人】md 那一支里 `applyFill` **一个字都不铺**，铺字的
+    // 只有量完的那个 effect——所以「变少」就等于「measuring 开过 + 量不出 + 退回按字符数」
+    // 三件事一起成立。少了其中任何一件，光标都停在 1330、这里量到的是「没变」。下一条
+    // 用例的弱点正是靠这一条补上的（见那里的说明）。
+    await waitFor(() => expect(revealedChars()).toBeLessThan(before))
+  })
+
+  it('量完那次把开关关掉：隐藏副本只在算铺满的那一下存在', async () => {
+    const doc: Novel = { ...makeWorkDoc(), sourcePath: '/tmp/季度汇报.md' }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await act(async () => {
+      pressBossKey()
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+
+    // 副本只在算铺满那一下存在；量完必须关掉，否则每个按键都在重建整篇 DOM。
+    // 与上一条同样是「已经在老板模式里」再动一次铺满量，那一发才真的开 measuring。
+    await act(async () => {
+      fireEvent.keyDown(window, { code: 'ArrowDown', key: 'ArrowDown', metaKey: true, shiftKey: true })
+    })
+    // 【等「那一发跑完」再断言】这一发串起「开 measuring → effect 量完并关掉」，等屏幕上
+    // 的字真变少等于那一串已经走完。少了它，断言可能落在那一串**之前**——那时副本同样不
+    // 存在，这条就是**假绿**（计划 Step 2 警告的正是这个形态）。
+    await waitFor(() => expect(document.querySelector('.wt-md-measure')).toBeNull())
+
+    // 【这条断言单独看是弱的，它由上面那一条补齐】`measuring` 从没打开时副本也不存在，
+    // 这一条照样绿。计划 Step 2 因此要求「先断言它出现过」。**那一句在 jsdom 里写不出来**
+    // （实测：开着它跑就是红的）——副本挂上与摘掉都在**同一次 act 的 flush 里**，
+    // `setMeasuring(true)` 与 effect 里那次 `setMeasuring(false)` 之间那一帧的 DOM
+    // 从来不落到 `waitFor` 轮询得到的世界里。所以「开关真的开过」交给**上一条用例**作证
+    // （它要求量高度那一支真的铺了字），而不是在这里干等一个轮询不到的中间态。
+  })
+})
+
+describe('工作文档的 markdown 渲染', () => {
+  /**
+   * 造一本正文**真的含 `#`** 的小说。
+   *
+   * 【为什么不能拿 `makeNovel()` 顶上】那份夹具的正文里一个 `#` 都没有，于是
+   * `querySelector('h1')` 为 null 是必然的——**它证明不了「没走渲染」**，因为
+   * 「走了渲染」在那种夹具上同样得到 null。判据必须是「含 `#` 的正文有没有被吃掉」。
+   */
+  function makeHashNovel(sourcePath: string): Novel {
+    const text = '# 季度汇报\n\n本季度共归档 3 项。\n'
+    const { flatText, chapters } = splitChapters(text, '测试书')
+    return {
+      title: '测试书',
+      sourcePath,
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText,
+      chapters
+    }
+  }
+
+  /**
+   * 抽 1 个字（默认比例 10），让小说那条路的阅读区真的有东西。
+   *
+   * 【这里断的是「大于 0」，不是「等于 10」】`revealedChars()` 量的是 `page-text` 的
+   * **DOM 文本长度**，这在纯文本那条路上恰好等于抽出的字符数——但在 md 那条路上不等：
+   * 记号本身（`# `、`\n\n`）被渲染吃掉了，抽 10 个字符出来、DOM 里只有 6 个字
+   * （`季度汇报` + `本季`）。写死 10 会让 md 那两条用例量到的是渲染细节，而不是
+   * 「有没有东西被抽出来」——那正是这个前提自检唯一要保证的事。
+   */
+  async function typeOneChar(): Promise<void> {
+    const capture = screen.getByTestId('input-capture')
+    await act(async () => {
+      fireEvent.input(capture, { target: { value: 'x' } })
+    })
+    await waitFor(() => expect(revealedChars()).toBeGreaterThan(0))
+  }
+
+  it('导入 .md 后按老板键：阅读区是渲染后的结构，不是裸文本', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.md',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 【这一句不能省】`loadWorkDoc` 还没回来时按老板键，收到的是一条 toast 而不是切换
+    // ——用例会以「没有 h1」这种**看起来像功能没做**的样子红掉。见 `waitForWorkDocLoaded`。
+    await waitForWorkDocLoaded()
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    // 记号一个都不该露出来
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
+  })
+
+  it('.txt 工作文档走纯文本那条路：既不渲染，也不掉字', async () => {
+    const doc: Novel = {
+      ...makeWorkDoc(),
+      sourcePath: '/tmp/季度汇报.txt',
+      flatText: '# 季度汇报\n\n本季度共归档 3 项。\n'
+    }
+    installApi(makeNovel(), null, { ...defaultSettings(), workDocPath: doc.sourcePath }, doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    // 同前一条：不等它，老板键可能撞上「工作文档还没进内存」
+    await waitForWorkDocLoaded()
+    await act(async () => {
+      pressBossKey()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('page-text').textContent).toContain('#'))
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【强的这一条】小说是 `.txt`、正文**确实含 `# 标题`** → 必须原样显示那个 `#`。
+   *
+   * 这才是「.md 判定不会漏到小说身上」的真正判据：夹具里有一个**会被渲染吃掉**的记号，
+   * 所以「显示了」与「被吃了」在页面上是可区分的。旧版那条用例拿一份没有 `#` 的夹具断言
+   * `h1` 为 null，两个世界都通过，是空转的。
+   */
+  it('小说走 .txt：正文里的 `#` 原样显示，没有 h1', async () => {
+    const n = makeHashNovel('/tmp/测试书.txt')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    expect(screen.getByTestId('page-text').textContent).toContain('#')
+    expect(screen.getByTestId('page-text').querySelector('h1')).toBeNull()
+  })
+
+  /**
+   * 【诚实的这一条】小说是 `.md`、正文含 `# 标题` → **会**渲染成 `h1`。
+   *
+   * 这是刻意的、不是漏洞：判定只看**当前显示的那一份**的 `sourcePath` 扩展名，
+   * 与「工作文档」共用同一套渲染机制。小说导入的过滤器只收 txt，但「所有文件」那个入口
+   * 能让人选到 .md——那时它就该按 md 渲染（见 `App.tsx` 里 `mdDoc` 那段说明）。
+   * 这条用例钉的是这个事实，免得将来有人把它当成回归。
+   */
+  it('小说走 .md：同一个渲染机制照样生效，`#` 被吃成 h1（刻意如此）', async () => {
+    const n = makeHashNovel('/tmp/测试书.md')
+    installApi(n, null, defaultSettings())
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await typeOneChar()
+
+    await waitFor(() => expect(screen.getByTestId('page-text').querySelector('h1')).not.toBeNull())
+    expect(screen.getByTestId('page-text').textContent).not.toContain('#')
+  })
+})
+
+describe('设置里的工作文档', () => {
+  /**
+   * 【这条走的是启动时那一行 `setWorkDocBroken(true)`，组件层那条够不到它】
+   *
+   * `settings.test.tsx` 里那条同义用例直接把 `workDocBroken={true}` 传进壳，守的是组件层；
+   * 而「启动时读不出来 → 那个 prop 真的被置位」这一段在本次改动之前**一条断言都没有**——
+   * 实测：把 App 里那句 `setWorkDocBroken(true)` 改成 `false`，全套用例照样全绿。
+   */
+  it('配了路径但读不出来：那行说的是「读不出来」，而不是「未导入」', async () => {
+    installApi(null, null, { ...defaultSettings(), workDocPath: '/tmp/绝对不存在.txt' }, null)
+    render(<App />)
+    await waitForWorkDocLoaded()
+
+    openSettings()
+    const status = screen.getByTestId('work-doc-status')
+    expect(status.textContent).toContain('读不出来')
+    // 前提自检：那一行不是碰巧两种文案都带——没坏的话它就是「未导入」
+    expect(status.textContent).not.toContain('未导入')
+  })
+
+  /**
+   * 【这条补的是「用户能把一份工作文档导进来」这条核心路径——它此前**零覆盖**】
+   *
+   * 实测：删掉 `handleImportWorkDoc` 里那句 `setWorkDocPath(doc.sourcePath)`，或把
+   * `handleRemoveWorkDoc` 掏到只剩 `setBossMode(false) + notify`，**400 条全绿**。
+   * 而丢了路径写入的后果是静默的：工作文档每次启动都被忘掉。
+   *
+   * 【两个空转来源，都盯着】① 设置是 600ms 防抖落盘的，同步读 `saveSettings` 只会读到
+   * 上一发；所以要 `waitFor` 等它真落盘。② 读**最后一次**调用——早先那几发是别的路径
+   * （导入小说、启动读盘）触发的，拿它们断言等于什么都没测。
+   */
+  it('点「导入工作文档」会把路径写进落盘的设置，点「移除」会把它清掉', async () => {
+    const doc = makeWorkDoc()
+    installApi(makeNovel(), null, defaultSettings(), doc)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: [AppSettings][] }
+    }
+
+    // 前提自检：此刻设置里的路径确实是空的——否则下面那条「写进去了」可能只是启动读盘
+    // 带出来的，与这次点击无关。
+    expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath ?? null).toBeNull()
+
+    // 【openSettings 必须留在 act 外面】testing-library 把 React 的 flush 推到 act 结束，
+    // 与它同一个 act 里的 `getByTestId('btn-import-work-doc')` 会撞上「对话框还没挂载」。
+    openSettings()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    })
+    await waitFor(() =>
+      expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBe(doc.sourcePath)
+    )
+
+    // 「移除」按钮 gate 在 `workDocTitle !== null` 上，导入成功之后它才出现——顺序不能反
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
+    })
+    await waitFor(() => expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath).toBeNull())
+  })
+
+  /**
+   * 【设计 §9 承诺过「导入空文件 → 当场拒绝 + toast，设置不变」】
+   *
+   * 修之前这条规则**零覆盖**，而且做不到「出声」：`main` 侧那句 `flatText.length === 0 ? null`
+   * 让「空文件被拒」与「对话框取消」在渲染层是同一个 `null`，`if (!doc) return` 只能沉默——
+   * 用户选了个空 txt，屏幕上什么都不发生。
+   */
+  it('导入一个空文件：给一条 toast 并且什么都不改（不建引擎、不写路径）', async () => {
+    // 空文本的 Novel：`importWorkDoc` 桩返回它，其余一切照常
+    const empty: Novel = {
+      title: '空的',
+      sourcePath: '/tmp/空的.txt',
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText: '',
+      chapters: []
+    }
+    installApi(makeNovel(), null, defaultSettings(), empty)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: [AppSettings][] }
+    }
+
+    openSettings()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    })
+
+    // 出声了
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('空的'))
+    // 【「设置不变」这一半】路径没被写进去。读最后一次载荷——早先那几发是启动读盘/导入
+    // 小说触发的，拿它们断言等于什么都没测。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSettings.mock.calls.at(-1)?.[0].workDocPath ?? null).toBeNull()
+    // 而且没有建出那一份：状态行仍是「未导入」，也就没有「移除」按钮
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
+    expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
   })
 })

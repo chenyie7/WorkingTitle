@@ -1,0 +1,153 @@
+import { describe, it, expect } from 'vitest'
+import { render } from '@testing-library/react'
+import { Page, type MarkdownSource } from '../../src/renderer/src/components/Page'
+import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+
+const DOC = ['# 季度汇报', '', '本季度共归档 3 项。', '', '- 归档流程上线', '- 复核环节压缩到 2 天'].join('\n')
+
+function source(over: Partial<MarkdownSource> = {}): MarkdownSource {
+  return { doc: parseMarkdown(DOC)!, revealStart: 0, cursor: DOC.length, measuring: false, ...over }
+}
+
+/** 每次渲染都按这几个必填 prop 调一遍 `Page`，省得每个用例重复十行。 */
+function page(src: MarkdownSource | null, visibleText = '', props: { expanded?: boolean } = {}) {
+  return render(
+    <Page
+      visibleText={visibleText}
+      expanded={props.expanded ?? true}
+      onToggleExpand={() => {}}
+      empty={false}
+      markdown={src}
+    />
+  )
+}
+
+describe('Page —— md 分支', () => {
+  it('给了 markdown 就渲染结构，而不是裸文本', () => {
+    const c = page(source()).container
+    expect(c.querySelector('h1')).not.toBeNull()
+    expect(c.querySelector('ul')).not.toBeNull()
+    // 记号一个都不该露出来
+    expect(c.querySelector('[data-testid="page-text"]')!.textContent).not.toContain('#')
+    expect(c.querySelector('[data-testid="page-text"]')!.textContent).not.toContain('-')
+  })
+
+  it('光标推进，屏幕上就多一块（clipTree 真的接上了）', () => {
+    const c = page(source({ cursor: DOC.indexOf('本季度') })).container
+    expect(c.querySelector('h1')).not.toBeNull()
+    expect(c.querySelector('p')).toBeNull() // 第二段还没开始
+  })
+
+  it('**不给 markdown 时行为完全不变**：渲染的还是那一个字符串', () => {
+    const c = page(null, '第一章 甲').container
+    expect(c.querySelector('[data-testid="page-text"]')!.textContent).toContain('第一章 甲')
+    expect(c.querySelector('h1')).toBeNull()
+    expect(c.querySelector('p')).toBeNull()
+  })
+
+  it('measuring 为真时多出一份隐藏的整篇副本，为假时没有', () => {
+    // 【为什么必须能关掉】那份副本是**整篇**文档的 DOM，每次按键都渲染它
+    // 是不可接受的；它只在算铺满的时候开一下
+    expect(page(source({ cursor: 5 })).container.querySelector('.wt-md-measure')).toBeNull()
+    const withMeasure = page(source({ cursor: 5, measuring: true })).container
+    const measure = withMeasure.querySelector('.wt-md-measure')
+    expect(measure).not.toBeNull()
+    // 隐藏副本里的内容与光标无关，永远是整篇
+    expect(measure!.querySelector('ul')).not.toBeNull()
+  })
+
+  it('measuring 为真时把容器交给上层', () => {
+    const seen: (HTMLElement | null)[] = []
+    page(source({ cursor: 5, measuring: true, onMeasureNode: (el) => seen.push(el) }))
+    expect(seen.some((el) => el !== null && el.className.includes('wt-md-measure'))).toBe(true)
+  })
+
+  it('折叠条：按块边界折，数字是折点之前的字符数', () => {
+    // 光标推到很后面，且 expanded 为假 —— 触发折叠
+    const long = '# 标题\n\n' + '啊'.repeat(40000) + '\n'
+    const doc = parseMarkdown(long)!
+    const c = page({ doc, revealStart: 0, cursor: long.length, measuring: false }, '', { expanded: false }).container
+    const fold = c.querySelector('[data-testid="page-fold"]')
+    expect(fold).not.toBeNull()
+    // 数字必须是个正数，而且小于总长——具体值随块边界走，不做字面断言
+    const n = Number(fold!.textContent!.replace(/\D+/g, ''))
+    expect(n).toBeGreaterThan(0)
+    expect(n).toBeLessThan(long.length)
+  })
+
+  /**
+   * 【这条守的是「块的对齐」这件事本身】
+   *
+   * 量高度那一份副本里，**DOM 的直接子元素个数必须等于语法树的顶层节点个数**。
+   * 少了这一条，`definition`（`[a]: url`，真 md 里很常见）与只含注释 / `<script>`
+   * 的 HTML 块都会渲染出零个 Element，于是 DOM 比「块」少一个，
+   * `measureBlocks` 恒返回 null，**整篇静默退回按字符数铺**——不报错、不白屏。
+   *
+   * 缺口是 Task 7 的实施者量出来的：他拿真实的 `renderMarkdown(doc)` 跑，
+   * 数出来比 `doc.children.length` 少。
+   */
+  it('量高度那一份：DOM 子元素个数必须等于顶层节点个数（含 definition 与纯注释块）', () => {
+    const src = [
+      '# 标题',
+      '',
+      '[a]: https://example.com',
+      '',
+      '<!-- 一段注释 -->',
+      '',
+      '正文'
+    ].join('\n')
+    const doc = parseMarkdown(src)!
+    const measure = page({ doc, revealStart: 0, cursor: 0, measuring: true }).container.querySelector(
+      '.wt-md-measure'
+    )!
+    expect(measure.children.length).toBe(doc.children.length)
+    // 顺带钉住每个包装都带着自己的结束偏移——`measureBlocks` 靠它配对
+    for (const el of Array.from(measure.children)) {
+      expect(el.getAttribute('data-block-end')).not.toBeNull()
+    }
+  })
+})
+
+/**
+ * 阅读光标（设计 3.5）。
+ *
+ * 【判据一：不是 `.wt-page__text` 的**最后一个**子元素】光标原来由 `Page` 追加在内容末尾，
+ * 落在最后一个块**下方**；`renderMarkdown` 那条末尾兜底是同一个签名。修好之后它落在
+ * **块里面**——`<h1>` / `<p>` / `<li>` / `<pre>` / `<td>` 里。
+ *
+ * 【为什么不用 `closest('p')`】它把正确地待在标题、列表项、单元格、代码框里的落点全判成失败
+ * （本文件这份 DOC 上实测 5 格不成立、10 格误伤——评审逐偏移量过）。
+ *
+ * 【为什么不用「父元素是不是 `.wt-page__text`」】顶层还允许「占位**之前**」这一种落点
+ * （设计 3.5，`BlankSpace` 接的那几格），它同样是直接子元素；靠「是不是最后一个」才分得开。
+ *
+ * 【`cursor = 0` 是唯一的例外】那时树是空的，末尾兜底是唯一能放的位置。
+ */
+describe('Page —— 阅读光标', () => {
+  it('md 那条路：逐偏移扫，光标恰好一个，且不是末尾兜底那一下', () => {
+    for (let cursor = 0; cursor <= DOC.length; cursor++) {
+      const c = page(source({ cursor })).container
+      const text = c.querySelector('[data-testid="page-text"]')!
+      const carets = text.querySelectorAll('[data-testid="caret"]')
+      expect(carets, `cursor=${cursor} 光标数不对`).toHaveLength(1)
+      if (cursor === 0) {
+        // 树是空的（每个顶层块都满足「起始偏移 ≥ to」被丢掉），兜底是唯一的位置
+        expect(text.firstElementChild, `cursor=0 应当是末尾兜底`).toBe(carets[0])
+        continue
+      }
+      expect(text.lastElementChild === carets[0], `cursor=${cursor} 掉到块下方`).toBe(false)
+    }
+  })
+
+  it('纯文本那条路照旧：末尾那个光标还在', () => {
+    const c = page(null, '第一章 甲').container
+    const carets = c.querySelectorAll('[data-testid="caret"]')
+    expect(carets).toHaveLength(1)
+    expect(carets[0].closest('.wt-page__text')).not.toBeNull()
+  })
+
+  it('量高度那份副本里没有光标（找不着光标会让输入框退回纸张角上）', () => {
+    const c = page(source({ cursor: 5, measuring: true })).container
+    expect(c.querySelector('.wt-md-measure')!.querySelector('[data-testid="caret"]')).toBeNull()
+  })
+})

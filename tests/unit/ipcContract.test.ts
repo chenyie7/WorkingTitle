@@ -5,6 +5,9 @@ describe('IPC 契约', () => {
   it('通道名稳定且带 wt: 前缀', () => {
     expect(CH).toEqual({
       importNovel: 'wt:import-novel',
+      importWorkDoc: 'wt:import-work-doc',
+      loadWorkDoc: 'wt:load-work-doc',
+      loadWorkDocImage: 'wt:load-work-doc-image',
       openNovelPath: 'wt:open-novel-path',
       loadSession: 'wt:load-session',
       saveSession: 'wt:save-session',

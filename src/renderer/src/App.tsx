@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
+import type { MarkdownSource } from './components/Page'
 import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
-import { ToolbarProvider } from './state/ToolbarContext'
+import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
+import { isMarkdownPath, parseMarkdown } from './markdown/parse'
+import { pickFillCut, type BlockHeight } from './markdown/fill'
+import { measureBlocks } from './markdown/measure'
 import { useTypingEngine } from './state/useTypingEngine'
 import type { ThemeSource, WtApi } from './types/global'
 
@@ -37,6 +42,19 @@ function getApi(): WtApi | null {
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
   const [engine, setEngine] = useState<TypingEngine | null>(null)
+  /**
+   * **工作文档**：第二本 Novel，与小说并行存在。
+   *
+   * 【为什么是第二本 Novel 而不是另一个概念】引擎本来就是「一份内容 + 一个游标」，所以
+   * 「老板模式下打字照样抽字」「两份进度互不干扰」全部是免费的——不需要为它们写任何逻辑。
+   * 代价是它进不了 docx 的保真版式（表格图片塞不进 flatText），那个取舍见设计文档第 3 节。
+   */
+  const [workNovel, setWorkNovel] = useState<Novel | null>(null)
+  const [workEngine, setWorkEngine] = useState<TypingEngine | null>(null)
+  /** 显示哪一份。**纯内存、不落盘**——启动永远显示小说，崩了重启不该自动进老板模式。 */
+  const [bossMode, setBossMode] = useState(false)
+  /** 配了路径、但读不出来（文件被移走/删掉/读不出）。设置里据此标红。 */
+  const [workDocBroken, setWorkDocBroken] = useState(false)
   const [expanded, setExpanded] = useState(false)
   /**
    * 整条左栏（书名信息 + 章节列表）是否收起。
@@ -81,6 +99,8 @@ export default function App() {
    * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
    */
   const [recording, setRecording] = useState(false)
+  /** toast 的当前内容。**归 App 所有**——老板键的提示从这一层的分发器里弹，见设计文档 6.2 节。 */
+  const [toast, setToast] = useState<string | null>(null)
   /**
    * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
    *
@@ -91,10 +111,24 @@ export default function App() {
    */
   const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
   /**
+   * 工作文档路径与老板键的铺满量。
+   *
+   * 【这里不是「让界面跟随」，只是**把磁盘上那份原样带回去**】下面那个 memo 就是防抖落盘的
+   * 载荷，少一个字段就等于「启动一次之后把它冲成默认值」。`shortcuts` 曾经恒为写死的 `{}`
+   * 时正是这个症状：手改过 settings.json 的人启动一次就被无声冲成空表（见下面那段说明）。
+   * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
+   *
+   * 【两个 setter 现在都有调用方了】`setBossFillPercent` 在 `adjustBossFill` 与启动读盘两处；
+   * `setWorkDocPath` 在 `handleImportWorkDoc` / `handleRemoveWorkDoc` 与启动读盘三处
+   * ——「设置里的工作文档」那一步已经接上了。
+   */
+  const [workDocPath, setWorkDocPath] = useState<string | null>(null)
+  const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
-   * 防抖 effect），而首帧渲染时这四个状态还都是默认值——读盘是异步的。于是那个 effect
+   * 防抖 effect），而首帧渲染时这几个状态还都是默认值——读盘是异步的。于是那个 effect
    * 会先拿着「文档1 / 跟随系统 / 不暗 / null」写一遍，把磁盘上真正的设置冲掉，然后才读到
    * 已经被自己冲掉的默认值。
    */
@@ -103,9 +137,17 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  const engineRef = useRef<TypingEngine | null>(null)
+  /**
+   * **持久化专用**的引擎引用：永远指向小说那一本。
+   *
+   * 【为什么必须与「当前显示的那份」拆开】进老板模式之后屏幕上是工作文档，而工作文档
+   * **不落盘**。若 `flushSession` 读的是「当前显示的那一份」，关窗那一下就会把工作文档的
+   * 进度写进 `sessions/<工作文档的 hash>.json`——恰好是设计里说好不做的那件事，而且是在
+   * 关窗那一下**静默**发生的。
+   */
+  const novelEngineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
-  engineRef.current = engine
+  novelEngineRef.current = engine
   /**
    * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
    *
@@ -115,10 +157,20 @@ export default function App() {
    *
    * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
    * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
-   * 渲染期写 ref 是本文件既有的写法（见上面的 `engineRef.current = engine`）。
+   * 渲染期写 ref 是本文件既有的写法（见上面的 `novelEngineRef.current = engine`）。
    */
   const globalRatioRef = useRef(DEFAULT_RATIO)
   globalRatioRef.current = globalRatio
+  /**
+   * 最新的铺满量，挂在 ref 上给下面两个动作读。
+   *
+   * 【为什么不用闭包里的 `bossFillPercent`】那两个动作每次渲染都是新函数（它们要进分发器的
+   * actions 对象），直接把 `bossFillPercent` 放进依赖也行——但 `toggleBoss` 同时依赖
+   * `workNovel` / `workEngine` / `bossMode`，每改一次铺满量就换一次身份。挂 ref 与
+   * `globalRatioRef` 是同一套写法，也同一套理由。
+   */
+  const bossFillPercentRef = useRef(BOSS_FILL_MAX)
+  bossFillPercentRef.current = bossFillPercent
 
   const settingsRef = useRef<AppSettings | null>(null)
   /**
@@ -150,19 +202,195 @@ export default function App() {
    * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
    */
   const settings: AppSettings = useMemo(
-    () => ({ docTitle, themeSource, darkPaper, lastSourcePath, ratio: globalRatio, shortcuts }),
-    [docTitle, themeSource, darkPaper, lastSourcePath, globalRatio, shortcuts]
+    () => ({
+      docTitle,
+      themeSource,
+      darkPaper,
+      lastSourcePath,
+      ratio: globalRatio,
+      workDocPath,
+      bossFillPercent,
+      shortcuts
+    }),
+    [
+      docTitle,
+      themeSource,
+      darkPaper,
+      lastSourcePath,
+      globalRatio,
+      workDocPath,
+      bossFillPercent,
+      shortcuts
+    ]
   )
   settingsRef.current = settingsLoaded ? settings : null
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
 
-  const state = useTypingEngine(engine)
+  /** 弹一条自动消失的提示。时长共用 `TOAST_MS`（与 provider 内部那份同一个常量）。 */
+  const notify = useCallback((message: string): void => {
+    setToast(message)
+    window.setTimeout(() => {
+      setToast((current) => (current === message ? null : current))
+    }, TOAST_MS)
+  }, [])
+
+  /**
+   * 当前**显示**的那一份。渲染树里凡是跟着「显示了什么内容」走的地方都读这两个变量。
+   *
+   * 【为什么多一个 `bossActive` 而不是直接用 `bossMode`】它把「想切过去」与「切得过去」
+   * 分开，防的是「`bossMode` 为真、工作文档却是 null」——那时页面会变成一片空白。
+   *
+   * 【当下它每一帧都与 `bossMode` 相等，这是**防御性**的】两条能置空 `workNovel` 的路
+   * （`handleRemoveWorkDoc`、boot 里读不出来时的那次赋值）都与 `setBossMode(false)` 在
+   * 同一次批处理里，中间没有「`bossMode` 真而 `workNovel` 空」的渲染帧。实测两个 setter
+   * 一起提交的结果是 `[false, false, false]`。留着它是因为这类「两个状态各改各的」将来
+   * 很容易真的分叉——分叉的表现是整页空白，不值得等它发生再修。
+   */
+  const bossActive = bossMode && workNovel !== null && workEngine !== null
+  const shownNovel = bossActive ? workNovel : novel
+  const shownEngine = bossActive ? workEngine : engine
+
+  const state = useTypingEngine(shownEngine)
+
+  /**
+   * 【解析只做一次，缓存在这里】`useMemo` 的键是 `shownNovel` 这个对象：
+   * 它只在「换书 / 切老板模式 / 重新导入」时换身份，按键时不换。
+   * 200KB 的 md 解析是几十毫秒量级，每次按键重解析不可接受。
+   *
+   * 【判定按扩展名，只在工作文档这一路生效】小说的导入过滤器只收 txt，
+   * 但「所有文件」那个入口能让人选到 .md——那种情况下这里的判定也会为真，
+   * 而它与「工作文档」是同一套渲染，行为一致，不是漏洞。
+   *
+   * 【解析失败（null）就退回纯文本】`mdDoc` 为 null 时下面那个 `mdSource` 也是 null，
+   * `Page` 走纯文本那条路（设计第 12 节：不许白屏）。
+   */
+  const mdDoc = useMemo(() => {
+    if (!shownNovel || !isMarkdownPath(shownNovel.sourcePath)) return null
+    return parseMarkdown(shownNovel.flatText)
+  }, [shownNovel])
+
+  /**
+   * 量高度用的隐藏副本开关。默认关：那份副本是**整篇**文档的 DOM，
+   * 每次按键都渲染它不可接受。只有「要算铺满切点」时才开一下（Task 11）。
+   */
+  const [measuring, setMeasuring] = useState(false)
+  /** 隐藏副本的根元素。`MarkdownView` 挂载时交过来，量高度时读它的直接子元素 */
+  const measureElRef = useRef<HTMLElement | null>(null)
+  const onMeasureNode = useCallback((el: HTMLElement | null): void => {
+    measureElRef.current = el
+  }, [])
+
+  /**
+   * 量好的块高表。
+   *
+   * 【为什么缓存】算铺满切点要用它，而它只跟「文档 + 样式」有关，与铺满百分比无关。
+   * 于是按 ⌘⇧↑/↓ 时只重算切点，不重量。挂 `doc` 一起存，换文档自然失效。
+   */
+  const heightsRef = useRef<{ doc: unknown; heights: BlockHeight[] } | null>(null)
+  /** 有一次「开量高度」在等结果：量完要拿它接着算切点 */
+  const pendingFillRef = useRef<number | null>(null)
+
+  /** 纸张正文区的高度。**量出来的，不是写死的 912**。 */
+  const pageTextHeight = useCallback((): number => {
+    const el = document.querySelector('.wt-page')
+    if (!(el instanceof HTMLElement)) return 0
+    const cs = getComputedStyle(el)
+    const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+    return Number.isFinite(inner) && inner > 0 ? inner : 0
+  }, [])
+
+  /**
+   * 铺满铺的是**工作文档**，所以「要不要量高度」判的也是它，**不是当前显示的那一份**。
+   *
+   * 【为什么不能用 `mdDoc`】`mdDoc` 跟着 `shownNovel = bossActive ? workNovel : novel` 走，
+   * 而按下老板键那一刻 `bossActive` 还是 false——那一下 `mdDoc` 还是**小说**那一份的
+   * （小说是 txt 时为 null）。照 `mdDoc` 分岔，进老板模式就永远进不了量高度那一支，
+   * 铺出来的是按字数估的切点、屏幕底部切在半句话上；只有「已经在老板模式里」再按
+   * ⌘⇧↑/↓ 才会量。实测（Task 11 收尾）：把分岔改回 `mdDoc`，那条「按 ⌘⇧B 会调
+   * `measureBlocks`」的用例当场红。
+   */
+  const workIsMarkdown = workNovel !== null && isMarkdownPath(workNovel.sourcePath)
+
+  /**
+   * 铺满：能算就直接算，算不了就先开量高度、等量完再算。
+   *
+   * 【三条路，顺序不能换】
+   * 1. 有缓存（同一份文档量过）→ 直接算切点；
+   * 2. 没有缓存 → 开 `measuring` 渲染隐藏副本，把百分比记在 `pendingFillRef` 里，
+   *    量完的那个 effect 接着算；
+   * 3. 量不出来（jsdom、或者量出来是 0）→ **退回按字符数**（`fillCharsFor`）。
+   *    这条兜底是设计第 7 节写明的，也是这条路径唯一能在单测里跑到的那一半。
+   */
+  const applyFill = useCallback(
+    (percent: number): void => {
+      const eng = workEngine
+      if (!eng) return
+      const cached = heightsRef.current
+      if (workIsMarkdown && cached && cached.doc === workNovel) {
+        eng.revealTo(pickFillCut(cached.heights, (pageTextHeight() * percent) / 100))
+        return
+      }
+      if (!workIsMarkdown) {
+        // 不是 md：没有结构可量，本来就是按字符数铺
+        eng.revealTo(fillCharsFor(percent))
+        return
+      }
+      pendingFillRef.current = percent
+      setMeasuring(true)
+    },
+    [workEngine, workNovel, workIsMarkdown, pageTextHeight]
+  )
+
+  /**
+   * 隐藏副本渲染完之后：量高度、算切点、把开关关掉。
+   *
+   * 【为什么必须在 effect 里】量的是 DOM 的布局，而布局要等 commit 之后才有。
+   */
+  useEffect(() => {
+    if (!measuring) return
+    const el = measureElRef.current
+    /**
+     * 【为什么整个包在 try 里】设计第 7 节那条兜底写的是「量不出高度（jsdom 里
+     * `offsetHeight` 恒为 0，**或测量抛错**）→ 退回按字符数」。`offsetHeight` 本身
+     * 不抛，但读布局在渲染异常、DOM 已被卸载之类的情况下会抛，而这条 effect 里抛出去
+     * 就是一次未捕获异常。包住它，兜底路径才真的是兜底。
+     *
+     * 【为什么不再传 ends】`measureBlocks` 现在从 DOM 自己的 `data-block-end` 读偏移，
+     * 不再吃一个外部数组。原因是那样是「两处各自决定有几个块」，永远能对不上；
+     * 而对不上的后果是整篇静默退回按字符数铺（见 `MarkdownView` 里那段说明）。
+     */
+    let heights: BlockHeight[] | null = null
+    try {
+      heights = measureBlocks(el)
+    } catch (err) {
+      console.warn('[wt] 量 markdown 块高失败，退回按字符数铺：', err)
+    }
+    const percent = pendingFillRef.current
+    pendingFillRef.current = null
+    if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
+    // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
+    workEngine?.revealTo(
+      heights ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100) : fillCharsFor(percent ?? 0)
+    )
+    setMeasuring(false)
+  }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
+
+  const mdSource: MarkdownSource | null =
+    mdDoc && state
+      ? {
+          doc: mdDoc,
+          revealStart: state.revealStart,
+          cursor: state.cursor,
+          measuring,
+          onMeasureNode
+        }
+      : null
 
   /** 把当前这本的进度立刻落盘（不等防抖）。换书前与关窗前各用一次。 */
   const flushSession = useCallback((): void => {
     const api = getApi()
-    const current = engineRef.current
+    const current = novelEngineRef.current
     if (api && current) void api.saveSession(current.toSession())
   }, [])
 
@@ -187,9 +415,11 @@ export default function App() {
       //
       // 【放在提交点之前、而不是函数开头】开头到这里隔着一个 await：那期间落在旧引擎上的击键
       // 会重排防抖定时器、随后被 cleanup 清掉，开头那次 flush 并没有覆盖到它。放在这里，
-      // `engineRef.current` 仍是上一本（还没人 setEngine），上面这句话才是字面为真的。
+      // `novelEngineRef.current` 仍是上一本（还没人 setEngine），上面这句话才是字面为真的。
       flushSession()
 
+      // 「打开一本小说」就是「你要看小说」——老板模式下按 ⌘O 也照此办理
+      setBossMode(false)
       setNovel(next)
       // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
       // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
@@ -229,6 +459,133 @@ export default function App() {
     await api.clearSession()
   }, [])
 
+  /**
+   * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
+   *
+   * 【为什么同时 setBossMode(false)】它挡的是「**在老板模式开着的时候**导入一份新文档」：
+   * 没有这一行，`bossActive` 会立刻变真、界面自己跳到刚导入的那份上。导入这个动作本身
+   * 不该改变你正在看什么。
+   *
+   * 【别写成「启动时读不出来，bossMode 还留着上次的值」】那句是假的——`bossMode` 是纯渲染层
+   * 的 `useState(false)`，既不进 `AppSettings`、boot 也不恢复它，启动时恒为 false。
+   */
+  const handleImportWorkDoc = useCallback(async (): Promise<void> => {
+    const api = getApi()
+    if (!api) return
+    const doc = await api.importWorkDoc()
+    // null ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
+    if (!doc) return
+    /**
+     * **空文件在这里出声并拒绝**（设计 §9：「当场拒绝 + toast，设置不变」）。
+     *
+     * 【为什么判断在渲染层、而不是让 IPC 返回 null】`main` 侧那条 `loadWorkDoc` **刻意不判空**
+     * ——它要是判了，这里拿到的 null 与「取消」就是同一个值，只能沉默，用户选了个空 txt
+     * 屏幕上什么都不会发生（这正是修之前的行为）。
+     *
+     * 【与 main 侧那处判空不是重复】boot 那条路（`wt:load-work-doc`）**判**：启动时读到空文档
+     * 当「读不出来」，标红、按老板键给说明。两条路的策略不同是有意的，别顺手合并掉一处。
+     */
+    if (doc.flatText.length === 0) {
+      notify('这个文件是空的，换一个')
+      return
+    }
+    // 【表达意图的冗余，不是承重的那道闸】块高表真正的失效判据是**身份**
+    // （`cached.doc === workNovel`），而这里必然换上一个新的 `workNovel`、陈旧表本来就命中
+    // 不了。留着它是「别捏着上一份文档的高度数组不放」。同款一处见 `handleRemoveWorkDoc`。
+    heightsRef.current = null
+    setWorkNovel(doc)
+    setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+    // 路径就在 Novel 里，不必让 IPC 多返回一个值
+    setWorkDocPath(doc.sourcePath)
+    setWorkDocBroken(false)
+    setBossMode(false)
+    notify('已导入工作文档')
+  }, [notify])
+
+  const handleRemoveWorkDoc = useCallback((): void => {
+    // 同 `handleImportWorkDoc`：身份（`workNovel` 变成 null）已经足以判失效，这一行是
+    // 「顺手丢掉那份引用」，不是任何用例的判据。
+    heightsRef.current = null
+    setWorkNovel(null)
+    setWorkEngine(null)
+    setWorkDocPath(null)
+    setWorkDocBroken(false)
+    setBossMode(false)
+    notify('已移除工作文档')
+  }, [notify])
+
+  /**
+   * 老板键：切到工作文档 / 切回小说。
+   *
+   * 【进入时为什么必须重铺】工作文档不持久化进度（设计文档第 5 节）。持久化的话，老板在你
+   * 旁边站久了会把它抽到末尾，**下次一进来打字就不出字**——比什么都不做更露馅；而且
+   * 「铺满量」那个旋钮会被进度盖住，调了没反应。
+   */
+  const toggleBoss = useCallback((): void => {
+    if (!workNovel || !workEngine) {
+      notify(
+        workDocPath
+          ? '工作文档读不出来了，请在设置里重新导入'
+          : '还没导入工作文档（文件 → 设置 → 导入工作文档）'
+      )
+      return
+    }
+    const next = !bossMode
+    if (next) applyFill(bossFillPercentRef.current)
+    /**
+     * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
+     *
+     * 【进入时】不清的话工作文档一进来就是一张长纸（小说那边点开的「展开前文」被带了过来）。
+     * 【出去时】同理：`expanded` 是一个共享值，而老板模式下它基本不会被改动——那条折叠条要
+     * `visibleText` 超过 `RENDER_WINDOW_LIMIT`（30000 字）才渲染，而铺满 100% 也才
+     * `CHARS_PER_SHEET`（1330）字；要在老板模式里把它顶到 30000 得再敲约三千下。所以退出时
+     * 它多半还停在**进老板模式之前**那个值上，带着它回去等于把用户刚离开的阅读位置又翻出来
+     * 一次，方向反了。
+     *
+     * 两个方向共用这一句是刻意的：谁都不该继承对面那一侧的展开态。所以它写在 `if (next)`
+     * 之外——**别把它挪进去**。
+     */
+    setExpanded(false)
+    setBossMode(next)
+  }, [workNovel, workEngine, bossMode, workDocPath, notify, applyFill])
+
+  /** 老板键铺满 +/-：改设置；正在老板模式时**立刻重铺**，让用户当场看到效果。 */
+  const adjustBossFill = useCallback(
+    (dir: 1 | -1): void => {
+      const next = stepBossFill(bossFillPercentRef.current, dir)
+      if (next === bossFillPercentRef.current) {
+        notify(`铺满已是 ${next}%`)
+        return
+      }
+      setBossFillPercent(next)
+      // 这一处会**刻意**往回退（按 − 就是要少显示一点）。
+      //
+      // 【但「会往回退」不是这一处独有的】`toggleBoss` 那条路也会：在**非**老板模式下把铺满量
+      // 调小（那时 bossActive 为假、只改设置不重铺），再按老板键切进去，光标就是从上次那个
+      // 位置退到新值。别在别处依赖「它只会往前」。
+      //
+      // 【但它退不过 revealStart】`revealTo` 的下界是 `revealStart` 而不是 0（见 Task 2 的
+      // 注释与用例）。工作文档这一路 `revealStart` 恒为 0——它的引擎由 `new TypingEngine`
+      // 建出来、从不走 `fromSession`；而**唯一能改写 `revealStart` 的 `jumpToChapter` 只挂在
+      // 章节栏上**。
+      //
+      // 【上一版里这条是可达的，是界面跟随把它关上的】Task 6 只做到「老板模式换引擎」，章节栏
+      // 在老板模式下照旧展开、照旧点得到（传给它的 `novel` 就是工作文档，列表里是它的章）。
+      // 那时在老板模式里跳一次章，`revealStart` 就抬起来了，这条「按 −」会静默停在那儿不再
+      // 往下走。本任务用 `ChapterList` 的 `collapsed={sidebarCollapsed || bossActive}` 把它
+      // 按住——老板模式下强制收起，`jumpToChapter` 在界面上再没有入口。
+      // 危害本来也很小（旋钮少了一段行程），不值得为它加一层状态；记在这里是别让人把它当 bug 查。
+      if (bossActive) applyFill(next)
+      /**
+       * 【md 那一路不能报字数】它按**渲染后的高度**铺，`fillCharsFor` 只是量不出高度时的
+       * 兜底估算——报出来是个假数字（屏幕上根本不是那么多个字）。那种「看起来精确、
+       * 其实错」的提示比不提示更糟，所以那一路只报档位。
+       */
+      notify(workIsMarkdown ? `铺满 ${next}%` : `铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+    },
+    [bossActive, applyFill, notify, workIsMarkdown]
+  )
+
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
   useEffect(() => {
     const api = getApi()
@@ -249,7 +606,40 @@ export default function App() {
       setLastSourcePath(settings.lastSourcePath)
       setGlobalRatio(settings.ratio)
       setShortcuts(settings.shortcuts)
+      // 【这一夹是必须的，不是防御】settingsProblem 只判「是不是有限数字」，值域夹紧归 core
+      // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
+      // 而第一次按「铺满 −」会从 500 一步跳到 100。
+      setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
+      setWorkDocPath(settings.workDocPath)
       setSettingsLoaded(true)
+
+      // 工作文档：**启动时就读进来常驻内存**。老板键要的是零延迟——等按下去了才读盘，
+      // 老板已经站在旁边了。读不出来时不弹打扰提示（那会在你早忘了这回事的时候吓你一下），
+      // 只在设置里标红，以及按老板键时给一句说明。
+      if (settings.workDocPath) {
+        const doc = await api.loadWorkDoc(settings.workDocPath)
+        if (cancelled) return
+        if (doc) {
+          setWorkNovel(doc)
+          // 与「新导入一本书」同一条路：拿全局比例当初值。
+          //
+          // 【这里读的是刚读回来的 `settings.ratio`，不是 `globalRatioRef.current`】两者本该
+          // 同值，但**那个 ref 在这一次 await 之后还是旧的**：写 ref 发生在渲染期，而上面那几行
+          // `setGlobalRatio(settings.ratio)` 排的那次渲染还没提交，`await api.loadWorkDoc(...)`
+          // 就已经返回了。实测（探针＝把 loadWorkDoc 的桩拖成一个 50ms 的宏任务）：延迟之后比值
+          // 就对上了——所以这不是「值算错了」而是**竞态**，真实 IPC 的耗时碰巧总让 React 先渲染完，
+          // 于是它只在单测里显形。刚读回来的这个值没有这个问题，语义与「拿全局比例当初值」一致。
+          //
+          // 【别为了「两处看起来一致」把这里换回 ref】`openNovel` 必须读 ref，是因为它闭包里
+          // 那个 `globalRatio` 是**首次渲染**时的旧值（它的依赖只有 `flushSession`，见
+          // `globalRatioRef` 那段说明）；而 boot 里 `settings` 就在手边，压根不存在那个问题。
+          // 同一个写法在两个不同前提下会变成教条——这里要的是「当前值」，那里要的是「绕开闭包」。
+          setWorkEngine(new TypingEngine(doc, { ratio: settings.ratio }))
+        } else {
+          // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
+          setWorkDocBroken(true)
+        }
+      }
 
       // 【依次尝试，而不是只挑一个】命令行给的路径优先，**它打不开时回退到「上次打开的那本」**。
       // 这个回退原先是由两段式启动天然给的（第一段的 catch 刻意不 return，落到第二段），
@@ -350,8 +740,20 @@ export default function App() {
     enabled: !recording,
     actions: {
       import: () => void handleImport(),
-      'toggle-sidebar': () => setSidebarCollapsed((v) => !v),
-      'open-settings': () => setSettingsOpen(true)
+      // 【老板模式下不写】收起在那边是**强制覆盖**的（见下面 ChapterList 的 `collapsed`），
+      // 于是这一下屏幕上没有任何反馈；可它会改掉本次会话里的侧栏状态，退出老板模式那一刻
+      // 突然生效——侧栏反着用户的意展开。没有反馈的写是最难查的一类。
+      // （`sidebarCollapsed` 本身**不落盘**，所以这里说的是「这次会话的界面状态」，不是偏好。）
+      'toggle-sidebar': () => {
+        if (!bossActive) setSidebarCollapsed((v) => !v)
+      },
+      'open-settings': () => setSettingsOpen(true),
+      'boss-key': toggleBoss,
+      // 这两行只是闭包，它们自己**不读 ref**——读 `bossFillPercentRef` 的是 `adjustBossFill`
+      // 内部（理由见那个 ref 声明处）。这里之所以每次渲染换新函数也没关系，是因为 actions
+      // 每次渲染都是新对象、分发器把它整个挂在 ref 上。
+      'boss-fill-up': () => adjustBossFill(1),
+      'boss-fill-down': () => adjustBossFill(-1)
     }
   })
 
@@ -390,7 +792,7 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', flush)
   }, [flushSession])
 
-  const visibleText = engine?.visibleText ?? ''
+  const visibleText = shownEngine?.visibleText ?? ''
   const revealedChars = state ? state.cursor - state.revealStart : 0
 
   /**
@@ -452,13 +854,31 @@ export default function App() {
       ratio: state?.ratio,
       mode: state?.mode,
       globalRatio,
-      onRatioChange: (n: number) => engineRef.current?.setRatio(n),
+      onRatioChange: (n: number) => shownEngine?.setRatio(n),
       onGlobalRatioChange: setGlobalRatio,
-      onModeChange: (m: InputMode) => engineRef.current?.setMode(m),
+      onModeChange: (m: InputMode) => shownEngine?.setMode(m),
       onImport: () => void handleImport(),
-      onClearSession: () => void handleClearSession()
+      onClearSession: () => void handleClearSession(),
+      toast,
+      notify
     }),
-    [state?.ratio, state?.mode, globalRatio, handleImport, handleClearSession]
+    // 【`shownEngine` 必须在这个数组里】上面两个 setter 闭包捕获的是它，而**依赖数组不能
+    // 拿「值变没变」当判别依据**：小说与工作文档的 ratio / mode 默认值相同（都取全局比例、
+    // 都是 'ime'），切模式时这几个依赖可以毫无变化——memo 不重算，setter 就仍指着小说。
+    // 表现是老板模式下改「当前书」比例改的是小说那本（还会被防抖 effect 落进它的会话文件）。
+    //
+    // 【加进来没有额外代价】全仓没有 `React.memo`，切模式那一下本来就整棵树重渲染；而每次
+    // 击键 `shownEngine` 的身份不变，memo 照旧命中。
+    [
+      state?.ratio,
+      state?.mode,
+      globalRatio,
+      shownEngine,
+      handleImport,
+      handleClearSession,
+      toast,
+      notify
+    ]
   )
 
   return (
@@ -466,29 +886,41 @@ export default function App() {
       <div className="wt-app" data-testid="app-root">
         <Ribbon
           docTitle={docTitle}
+          displayTitle={bossActive && workNovel ? workNovel.title : docTitle}
           onDocTitleChange={setDocTitle}
           darkPaper={darkPaper}
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
-          novelOpen={novel !== null}
+          novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
           onShortcutsChange={setShortcuts}
           onRecordingChange={setRecording}
+          workDocTitle={workNovel?.title ?? null}
+          workDocPath={workDocPath}
+          workDocBroken={workDocBroken}
+          onImportWorkDoc={() => void handleImportWorkDoc()}
+          onRemoveWorkDoc={handleRemoveWorkDoc}
           settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 
         <div className="wt-body">
           <ChapterList
-            novel={novel}
+            novel={shownNovel}
             activeChapter={state?.activeChapter ?? 0}
             chapterPos={state?.chapterPos ?? []}
-            onJump={(i) => engineRef.current?.jumpToChapter(i)}
-            collapsed={sidebarCollapsed}
-            onCollapsedChange={setSidebarCollapsed}
+            onJump={(i) => shownEngine?.jumpToChapter(i)}
+            collapsed={sidebarCollapsed || bossActive}
+            // 【老板模式下不写】`collapsed` 那边是强制覆盖的，所以 rail 按钮在老板模式下
+            // 按下去屏幕上不会有任何变化——而（没有这道闸时）它会改掉本次会话里的侧栏状态，
+            // 退出老板模式那一刻突然生效。与上面 `toggle-sidebar` 那条**必须同时挡**：
+            // 只挡一条会留下「同样的操作，一个写一个不写」的更糟形态。
+            onCollapsedChange={(v) => {
+              if (!bossActive) setSidebarCollapsed(v)
+            }}
             sidebarShortcut={formatShortcut(shortcutTable['toggle-sidebar'], kind)}
           />
 
@@ -497,22 +929,30 @@ export default function App() {
               visibleText={visibleText}
               expanded={expanded}
               onToggleExpand={() => setExpanded(true)}
-              empty={!novel}
+              empty={!shownNovel}
               importShortcut={formatShortcut(shortcutTable.import, kind)}
+              markdown={mdSource}
             >
-              {engine && state && (
-                <InputCapture engine={engine} mode={state.mode} />
+              {shownEngine && state && (
+                <InputCapture engine={shownEngine} mode={state.mode} />
               )}
             </Page>
           </main>
         </div>
 
         <StatusBar
-          novel={novel}
+          novel={shownNovel}
           revealedChars={revealedChars}
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
+          // 【传的是 `bossActive` 而不是 `bossMode`——两者今天其实同步，这是**防御性**的】
+          // 它管的是「藏掉那三格」，语义上要的是 `bossActive`（屏幕上摊着的确实是工作文档）
+          // 而不是 `bossMode`（想进老板模式）。今天两者在每个提交过的渲染里都相等
+          // ——`handleRemoveWorkDoc` 里那两个 setter 是同一次批处理，中间没有 `bossMode` 为真
+          // 而 `workNovel` 已空的那一帧。将来若「工作文档能在老板模式开着时被置空」成真，
+          // 这一行才真的救场。
+          hideReadingCells={bossActive}
         />
 
         <Toast />

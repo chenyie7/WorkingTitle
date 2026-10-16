@@ -140,7 +140,7 @@ export class TypingEngine {
    * 统一收尾规则：把中间被整章越过的章节标记为已读完，再把 chapterPos[新章]
    * 同步为章内偏移。
    *
-   * 【调用者只有 pump 与 backspace——jumpToChapter 刻意不走这里】（见该方法的注释）。
+   * 【调用者只有 pump、backspace 与 revealTo——jumpToChapter 刻意不走这里】（见各方法自己的注释）。
    * 「统一收尾规则」这条名字容易读成「任何游标变化之后都执行」，那不是事实，
    * 也不是笔误：跳章要的是「点了哪章就高亮哪章」，与本方法算出来的 activeChapter
    * 在目标章已读完时并不一致。
@@ -149,8 +149,8 @@ export class TypingEngine {
     const chapters = this._novel.chapters
     const total = this._novel.flatText.length
     // 下夹 0 是【不可达的防守】，别把它当成 commit 的一般性范围闸：pump 有 k > 0 闸
-    // 且 ratio ≥ 1、backspace 以 revealStart(≥ 0) 为下界、jump 至少是 chapter.start、
-    // fromSession 夹到 ≥ 0——差分实测 0/5200 有差异。真正承重的是 Math.min 那半边：
+    // 且 ratio ≥ 1、backspace 以 revealStart(≥ 0) 为下界、revealTo 同样以 revealStart(≥ 0) 为下界、
+    // jump 至少是 chapter.start、fromSession 夹到 ≥ 0——差分实测 0/5200 有差异。真正承重的是 Math.min 那半边：
     // 「游标不越过正文末尾」全靠它（去掉它，末尾钳制立刻失守）。
     const cursor = Math.max(0, Math.min(nextCursor, total))
     const idx = this.chapterIndexOf(cursor)
@@ -198,6 +198,36 @@ export class TypingEngine {
   backspace(k: number): void {
     if (!(k > 0)) return
     const next = Math.max(this._state.revealStart, this._state.cursor - k * this._state.ratio)
+    if (next === this._state.cursor) return
+    this.commit(next)
+  }
+
+  /**
+   * 把阅读光标直接设到 `n`，夹紧到 `[revealStart, total]`。**可增可减。**
+   *
+   * 老板键的「铺满」用它：切到工作文档时一次把设定好的那些字铺出来；按 +/- 调铺满量时又用它
+   * 重铺。**对外的方法里只有它收的是绝对位置**——`pump` / `backspace` 收的是「走多少步」的
+   * 相对量（还要乘上可变的 `ratio`），`jumpToChapter` 收的是章号、目标由 `chapterPos[i]` 决定。
+   * 「铺到第 N 字」这种说法只能落到它身上。
+   *
+   * 【为什么走 commit 而不是自己改 `_state.cursor`】`commit` 是「统一收尾规则」的唯一实现：
+   * 它会补上被整章越过的那些章，并把 `chapterPos[新章]` 同步成章内偏移。绕开它自己设游标，
+   * 跳章后的侧栏高亮与 `chapterPos` 就会与游标脱节——而那种脱节不会抛错，只会表现为
+   * 「进度莫名其妙不对」。
+   *
+   * 【下界为什么是 revealStart 而不是 0】与 `backspace` 同一个理由：阅读区显示的是
+   * `flatText.slice(revealStart, cursor)`，游标退到窗口起点之前，阅读区就永久空白了。
+   *
+   * 【非有限值必须在这里挡掉】`Math.min(NaN, total)` 与 `Math.max(revealStart, NaN)` 都返回
+   * NaN，一路传进 commit 之后游标就是 NaN——`visibleText` 变空串、状态栏百分比变 NaN%，
+   * 而且**再也恢复不了**（此后每一次 pump 都在 NaN 上算）。这不是理论风险：调用方拿的是
+   * 「设置文件里的一个数字」。
+   */
+  revealTo(n: number): void {
+    if (!Number.isFinite(n)) return
+    // 游标是字符下标，收成整数再夹——否则 3.7 会透传进 toSession 与 slice
+    const target = Math.round(n)
+    const next = Math.max(this._state.revealStart, Math.min(target, this._novel.flatText.length))
     if (next === this._state.cursor) return
     this.commit(next)
   }

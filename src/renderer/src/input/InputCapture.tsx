@@ -124,13 +124,29 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
    * 把隐形输入框摆到阅读光标（`.wt-caret`）所在处——见 `page.css` 里 `.wt-input` 的注释，
    * 那是为什么必须这么做（候选框跑到页面顶部 + 小说被顶回页首，两个用户实测现象）。
    *
-   * 【用 `offsetLeft` / `offsetTop`，不用 `getBoundingClientRect`】：`.wt-caret` 是
-   * `display: inline-block`，`.wt-page__text` 是 static，所以它的 `offsetParent` 就是
-   * `position: relative` 的 `.wt-page`；而绝对定位的 `left` / `top` 也是相对包含块（同一个
-   * `.wt-page`）的。两者同一坐标系，于是【滚动 `.wt-canvas` 不影响相对位置，不需要在滚动时
-   * 重算】。实测校验过两者确实可换：`caret.rect.x - page.rect.x == caret.offsetLeft`
-   * （800 − 356 = 444）、y 同理（2233 − 132 = 2101）——`.wt-page` 没有 border，它的
-   * border box 与 padding box 同原点。
+   * 【坐标按「包含块」算，**不能用 `offsetLeft` / `offsetTop`**】绝对定位的 `left` / `top`
+   * 是相对**包含块**的（这里就是 `position: relative` 的 `.wt-page`），而 `offsetLeft` /
+   * `offsetTop` 是相对 **`offsetParent`** 的——这两个原点在 md 那条路上**不是一个东西**：
+   * 按 HTML 规范，静态元素只要祖先里有 `td` / `th` / `table`，**它们就是 `offsetParent`**。
+   * 表格单元格里的光标恰好长这样（`toReact.tsx` 的 `tableCell` 把光标放进 `<td>` / `<th>`），
+   * 于是 `caret.offsetParent` 是那个格子，写进去的坐标丢掉了表格自己的偏移。
+   *
+   * 真机实测（2026-10-16，`_electron` 起 `out/`，md 工作文档，从偏移 0 逐字走完全篇 316 步，
+   * 比的是「输入框的屏幕矩形 − 光标的屏幕矩形」）：
+   *
+   *   span<h1 / span<p / span<li<ul / span<li<ol / span<blockquote /
+   *   span<code<pre / span<strong<p / span<h2                         共 241 步   |Δ| ≤ 0.5px
+   *   span<th<tr<thead<table                                          共  18 步   Δx −501.7  Δy −826.2
+   *   span<td<tr<tbody<table                                          共  57 步   Δx −502.0  Δy −862.8
+   *
+   * 也就是说光标一进表格，输入框就偏几百像素、且每挪一格换一个值。而**输入法候选框锚在这个
+   * 输入框上**（设计 3.5 那节：隐形输入框与候选框都按这个坐标摆），这就是「候选框到处乱飘」。
+   *
+   * 改成拿两者的 `getBoundingClientRect()` 相减：原点由包含块自己决定，与光标落在什么元素里
+   * 无关。**滚动 `.wt-canvas` 仍然不影响相对位置**（两个矩形在同一个滚动容器里一起平移，
+   * 差值不变），所以当初选 `offsetLeft` 想要的那条性质没丢。减 `clientLeft` / `clientTop`
+   * 是因为包含块是祖先的 **padding box**，而 `getBoundingClientRect()` 给的是 **border box**
+   * ——`.wt-page` 今天没有 border、两者同原点，这一项是防将来给它加边框。
    *
    * 【从自己的父节点往下找，不查 `document`】：`Page` 先渲染 `.wt-page__text`、后渲染
    * children，所以 `.wt-caret` 与本 textarea 同属一个 `.wt-page`。锚点用 `[data-testid]`
@@ -140,15 +156,19 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
     const el = ref.current
     if (!el) return
     const caret = el.parentElement?.querySelector<HTMLElement>('[data-testid="caret"]') ?? null
-    if (!caret) {
+    // `offsetParent` 正是绝对定位元素的包含块；jsdom 没有布局、它恒为 null（实测），一并走兜底。
+    const anchor = el.offsetParent instanceof HTMLElement ? el.offsetParent : null
+    if (!caret || !anchor) {
       // 空状态：`Page` 渲染的是 `.wt-page__empty`，没有阅读光标。退回纸张左上角——输入框
       // 仍在纸内、仍可聚焦，用户点一下照样能开始打字。【不能让输入框消失或抛错。】
       el.style.left = '0px'
       el.style.top = '0px'
       return
     }
-    el.style.left = `${caret.offsetLeft}px`
-    el.style.top = `${caret.offsetTop}px`
+    const caretBox = caret.getBoundingClientRect()
+    const anchorBox = anchor.getBoundingClientRect()
+    el.style.left = `${caretBox.left - anchorBox.left - anchor.clientLeft}px`
+    el.style.top = `${caretBox.top - anchorBox.top - anchor.clientTop}px`
     el.style.height = `${caret.offsetHeight}px`
   }, [])
 

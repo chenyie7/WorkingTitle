@@ -39,6 +39,10 @@
   --wt-statusbar: #185abd;
   --wt-titlebar-text: #ffffff;
 
+  /* 「出错了」的警示色（设置里工作文档读不出来那一行）。浅色主题下白底上约 5.4:1，
+     过 AA；深色下**必须换一档**（见下）——这个红压在 #26262b 的面板上只有 2.8:1。 */
+  --wt-danger: #c0392b;
+
   /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
   --wt-canvas: #e9e9ec;
   --wt-page-shadow:
@@ -259,6 +263,12 @@ body {
   --wt-chrome-border-strong: #45454e;
   --wt-text: #e6e6ea;
   --wt-text-muted: #9c9ca6;
+
+  /* 警示色在深色下要**提亮**：浅色那版 #c0392b 压在设置面板 #26262b 上只有 2.8:1，
+     12px 下低于 AA 的 4.5:1。这一档约 5.0:1。
+     与 `--wt-blue` / `--wt-primary` 是同一个理由：一个值要扮演两种底上的角色时，
+     角色必须拆成两个变量，否则总有一边读不出来。 */
+  --wt-danger: #e57373;
 
   --wt-canvas: #151518;
   --wt-page-shadow:

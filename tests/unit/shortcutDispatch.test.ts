@@ -11,7 +11,11 @@ function actions(): ShortcutActions {
   return {
     import: vi.fn(),
     'toggle-sidebar': vi.fn(),
-    'open-settings': vi.fn()
+    'open-settings': vi.fn(),
+    // 老板键那三条：本文件只测「按键 → action」这一段，动作本身在 app.test.tsx 里测
+    'boss-key': vi.fn(),
+    'boss-fill-up': vi.fn(),
+    'boss-fill-down': vi.fn()
   }
 }
 

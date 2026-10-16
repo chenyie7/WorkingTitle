@@ -71,8 +71,9 @@
        页面顶部」。
    (2) 更糟：Chromium 会把「获得焦点的可编辑元素的光标」滚进视野，于是每次击键都把
        `.wt-canvas` 按回页首。`App` 里那段 rAF 补滚是在跟这次原生滚动赛跑，实测会输。
-   位置由 `InputCapture` 在每次渲染后按 `.wt-caret` 的 `offsetLeft` / `offsetTop` 写成
-   行内样式；下面这组值同时是「没有阅读光标时」的兜底（纸张左上角）。 */
+   位置由 `InputCapture` 在每次渲染后写成行内样式——它拿 `.wt-caret` 与包含块**两个矩形
+   相减**，不是读 `offsetLeft`（表格单元格里的光标会让那两者差出几百像素，见那里的实测）；
+   下面这组值同时是「没有阅读光标时」的兜底（纸张左上角）。 */
 .wt-input {
   position: absolute;
   left: 0;

@@ -1,3 +1,4 @@
+import { BOSS_FILL_MAX } from './bossKey'
 import type { ShortcutId } from './shortcuts'
 
 export interface Chapter {
@@ -110,6 +111,21 @@ export interface AppSettings {
    */
   ratio: number
   /**
+   * 导入的**工作文档**源文件路径。`null` = 没配。
+   *
+   * 老板键切过去显示的就是它。它是一本普通的 `Novel`（走同一条 `loadNovelFromFile` 管线），
+   * 只是**这份 `Novel` 的正文与进度不落盘**——不写 novel-cache（缓存是单槽的，让它占了，
+   * 小说每次启动都要重解码），也不写 `sessions/`（老板键每次进入都按铺满量重铺，见设计文档第 5 节）。
+   */
+  workDocPath: string | null
+  /**
+   * 老板键切过去时「铺满一页」的百分比，0–100。
+   *
+   * 【只做结构校验，值域夹紧归 core】与 `ratio` 同一姿态：这一层的职责是「这份 JSON 能不能
+   * 信」，不是业务规则。夹紧在 `core/bossKey.ts` 的 `clampBossFillPercent`。
+   */
+  bossFillPercent: number
+  /**
    * 用户改过的快捷键。**稀疏表：缺条目 = 用该平台的默认值**，`{}` 就是「全默认」。
    *
    * 【为什么是稀疏而不是完整表】完整表要求「谁读设置谁就得知道平台」，于是
@@ -153,6 +169,8 @@ export function defaultSettings(): AppSettings {
     darkPaper: false,
     lastSourcePath: null,
     ratio: DEFAULT_RATIO,
+    workDocPath: null,
+    bossFillPercent: BOSS_FILL_MAX,
     /**
      * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
      * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。

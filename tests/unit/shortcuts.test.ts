@@ -123,6 +123,21 @@ describe('resolveShortcuts', () => {
   it('缺条目落到该平台的默认值', () => {
     expect(resolveShortcuts({}, 'darwin').import).toBe('Meta+KeyO')
     expect(resolveShortcuts({}, 'other').import).toBe('Ctrl+KeyO')
+    /**
+     * 【老板键这三条必须**字面**钉住】它们此前只有「合法性 / 不冲突 / 能转 accelerator」
+     * 那一类全域性质测试守着——那种测试对「把 `Meta+Shift+KeyB` 改成别的一个也合法的组合」
+     * 完全沉默。而这三条是用户唯一能按到老板键的入口，改了没人会红。
+     */
+    for (const [platform, expected] of [
+      ['darwin', ['Meta+Shift+KeyB', 'Meta+Shift+ArrowUp', 'Meta+Shift+ArrowDown']],
+      ['other', ['Ctrl+Shift+KeyB', 'Ctrl+Shift+ArrowUp', 'Ctrl+Shift+ArrowDown']]
+    ] as const) {
+      const table = resolveShortcuts({}, platform)
+      const ids = ['boss-key', 'boss-fill-up', 'boss-fill-down'] as const
+      ids.forEach((id, i) => {
+        expect(table[id], `${platform} 上 ${id} 的字面默认值`).toBe(expected[i])
+      })
+    }
   })
 
   it('给了的条目用给的', () => {

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
-import { ToolbarProvider } from '../../src/renderer/src/state/ToolbarContext'
+import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import type { InputMode } from '../../src/core/types'
@@ -37,6 +37,14 @@ interface SetupOptions {
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
+  /** 工作文档的文件名（去扩展名）。不传＝没导入 */
+  workDocTitle?: string | null
+  /** 完整路径，只用于那行的悬停提示。不传＝没有 */
+  workDocPath?: string | null
+  /** 配了路径但读不出来（文件被移走 / 删掉 / 权限）——设置里据此标红 */
+  workDocBroken?: boolean
+  onImportWorkDoc?: () => void
+  onRemoveWorkDoc?: () => void
 }
 
 function setup(opts: SetupOptions = {}): {
@@ -59,6 +67,17 @@ function setup(opts: SetupOptions = {}): {
     shortcuts = resolveShortcuts({}, 'other'),
     platform = 'win32',
     onShortcutsChange = vi.fn(),
+    // 工作文档那四个：默认「没导入、也没坏」。**必须在这里解构出来**，否则它们会被下面
+    // 那个 `...provider` 带进 `ToolbarProvider`。
+    //
+    // 【那不是类型错——实测过：它是**静默**的】被 spread 的变量不触发多余属性检查：
+    // 多一个不解构的字段、`tsc --noEmit -p tsconfig.json` 照样 exit 0（跑过）。
+    // 失败形态是那个 prop 悄悄传进 provider 然后被忽略，没有任何东西会报。
+    workDocTitle = null,
+    workDocPath = null,
+    workDocBroken = false,
+    onImportWorkDoc = vi.fn(),
+    onRemoveWorkDoc = vi.fn(),
     ...provider
   } = opts
 
@@ -100,7 +119,11 @@ function setup(opts: SetupOptions = {}): {
         'toggle-sidebar': () => {},
         // 【这一条必须真的打开对话框】Ribbon 不再自己监听 ⌘,，「按 ⌘/Ctrl + , 对话框出现」
         // 那几条既有用例现在只剩分发器这一条路——占位空函数会让它们全红。
-        'open-settings': () => setSettingsOpen(true)
+        'open-settings': () => setSettingsOpen(true),
+        // 老板键那三条不属于本文件的范围（这个壳没有小说/工作文档那两对状态），占位即可
+        'boss-key': () => {},
+        'boss-fill-up': () => {},
+        'boss-fill-down': () => {}
       }
     })
     return (
@@ -119,6 +142,11 @@ function setup(opts: SetupOptions = {}): {
           platform={platform}
           onShortcutsChange={onShortcutsChange}
           onRecordingChange={reportRecording}
+          workDocTitle={workDocTitle}
+          workDocPath={workDocPath}
+          workDocBroken={workDocBroken}
+          onImportWorkDoc={onImportWorkDoc}
+          onRemoveWorkDoc={onRemoveWorkDoc}
         />
         {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
         <Toast />
@@ -176,6 +204,10 @@ function setupLive(init: { docTitle?: string; ratio?: number } = {}): {
           novelOpen
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
+          workDocTitle={null}
+          workDocBroken={false}
+          onImportWorkDoc={() => {}}
+          onRemoveWorkDoc={() => {}}
         />
         <Toast />
       </ToolbarProvider>
@@ -526,6 +558,14 @@ describe('手动保存', () => {
     expect((screen.getByTestId('global-ratio-input') as HTMLInputElement).disabled).toBe(false)
   })
 
+  it('「当前书」比例框在没打开文档时给出的提示是文档中性的', () => {
+    // 【为什么单独钉】那句话是用户可见文案，而且它描述的对象已经从「小说」变成了
+    // 「当前显示的那一份」。实测：把它改回「未打开小说」，整套用例照样绿。
+    setup({ novelOpen: false })
+    openViaButton()
+    expect(screen.getByText('未打开文档')).toBeTruthy()
+  })
+
   it('未保存就关掉＝丢弃，重开时从当前值起稿且按钮不亮', () => {
     const { onDocTitleChange: onChange } = setup({ docTitle: '文档1' })
     openViaButton()
@@ -836,5 +876,129 @@ describe('设置里的快捷键录制', () => {
 
     unmount()
     expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('ToolbarProvider 的 toast 可以受控', () => {
+  /** 一个只读 toast、只按 notify 的探针，用来从外面观察 provider 用的是哪一份 */
+  function Probe(): ReactElement {
+    const { toast, notify } = useToolbar()
+    return (
+      <button type="button" data-testid="probe" onClick={() => notify('来自里面')}>
+        {toast ?? '（无）'}
+      </button>
+    )
+  }
+
+  it('传了 toast / notify 就用外面那一份', () => {
+    // 【为什么这条重要】老板键的提示（「还没导入工作文档」、铺满档位）是从 App 那一层的
+    // 分发器里弹的，而 notify 原先住在 provider 内部——App 拿不到，那两条提示就没地方去。
+    const notify = vi.fn()
+    render(
+      <ToolbarProvider toast="外面给的" notify={notify}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('外面给的')
+    fireEvent.click(screen.getByTestId('probe'))
+    expect(notify).toHaveBeenCalledWith('来自里面')
+  })
+
+  it('受控 toast 跟着 prop 走（含传 null）', () => {
+    const { rerender } = render(
+      <ToolbarProvider toast="有提示" notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('有提示')
+    rerender(
+      <ToolbarProvider toast={null} notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    expect(screen.getByTestId('probe').textContent).toBe('（无）')
+  })
+
+  it('不受控写过一次之后再切受控传 null，内部那条不许顶上来', () => {
+    // 【为什么非要这一条：上面那条钉不住这个判断】`innerToast` 的初值本来就是 `null`，
+    // `null ?? null` 与 `null` 分不出来。实测：把 `!== undefined` 换成 `??`，本文件 50 条
+    // 与整个仓库 376 条**全绿**——那个变异在仓库里存活。
+    //
+    // 判别场景要先把**不受控**的 provider 往内部状态里写一次，再切到受控。
+    const { rerender } = render(
+      <ToolbarProvider>
+        <Probe />
+      </ToolbarProvider>
+    )
+    // 不受控 → notify 落回 innerNotify → 这一下写进了 innerToast
+    fireEvent.click(screen.getByTestId('probe'))
+    rerender(
+      <ToolbarProvider toast={null} notify={() => {}}>
+        <Probe />
+      </ToolbarProvider>
+    )
+    // `??` 版这里显示残留的「来自里面」；`!== undefined` 版显示「（无）」
+    expect(screen.getByTestId('probe').textContent).toBe('（无）')
+  })
+})
+
+describe('设置里的工作文档', () => {
+  it('没导入时显示「未导入」，且没有「移除」按钮', () => {
+    setup({})
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('未导入')
+    expect(screen.queryByTestId('btn-remove-work-doc')).toBeNull()
+    // 没有路径就**不给** title：`title=""` 会渲染一个空的小气泡
+    expect(screen.getByTestId('work-doc-status').getAttribute('title')).toBeNull()
+  })
+
+  it('导入后显示文件名，并出现「移除」按钮', () => {
+    setup({ workDocTitle: '季度汇报' })
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').textContent).toContain('季度汇报')
+    expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
+  })
+
+  it('状态行的 title 是完整路径（那行会按 CSS 截断，长路径看不全）', () => {
+    setup({ workDocTitle: '季度汇报', workDocPath: '/Users/某人/文档/2026Q3/季度汇报.txt' })
+    openViaButton()
+    expect(screen.getByTestId('work-doc-status').getAttribute('title')).toBe(
+      '/Users/某人/文档/2026Q3/季度汇报.txt'
+    )
+  })
+
+  /**
+   * 【夹具为什么是「无名字 + 坏掉」这组】`workDocBroken` 唯一的置位点是 boot 里
+   * `loadWorkDoc` 读不出来，而**同一条路上 `workNovel` 必然是 null**——于是 `workDocTitle`
+   * 也恒为 null。「有名字 + 坏掉」是 `App` **产生不出来的**组合，用它当夹具正好好把下面
+   * 那个洞盖住：既然永远有名字，「移除」按钮按名字 gate 也永远渲染得出来。
+   */
+  it('源文件读不出来时标红，并且「移除」按钮仍在（否则那个悬空路径没有入口清掉）', () => {
+    setup({ workDocTitle: null, workDocPath: '/tmp/被移走的.txt', workDocBroken: true })
+    openViaButton()
+    const status = screen.getByTestId('work-doc-status')
+    expect(status.textContent).toContain('读不出来')
+    // 文案里不留一个永远填不上的名字位（曾经渲染成「⚠  读不出来了」，双空格）
+    expect(status.textContent).not.toContain('  ')
+    expect(screen.getByTestId('btn-remove-work-doc')).toBeTruthy()
+    // 坏掉那一路**路径仍在**（刻意保留：文件可能只是临时不在），所以悬停提示照样给得出
+    expect(status.getAttribute('title')).toBe('/tmp/被移走的.txt')
+  })
+
+  it('点导入/移除会调到对应的回调——它们是立即动作，不走「保存」', () => {
+    const onImportWorkDoc = vi.fn()
+    const onRemoveWorkDoc = vi.fn()
+    setup({ workDocTitle: '季度汇报', onImportWorkDoc, onRemoveWorkDoc })
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('btn-import-work-doc'))
+    expect(onImportWorkDoc).toHaveBeenCalledTimes(1)
+    // 【这条钉的是「立即」】导入/移除刻意与「导入小说」「清除阅读记录」同类，
+    // 不是草稿字段——文件选择框是外部动作，做成「选了文件还得再点保存」很别扭
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
+    expect(onRemoveWorkDoc).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('settings-save')).toBeNull()
   })
 })

@@ -58,3 +58,39 @@ describe('StatusBar', () => {
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
   })
 })
+
+describe('StatusBar 老板模式', () => {
+  it('老板模式下不渲染比例 / 编码 / 输入模式三格', () => {
+    // 这三样真 Word 的状态栏都没有——「比例 1:10」「编码 UTF-8」「输入模式 输入法」
+    // 每一个都在说「这不是 Word，是个读小说的东西」。
+    render(
+      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
+    )
+    expect(screen.queryByTestId('status-ratio')).toBeNull()
+    expect(screen.queryByTestId('status-encoding')).toBeNull()
+    expect(screen.queryByTestId('status-mode')).toBeNull()
+    // 页码形状与百分比留着——真 Word 也有
+    expect(screen.getByTestId('status-chapter').textContent).toBe('2 / 2')
+    expect(screen.getByTestId('status-percent').textContent).toBe('25%')
+  })
+
+  it('不传 hideReadingCells 时三格照旧（向后兼容）', () => {
+    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    expect(screen.getByTestId('status-ratio')).toBeTruthy()
+    expect(screen.getByTestId('status-encoding')).toBeTruthy()
+    expect(screen.getByTestId('status-mode')).toBeTruthy()
+  })
+
+  it('spacer 仍夹在两个可见组之间（别把它一起包进条件里）', () => {
+    // jsdom 没有布局，量不了「那块空隙有多大」；能钉的是 **DOM 次序**：它必须在左侧组
+    // 之后、右侧组之前。把整块包进 `!hideReadingCells && (…)` 会破坏这个次序——而那是本组件里
+    // 唯一一处「靠位置表达布局」的地方，出错了也不会有别的东西报错。
+    render(
+      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
+    )
+    const spacer = document.querySelector('.wt-statusbar__spacer')
+    expect(spacer).toBeTruthy()
+    expect(spacer!.previousElementSibling?.getAttribute('data-testid')).toBe('status-chapter')
+    expect(spacer!.nextElementSibling?.getAttribute('data-testid')).toBe('status-percent')
+  })
+})
