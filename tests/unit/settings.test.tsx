@@ -7,6 +7,7 @@ import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
 
@@ -37,6 +38,9 @@ interface SetupOptions {
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
+  /** 阅读区正文字号。不传＝默认值（`PAGE_FONT_SIZE_DEFAULT`） */
+  pageFontSize?: number
+  onPageFontSizeChange?: (next: number) => void
   /** 工作文档的文件名（去扩展名）。不传＝没导入 */
   workDocTitle?: string | null
   /** 完整路径，只用于那行的悬停提示。不传＝没有 */
@@ -51,16 +55,19 @@ function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
   onThemeSourceChange: ReturnType<typeof vi.fn>
+  onPageFontSizeChange: ReturnType<typeof vi.fn>
   unmount: () => void
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
   const onThemeSourceChange = vi.fn()
+  const onPageFontSizeChange = vi.fn()
   const {
     capture,
     docTitle = '文档1',
     darkPaper = false,
     themeSource = 'system',
+    pageFontSize = PAGE_FONT_SIZE_DEFAULT,
     novelOpen = true,
     // 默认走 Windows 那一套：macOS 上 import 归原生菜单管，分发器会**跳过**它，
     // 于是「录制期间静音」那条用例在 darwin 下根本走不到分发器。
@@ -135,6 +142,8 @@ function setup(opts: SetupOptions = {}): {
           onDarkPaperChange={onDarkPaperChange}
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
+          pageFontSize={pageFontSize}
+          onPageFontSizeChange={onPageFontSizeChange}
           novelOpen={novelOpen}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
@@ -159,7 +168,13 @@ function setup(opts: SetupOptions = {}): {
       <Harness />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange, unmount }
+  return {
+    onDocTitleChange,
+    onDarkPaperChange,
+    onThemeSourceChange,
+    onPageFontSizeChange,
+    unmount
+  }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -454,6 +469,99 @@ describe('对话框里改文档名', () => {
 
     openViaButton()
     expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 正文字号。
+ *
+ * 【它归「手动保存」那一组】改完点保存才生效——与文档名、阅读替换同一套。
+ * 所以下面每一条都要连着断言「**还没点保存时不许提交**」，否则把 `commit` 挪回
+ * onChange 上（立即生效）整组照样绿。
+ */
+describe('设置里的正文字号', () => {
+  it('改了不立即生效，出保存按钮；点保存才提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    expect(input.value).toBe('15')
+
+    fireEvent.change(input, { target: { value: '18' } })
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 有改动 → 保存按钮出现（与「手动保存」那一组同一套显隐）
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(18)
+  })
+
+  it('失焦只归一化、不提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 没有越界，所以也不该弹夹紧提示
+    expect(screen.queryByTestId('toast')).toBeNull()
+  })
+
+  it('回车＝保存', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
+  })
+
+  it('越界：失焦就夹紧并提示，但**还没生效**；回车保存夹紧后的值', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '999' } })
+    fireEvent.blur(input)
+    // 框里显示夹紧后的值、给一条提示，但回调还没发生
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MAX))
+    expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MAX)
+  })
+
+  it('比下限还小同样夹到下限', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '3' } })
+    fireEvent.blur(input)
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MIN))
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+  })
+
+  it('解析不出的输入退回当前值（不留一个空草稿）', () => {
+    // 留空草稿的话「保存」会一直亮着，而点下去什么都不提交——用户会以为按钮坏了。
+    const { onPageFontSizeChange } = setup({ pageFontSize: 17 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
+    expect(input.value).toBe('17')
+    // 草稿被拉回已提交值 → 算「没有改动」→ 保存按钮不出现
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+  })
+
+  it('重开对话框时草稿不残留（关闭＝丢弃）', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '22' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('page-font-size-input') as HTMLInputElement).value).toBe('15')
   })
 })
 

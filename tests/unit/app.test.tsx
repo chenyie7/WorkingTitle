@@ -448,7 +448,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, shortcuts: { import: 'Ctrl+KeyI' } })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, pageFontSize: 18, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -464,6 +464,9 @@ describe('设置的持久化', () => {
     // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
     // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
     expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+    // 字号同理：memo 里漏一个字段（或依赖数组里漏一个），启动一次就会被防抖那次写
+    // 无声冲成默认值。这条钉的是「它真的从磁盘来、也真的回得去」。
+    expect(payload.pageFontSize).toBe(18)
   })
 
   // 【这条守的是「不回退」，与上一条同形，但守的是另外两个字段】`settings` memo 就是防抖

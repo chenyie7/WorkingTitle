@@ -169,6 +169,10 @@ function settingsProblem(v: unknown): string | null {
   }
   const fill = s.bossFillPercent
   if (typeof fill !== 'number' || !Number.isFinite(fill)) return 'bossFillPercent 不是有限数字'
+  // 【只判「是不是有限数字」，不判值域】与 ratio / bossFillPercent 同一姿态：
+  // 这一层的职责是「这份 JSON 能不能信」，业务规则（12–24）归 core 的 clampPageFontSize。
+  const font = s.pageFontSize
+  if (typeof font !== 'number' || !Number.isFinite(font)) return 'pageFontSize 不是有限数字'
   const sc = s.shortcuts
   if (typeof sc !== 'object' || sc === null || Array.isArray(sc)) return 'shortcuts 不是对象'
   for (const [id, spec] of Object.entries(sc as Record<string, unknown>)) {
@@ -214,7 +218,8 @@ const FILLED_DEFAULTS = {
   // settingsProblem 判成不合法，于是**整份退回默认值**——用户改过的文档名 / 外观 / 纸张 /
   // 快捷键一次性全丢，且没有任何报错，只有一行 console.warn。
   workDocPath: () => defaultSettings().workDocPath,
-  bossFillPercent: () => defaultSettings().bossFillPercent
+  bossFillPercent: () => defaultSettings().bossFillPercent,
+  pageFontSize: () => defaultSettings().pageFontSize
 } satisfies Readonly<Partial<Record<keyof AppSettings, () => unknown>>>
 
 function withDefaultsFilled(v: unknown): unknown {

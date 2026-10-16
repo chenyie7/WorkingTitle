@@ -1901,7 +1901,13 @@ import {
   shortcutProblem,
   type ShortcutId
 } from '../../../core/shortcuts'
-import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import {
+  MAX_RATIO,
+  MIN_RATIO,
+  PAGE_FONT_SIZE_MAX,
+  PAGE_FONT_SIZE_MIN,
+  clampPageFontSize
+} from '../../../core/types'
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
@@ -2033,7 +2039,19 @@ import {
         }
       }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
+    [
+      docTitle,
+      ratio,
+      globalRatio,
+      pageFontSize,
+      onDocTitleChange,
+      setRatio,
+      setGlobalRatio,
+      onPageFontSizeChange,
+      shortcuts,
+      onShortcutsChange,
+      kind
+    ]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 ```

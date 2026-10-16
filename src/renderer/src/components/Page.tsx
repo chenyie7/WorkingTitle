@@ -101,7 +101,16 @@ export function Page({
                 onMeasureNode={md.onMeasureNode}
               />
             ) : (
-              <>
+              /*
+                【这一层只为了字体】新正文的字体与字号挂在 `.wt-page__novel` 上，而不是
+                挂在共用的 `.wt-page__text` 上——md 那条路没有自己的根元素（各块都是
+                `.wt-page__text` 的直接子元素），字体挂在外层会让它一起跟着换。
+                详见 `page.css` 里那段说明。
+
+                【光标为什么在里面】它是 `height: 1.15em`，留在外面就按 `.wt-page` 那个
+                写死的 15px 算——正文字号调大时光标会矮一截。
+              */
+              <span className="wt-page__novel" data-testid="novel-text">
                 {shown}
                 {/*
                   【这个光标只属于纯文本那条路】md 那条路的光标由 `MarkdownView`
@@ -110,7 +119,7 @@ export function Page({
                   都按这个坐标摆。
                 */}
                 <span className="wt-caret" data-testid="caret" />
-              </>
+              </span>
             )}
           </div>
         </>

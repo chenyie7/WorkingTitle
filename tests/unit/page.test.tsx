@@ -83,4 +83,16 @@ describe('Page', () => {
     render(<Page visibleText={'短文本'} expanded={false} onToggleExpand={() => {}} empty={false} />)
     expect(screen.queryByTestId('page-fold')).toBeNull()
   })
+
+  it('纯文本那一路包在 `.wt-page__novel` 里，光标也在它里面', () => {
+    // 【这一层是给换字体用的】`page.css` 把正文的字体与字号挂在 `.wt-page__novel` 上、
+    // 而不是挂在共用的 `.wt-page` 上——md 那条路与它共用同一张纸，挂在外层会让 md 一起换。
+    render(<Page visibleText="第一章 甲" expanded={false} onToggleExpand={() => {}} empty={false} />)
+    const novel = screen.getByTestId('page-text').querySelector('.wt-page__novel')
+    expect(novel).not.toBeNull()
+    expect(novel!.textContent).toContain('第一章 甲')
+    // 【光标必须在里面】它是 `height: 1.15em`——留在外面就按 `.wt-page` 那个写死的 15px 算，
+    // 正文字号调大时光标会矮一截。
+    expect(novel!.querySelector('[data-testid="caret"]')).not.toBeNull()
+  })
 })

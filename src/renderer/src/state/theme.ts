@@ -49,6 +49,27 @@ export function useDarkPaper(enabled: boolean): void {
 }
 
 /**
+ * 阅读区正文字号（px）。**只作用于小说与 `.txt` 工作文档那一路**。
+ *
+ * 【为什么是一个 CSS 变量而不是 data 属性】前面两个开关是「开/关」这类枚举，落到
+ * `data-*` 上让 CSS 用属性选择器取；字号是一个连续量，只能是变量。写的地方与它们相同
+ * （`documentElement`）——内联样式比 `:root` 那条规则优先级高，所以会盖住 `page.css` 里
+ * 那个等于默认值的初值。
+ *
+ * 【为什么不做成 `data-` + 几档选择器】档位表要在 CSS 里手写一遍、core 里再写一遍，
+ * 加一档要改两处；而它本来就是「12–24 里选一个数」。
+ *
+ * 【它为什么不作用于 md】md 工作文档不算这条路——它的一整套字号是照着 Word 的标题层级
+ * 写死的 px（`h1` 26px、`--wt-md-code-line` 20.8px…），跟着缩会把层级弄散。
+ * `page.css` 里 `.wt-page__novel` 那段是这条口径的正本。
+ */
+export function usePageFontSize(px: number): void {
+  useEffect(() => {
+    document.documentElement.style.setProperty('--wt-page-font-size', `${px}px`)
+  }, [px])
+}
+
+/**
  * 把用户选的外观推给主进程。
  *
  * 【为什么不能只在页面里翻 class】macOS 的**红绿灯与其它原生部分**由主进程的

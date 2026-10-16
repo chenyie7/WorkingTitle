@@ -21,7 +21,13 @@ import {
   shortcutProblem,
   type ShortcutId
 } from '../../../core/shortcuts'
-import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import {
+  MAX_RATIO,
+  MIN_RATIO,
+  PAGE_FONT_SIZE_MAX,
+  PAGE_FONT_SIZE_MIN,
+  clampPageFontSize
+} from '../../../core/types'
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
@@ -54,6 +60,14 @@ export interface SettingsDialogProps {
   /** 外观偏好：跟随系统 / 浅色 / 深色 */
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /**
+   * 阅读区正文字号（px，12–24）。**归「手动保存」那一组**：改完点保存才生效。
+   *
+   * 【它只作用于小说与 `.txt` 工作文档】md 工作文档的一整套字号是照着 Word 的标题层级
+   * 写死的 px，跟着缩会把层级弄散。见 `page.css` 的 `.wt-page__novel`。
+   */
+  pageFontSize: number
+  onPageFontSizeChange: (next: number) => void
   /**
    * 有没有打开文档：「当前书」的比例框据此禁用——没有文档就没有「当前书」。
    *
@@ -127,6 +141,8 @@ export function SettingsDialog({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
+  pageFontSize,
+  onPageFontSizeChange,
   novelOpen,
   shortcuts,
   platform,
@@ -230,6 +246,17 @@ export function SettingsDialog({
         },
         commit: (value) => setGlobalRatio(Number(value))
       },
+      {
+        // 正文字号与上面两格共用同一套「解析不出就退回当前值 → 失焦归一化 → 保存才提交」。
+        // 它落进 `settings.json`（全局一份），与文档名同一条路。
+        id: 'page-font-size',
+        committed: String(pageFontSize),
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampPageFontSize(parsed)) : committed
+        },
+        commit: (value) => onPageFontSizeChange(Number(value))
+      },
       // 快捷键：**每一条一行**，从 core 的注册表推出来（加一条快捷键不必来这里改代码）
       ...SHORTCUTS.map((def): DeferredField => ({
         id: `shortcut-${def.id}`,
@@ -247,7 +274,19 @@ export function SettingsDialog({
         }
       }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
+    [
+      docTitle,
+      ratio,
+      globalRatio,
+      pageFontSize,
+      onDocTitleChange,
+      setRatio,
+      setGlobalRatio,
+      onPageFontSizeChange,
+      shortcuts,
+      onShortcutsChange,
+      kind
+    ]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
@@ -307,18 +346,28 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
+
   /**
-   * 比例那两格的失焦处理：只归一化、不提交；**被夹紧了才提示**（普通改个数字不该弹东西）。
-   * 两格逻辑一模一样，只有 id 不同，所以抽出来——复制一份的话，夹紧提示的文案或边界一改就容易漏一处。
+   * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
+   * **被夹紧了才提示**（普通改个数字不该弹东西）。
+   *
+   * 【为什么抽出来】三格逻辑一模一样，只有 id、夹紧函数与边界不同。复制三份的话，
+   * 提示的文案或边界一改就容易漏一处。
    */
-  const blurRatio =
-    (id: 'ratio' | 'global-ratio') =>
+  const blurClamped =
+    (
+      id: 'ratio' | 'global-ratio' | 'page-font-size',
+      clamp: (n: number) => number,
+      lo: number,
+      hi: number,
+      label: string
+    ) =>
     (e: FocusEvent<HTMLInputElement>): void => {
       const raw = e.currentTarget.value
       const after = blur(id)
       const parsed = Number.parseInt(raw, 10)
-      if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
-        notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+      if (Number.isFinite(parsed) && String(clamp(parsed)) !== String(parsed)) {
+        notify(`${label}已夹紧到 ${lo}–${hi} 范围：${after}`)
       }
     }
 
@@ -445,7 +494,7 @@ export function SettingsDialog({
                   inputMode="numeric"
                   value={drafts['global-ratio'] ?? String(globalRatio)}
                   onChange={(e) => setDraft('global-ratio', e.target.value)}
-                  onBlur={blurRatio('global-ratio')}
+                  onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -465,7 +514,7 @@ export function SettingsDialog({
                   disabled={!novelOpen}
                   value={drafts['ratio'] ?? String(ratio)}
                   onChange={(e) => setDraft('ratio', e.target.value)}
-                  onBlur={blurRatio('ratio')}
+                  onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -547,6 +596,38 @@ export function SettingsDialog({
               />
               深色模式下也变暗
             </label>
+          </div>
+
+          <div className="wt-modal__row">
+            {/*
+              正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
+              才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
+              写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
+            */}
+            <span className="wt-modal__label">
+              <IconFontSize className="wt-modal__label-icon" />
+              正文字号
+            </span>
+            <input
+              className="wt-ratio__input"
+              data-testid="page-font-size-input"
+              aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
+              inputMode="numeric"
+              value={drafts['page-font-size'] ?? String(pageFontSize)}
+              onChange={(e) => setDraft('page-font-size', e.target.value)}
+              onBlur={blurClamped(
+                'page-font-size',
+                clampPageFontSize,
+                PAGE_FONT_SIZE_MIN,
+                PAGE_FONT_SIZE_MAX,
+                '字号'
+              )}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+              }}
+            />
+            <span className="wt-ratio__label">px</span>
+            <span className="wt-ratio__note">只作用于小说与 .txt</span>
           </div>
 
           {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}

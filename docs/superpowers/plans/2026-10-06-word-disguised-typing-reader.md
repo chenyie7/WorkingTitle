@@ -558,6 +558,34 @@ export const MAX_RATIO = 500
 /** 阅读区渲染窗口上限，超出则折叠前文 */
 export const RENDER_WINDOW_LIMIT = 30_000
 
+/**
+ * 阅读区**正文**的字号（px）。
+ *
+ * 【为什么只作用于一条路】它只管小说与 `.txt` 工作文档那条纯文本路。`.md` 工作文档
+ * 走渲染那一路，它的一整套字号是照着 Word 的标题层级**写死的 px**（`markdown.css` 里
+ * `h1` 26px、`--wt-md-code-line` 20.8px…），正文基准一带动它，层级就散了；不带动它，
+ * 同一张纸上又会有两种正文字号。所以这一格与 `.md` 那条路无关，`markdown.css` 一个字不动。
+ *
+ * 【15 是改动之前写死在 `page.css` 上的那个值】默认值取它就是取「默认档的行为一个像素
+ * 都不变」。改这个数等于改默认版面。
+ */
+export const PAGE_FONT_SIZE_DEFAULT = 15
+export const PAGE_FONT_SIZE_MIN = 12
+export const PAGE_FONT_SIZE_MAX = 24
+
+/**
+ * 夹紧正文字号。
+ *
+ * 【非有限输入给默认值，而不是钳到某一端】NaN / ±Infinity 来自「设置文件被改坏 /
+ * 字段缺失」——那是**不可用**，不是「太大 / 太小」。与 `clampRatio` 同一姿态
+ * （`engine.ts` 里那段注释是这条口径的正本，实测 `clampRatio(Infinity) === 10`）。
+ * 有限但越界才是「用户拖到头」，钳到两端。
+ */
+export function clampPageFontSize(n: number): number {
+  if (!Number.isFinite(n)) return PAGE_FONT_SIZE_DEFAULT
+  return Math.max(PAGE_FONT_SIZE_MIN, Math.min(PAGE_FONT_SIZE_MAX, Math.round(n)))
+}
+
 /** 外观偏好：跟随系统 / 强制浅色 / 强制深色。与主进程的 `nativeTheme.themeSource` 同构。 */
 export type ThemeSource = 'system' | 'light' | 'dark'
 
@@ -600,6 +628,16 @@ export interface AppSettings {
    * 信」，不是业务规则。夹紧在 `core/bossKey.ts` 的 `clampBossFillPercent`。
    */
   bossFillPercent: number
+  /**
+   * 阅读区正文的字号（px），12–24。**全局一份**，不跟书走。
+   *
+   * 【为什么不像 `ratio` 那样分「全局 / 当前书」】比例是**内容**属性（同一段字显示多少），
+   * 换一本书就该换一个值；字号是**显示**偏好，与「当前在读哪本」无关，跟 `themeSource` /
+   * `darkPaper` 同类。
+   *
+   * 【只做结构校验，值域夹紧归 core】与 `ratio` 同一姿态。夹紧是 `clampPageFontSize`。
+   */
+  pageFontSize: number
   /**
    * 用户改过的快捷键。**稀疏表：缺条目 = 用该平台的默认值**，`{}` 就是「全默认」。
    *
@@ -646,6 +684,7 @@ export function defaultSettings(): AppSettings {
     ratio: DEFAULT_RATIO,
     workDocPath: null,
     bossFillPercent: BOSS_FILL_MAX,
+    pageFontSize: PAGE_FONT_SIZE_DEFAULT,
     /**
      * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
      * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。
@@ -2626,7 +2665,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import { resolveShortcuts } from '../../src/core/shortcuts'
-import { DEFAULT_DOC_TITLE, DEFAULT_RATIO, defaultSettings } from '../../src/core/types'
+import {
+  DEFAULT_DOC_TITLE,
+  DEFAULT_RATIO,
+  PAGE_FONT_SIZE_DEFAULT,
+  defaultSettings
+} from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
@@ -2865,6 +2909,7 @@ describe('sessionStore 会话读写', () => {
       // 后加的必填字段；这里给默认值，本用例要钉的是「清除记录不动设置」
       workDocPath: null,
       bossFillPercent: 100,
+      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
       // shortcuts 是后加的必填字段；这里给空表，本用例要钉的是「清除记录不动设置」
       shortcuts: {}
     })
@@ -2903,6 +2948,7 @@ describe('sessionStore 会话读写', () => {
       ratio: 10,
       workDocPath: null,
       bossFillPercent: 100,
+      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
       shortcuts: {}
     })
   })
@@ -3168,6 +3214,7 @@ describe('sessionStore 设置读写', () => {
       ratio: 10,
       workDocPath: null,
       bossFillPercent: 100,
+      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
       shortcuts: {}
     }
     store.writeSettings(s)
@@ -3206,6 +3253,7 @@ describe('sessionStore 设置读写', () => {
       ratio: 10,
       workDocPath: null,
       bossFillPercent: 100,
+      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
       shortcuts: {}
     }
     const bad = mangle(good)
@@ -3256,6 +3304,7 @@ describe('sessionStore 设置读写', () => {
         // 与 ratio 同为「旧文件里没有、读时补上」的字段
         workDocPath: null,
         bossFillPercent: 100,
+        pageFontSize: PAGE_FONT_SIZE_DEFAULT,
         shortcuts: {}
       })
       // 补默认值这条正常路径不该报 warn（一条在正常路径上也会响的告警等于没有告警）
@@ -3318,6 +3367,47 @@ describe('sessionStore 设置读写', () => {
     const s = store.readSettings()
     expect(s.workDocPath).toBe('/tmp/周报.txt')
     expect(s.bossFillPercent).toBe(40)
+  })
+
+  it('旧版设置文件缺 pageFontSize 时补默认值，且不冲掉用户原有的字段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    // 手工写一份**旧版**形状：有老板键那两个键（上一版加的），但没有 pageFontSize
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        docTitle: '季度汇报',
+        themeSource: 'dark',
+        darkPaper: true,
+        lastSourcePath: '/tmp/A.txt',
+        ratio: 25,
+        workDocPath: null,
+        bossFillPercent: 40,
+        shortcuts: { import: 'Ctrl+KeyI' }
+      }),
+      'utf8'
+    )
+    const s = createSessionStore(dir).readSettings()
+    // 【这一条是本用例的全部意义】整份退回默认值的话，这五行全红
+    expect(s.docTitle).toBe('季度汇报')
+    expect(s.ratio).toBe(25)
+    expect(s.bossFillPercent).toBe(40)
+    expect(s.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+    // 新键补成了默认值
+    expect(s.pageFontSize).toBe(PAGE_FONT_SIZE_DEFAULT)
+  })
+
+  it('pageFontSize 不是有限数字时整份退回默认值', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    const store = createSessionStore(dir)
+    store.writeSettings({ ...defaultSettings(), docTitle: '季度汇报', pageFontSize: Number.NaN })
+    expect(store.readSettings().docTitle).toBe(DEFAULT_DOC_TITLE)
+  })
+
+  it('pageFontSize 是数字时照常读回', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-'))
+    const store = createSessionStore(dir)
+    store.writeSettings({ ...defaultSettings(), pageFontSize: 18 })
+    expect(store.readSettings().pageFontSize).toBe(18)
   })
 
   it('settings.json 不是合法 JSON 时返回默认值而不抛异常', () => {
@@ -3469,6 +3559,7 @@ describe('旧版单槽会话的迁移', () => {
       ratio: 10,
       workDocPath: null,
       bossFillPercent: 100,
+      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
       shortcuts: {}
     })
 
@@ -3909,6 +4000,10 @@ function settingsProblem(v: unknown): string | null {
   }
   const fill = s.bossFillPercent
   if (typeof fill !== 'number' || !Number.isFinite(fill)) return 'bossFillPercent 不是有限数字'
+  // 【只判「是不是有限数字」，不判值域】与 ratio / bossFillPercent 同一姿态：
+  // 这一层的职责是「这份 JSON 能不能信」，业务规则（12–24）归 core 的 clampPageFontSize。
+  const font = s.pageFontSize
+  if (typeof font !== 'number' || !Number.isFinite(font)) return 'pageFontSize 不是有限数字'
   const sc = s.shortcuts
   if (typeof sc !== 'object' || sc === null || Array.isArray(sc)) return 'shortcuts 不是对象'
   for (const [id, spec] of Object.entries(sc as Record<string, unknown>)) {
@@ -3954,7 +4049,8 @@ const FILLED_DEFAULTS = {
   // settingsProblem 判成不合法，于是**整份退回默认值**——用户改过的文档名 / 外观 / 纸张 /
   // 快捷键一次性全丢，且没有任何报错，只有一行 console.warn。
   workDocPath: () => defaultSettings().workDocPath,
-  bossFillPercent: () => defaultSettings().bossFillPercent
+  bossFillPercent: () => defaultSettings().bossFillPercent,
+  pageFontSize: () => defaultSettings().pageFontSize
 } satisfies Readonly<Partial<Record<keyof AppSettings, () => unknown>>>
 
 function withDefaultsFilled(v: unknown): unknown {
@@ -6844,6 +6940,35 @@ body {
 - [ ] **Step 3: 写 `src/renderer/src/styles/page.css`**
 
 ```css
+/**
+ * 阅读区正文字体（思源宋体 / Noto Serif SC 的简体子集，SIL OFL，见同目录的 OFL.txt）。
+ *
+ * 【为什么打包而不是用系统字体】原先那串 `Songti SC` / `SimSun` 是**各平台各命中一个**：
+ * macOS 是华文宋体、Windows 是中易宋体，两端观感不同，Linux 上不可控。打包之后三端一致。
+ *
+ * 【为什么是 OTF 而不是 woff2】这是 `Serif/SubsetOTF/SC` 那一份（30928 个码位），
+ * 拿仓库里的真小说量过覆盖率 100%（`books/` 那本 9MB 的、以及三体）。woff2 那一版只有
+ * 7946 个码位、对同样的语料缺 18 / 16 个字——缺字要靠回退链上的系统宋体接住，
+ * 也就是每 5–13 页有一个字换一张脸。全量版买的是「一个都不会换脸」。
+ */
+@font-face {
+  font-family: 'WT Reading';
+  /* 相对本文件解析；构建产物里它落在 out/renderer/assets/ 下 */
+  src: url('../assets/fonts/NotoSerifSC-Regular.otf') format('opentype');
+  /* 【为什么是 block 而不是 swap】swap 会先拿回退字体画一遍、字体到位再换——正文会
+     肉眼可见地重排一次（字宽变了，整段跟着动）。它是本地文件，不存在网络那段等待。 */
+  font-display: block;
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  /* 正文字号。由 `state/theme.ts` 的 `usePageFontSize` 从设置写到这里。
+     这里的初值＝`PAGE_FONT_SIZE_DEFAULT`，即改动之前写死在 `.wt-page` 上的那个 15px
+     ——设置还没读回来之前先用它，也就不会有一帧跳版。 */
+  --wt-page-font-size: 15px;
+}
+
 .wt-page {
   width: 794px;
   min-height: 1080px;
@@ -6857,6 +6982,25 @@ body {
   color: #1a1a1a;
   position: relative;
   flex: 0 0 auto;
+}
+
+/**
+ * 纯文本那一路（小说与 `.txt` 工作文档）的正文。
+ *
+ * 【为什么另起一层而不是改 `.wt-page` 的 `font-family`】`.md` 工作文档**渲染在同一张纸上**
+ * （`MarkdownView` 是 `.wt-page__text` 的直接子元素），而它没有自己的根元素——各块都是
+ * 直接子元素。字体挂在 `.wt-page` 上会让 md 一起跟着换；让 md 逐块退回去则要给十几个
+ * `.wt-md-*` 各写一条，而且以后新增块类型会静默继承错字体。
+ *
+ * 所以反过来：新字体只挂在**纯文本那一支**的包装元素上，`.wt-page` 一个字不动，
+ * md 那条路（含它写死的那一整套 px）行为不变。
+ *
+ * 【字号也跟着这一层】`--wt-page-font-size` 只写在这里，所以「正文字号」这一格
+ * 同样只作用于纯文本那一路——md 的标题层级是照着 Word 写死的，不能跟着它缩。
+ */
+.wt-page__novel {
+  font-family: 'WT Reading', Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
+  font-size: var(--wt-page-font-size);
 }
 
 .wt-page__text {
@@ -7754,6 +7898,7 @@ export function Toolbar({
 ```tsx
 import { useState } from 'react'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
+import { PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
 import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
@@ -8961,6 +9106,7 @@ const ignoreShortcutsChange = (): void => {}
 const ignoreRecordingChange = (): void => {}
 /** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
 const ignoreAction = (): void => {}
+const ignoreNumberChange = (): void => {}
 
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
@@ -8986,6 +9132,8 @@ export function Ribbon({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
+  pageFontSize = PAGE_FONT_SIZE_DEFAULT,
+  onPageFontSizeChange = ignoreNumberChange,
   novelOpen,
   settingsOpen,
   onSettingsOpenChange,
@@ -9014,6 +9162,9 @@ export function Ribbon({
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 阅读区正文字号（只作用于小说与 `.txt` 工作文档，见 `page.css` 的 `.wt-page__novel`）。 */
+  pageFontSize?: number
+  onPageFontSizeChange?: (next: number) => void
   /**
    * 有没有打开文档。设置里「当前书」的比例框据此禁用——没有文档就没有「当前书」。
    *
@@ -9103,6 +9254,8 @@ export function Ribbon({
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        pageFontSize={pageFontSize}
+        onPageFontSizeChange={onPageFontSizeChange}
         novelOpen={novelOpen}
         shortcuts={shortcuts}
         platform={platform}
@@ -9922,7 +10075,16 @@ export function Page({
                 onMeasureNode={md.onMeasureNode}
               />
             ) : (
-              <>
+              /*
+                【这一层只为了字体】新正文的字体与字号挂在 `.wt-page__novel` 上，而不是
+                挂在共用的 `.wt-page__text` 上——md 那条路没有自己的根元素（各块都是
+                `.wt-page__text` 的直接子元素），字体挂在外层会让它一起跟着换。
+                详见 `page.css` 里那段说明。
+
+                【光标为什么在里面】它是 `height: 1.15em`，留在外面就按 `.wt-page` 那个
+                写死的 15px 算——正文字号调大时光标会矮一截。
+              */
+              <span className="wt-page__novel" data-testid="novel-text">
                 {shown}
                 {/*
                   【这个光标只属于纯文本那条路】md 那条路的光标由 `MarkdownView`
@@ -9931,7 +10093,7 @@ export function Page({
                   都按这个坐标摆。
                 */}
                 <span className="wt-caret" data-testid="caret" />
-              </>
+              </span>
             )}
           </div>
         </>
@@ -10104,6 +10266,18 @@ describe('Page', () => {
   it('未超过上限时不折叠', () => {
     render(<Page visibleText={'短文本'} expanded={false} onToggleExpand={() => {}} empty={false} />)
     expect(screen.queryByTestId('page-fold')).toBeNull()
+  })
+
+  it('纯文本那一路包在 `.wt-page__novel` 里，光标也在它里面', () => {
+    // 【这一层是给换字体用的】`page.css` 把正文的字体与字号挂在 `.wt-page__novel` 上、
+    // 而不是挂在共用的 `.wt-page` 上——md 那条路与它共用同一张纸，挂在外层会让 md 一起换。
+    render(<Page visibleText="第一章 甲" expanded={false} onToggleExpand={() => {}} empty={false} />)
+    const novel = screen.getByTestId('page-text').querySelector('.wt-page__novel')
+    expect(novel).not.toBeNull()
+    expect(novel!.textContent).toContain('第一章 甲')
+    // 【光标必须在里面】它是 `height: 1.15em`——留在外面就按 `.wt-page` 那个写死的 15px 算，
+    // 正文字号调大时光标会矮一截。
+    expect(novel!.querySelector('[data-testid="caret"]')).not.toBeNull()
   })
 })
 ```
@@ -10986,7 +11160,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
-import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
+import {
+  DEFAULT_DOC_TITLE,
+  DEFAULT_RATIO,
+  PAGE_FONT_SIZE_DEFAULT,
+  clampPageFontSize
+} from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
@@ -10996,7 +11175,7 @@ import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
-import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
+import { useDarkPaper, usePageFontSize, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
 import { isMarkdownPath, parseMarkdown } from './markdown/parse'
 import { pickFillCut, type BlockHeight } from './markdown/fill'
@@ -11109,6 +11288,14 @@ export default function App() {
   const [workDocPath, setWorkDocPath] = useState<string | null>(null)
   const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
   /**
+   * 阅读区正文字号。**只作用于小说与 `.txt` 工作文档**（md 那条路的字号是写死的，见
+   * `page.css` 里 `.wt-page__novel` 那段）。
+   *
+   * 【为什么全局一份、不像比例那样分「全局 / 当前书」】字号是显示偏好，与「在读哪一本」
+   * 无关，跟 `themeSource` / `darkPaper` 同类。
+   */
+  const [pageFontSize, setPageFontSize] = useState(PAGE_FONT_SIZE_DEFAULT)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
@@ -11121,6 +11308,9 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
+  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。与上面三个同处一层：
+  // 全是「把用户的外观偏好写到 documentElement 上」。
+  usePageFontSize(pageFontSize)
   /**
    * **持久化专用**的引擎引用：永远指向小说那一本。
    *
@@ -11155,6 +11345,14 @@ export default function App() {
    */
   const bossFillPercentRef = useRef(BOSS_FILL_MAX)
   bossFillPercentRef.current = bossFillPercent
+  /**
+   * 最新的正文字号，挂在 ref 上给 `applyFill` 与那条 toast 读。
+   *
+   * 【为什么与 `bossFillPercentRef` 同一套写法】那两处一个是 `useCallback`、一个在依赖数组
+   * 里已经很长；字号只是喂给 `fillCharsFor` 的一个乘数，没有理由让它改变这两者的身份。
+   */
+  const pageFontSizeRef = useRef(PAGE_FONT_SIZE_DEFAULT)
+  pageFontSizeRef.current = pageFontSize
 
   const settingsRef = useRef<AppSettings | null>(null)
   /**
@@ -11194,6 +11392,7 @@ export default function App() {
       ratio: globalRatio,
       workDocPath,
       bossFillPercent,
+      pageFontSize,
       shortcuts
     }),
     [
@@ -11204,6 +11403,7 @@ export default function App() {
       globalRatio,
       workDocPath,
       bossFillPercent,
+      pageFontSize,
       shortcuts
     ]
   )
@@ -11317,7 +11517,7 @@ export default function App() {
       }
       if (!workIsMarkdown) {
         // 不是 md：没有结构可量，本来就是按字符数铺
-        eng.revealTo(fillCharsFor(percent))
+        eng.revealTo(fillCharsFor(percent, pageFontSizeRef.current))
         return
       }
       pendingFillRef.current = percent
@@ -11355,7 +11555,9 @@ export default function App() {
     if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
     // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
     workEngine?.revealTo(
-      heights ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100) : fillCharsFor(percent ?? 0)
+      heights
+        ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100)
+        : fillCharsFor(percent ?? 0, pageFontSizeRef.current)
     )
     setMeasuring(false)
   }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
@@ -11565,7 +11767,11 @@ export default function App() {
        * 兜底估算——报出来是个假数字（屏幕上根本不是那么多个字）。那种「看起来精确、
        * 其实错」的提示比不提示更糟，所以那一路只报档位。
        */
-      notify(workIsMarkdown ? `铺满 ${next}%` : `铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+      notify(
+        workIsMarkdown
+          ? `铺满 ${next}%`
+          : `铺满 ${next}% ≈ ${fillCharsFor(next, pageFontSizeRef.current)} 字`
+      )
     },
     [bossActive, applyFill, notify, workIsMarkdown]
   )
@@ -11594,6 +11800,8 @@ export default function App() {
       // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
       // 而第一次按「铺满 −」会从 500 一步跳到 100。
       setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
+      // 同一姿态：settingsProblem 只判「是不是有限数字」，12–24 这个值域在这里夹。
+      setPageFontSize(clampPageFontSize(settings.pageFontSize))
       setWorkDocPath(settings.workDocPath)
       setSettingsLoaded(true)
 
@@ -11876,6 +12084,8 @@ export default function App() {
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
+          pageFontSize={pageFontSize}
+          onPageFontSizeChange={setPageFontSize}
           novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
@@ -12401,7 +12611,7 @@ describe('设置的持久化', () => {
     // 轮询会连带推进假时钟，600ms 一到就落盘——本文件里「打字后会防抖保存会话」也是这么等
     // 防抖的。实测：只写 advance 时这条红在 `toHaveBeenCalled`，换成 waitFor 才绿。
     await act(async () => {
-      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, shortcuts: { import: 'Ctrl+KeyI' } })
+      release({ docTitle: '季度汇报', themeSource: 'dark', darkPaper: true, lastSourcePath: null, ratio: 10, workDocPath: null, bossFillPercent: 100, pageFontSize: 18, shortcuts: { import: 'Ctrl+KeyI' } })
       await vi.advanceTimersByTimeAsync(2000)
     })
     await waitFor(() => expect(saveSettings).toHaveBeenCalled())
@@ -12417,6 +12627,9 @@ describe('设置的持久化', () => {
     // （实测过：`{"import":"Ctrl+KeyI"}` 启动一次、全程没人碰键盘，600ms 后变成 `{}`）。
     // 上面那三条断言对这件事完全沉默——它们的字段本来就不来自 shortcuts。
     expect(payload.shortcuts).toEqual({ import: 'Ctrl+KeyI' })
+    // 字号同理：memo 里漏一个字段（或依赖数组里漏一个），启动一次就会被防抖那次写
+    // 无声冲成默认值。这条钉的是「它真的从磁盘来、也真的回得去」。
+    expect(payload.pageFontSize).toBe(18)
   })
 
   // 【这条守的是「不回退」，与上一条同形，但守的是另外两个字段】`settings` memo 就是防抖
@@ -13975,7 +14188,13 @@ import {
   shortcutProblem,
   type ShortcutId
 } from '../../../core/shortcuts'
-import { MAX_RATIO, MIN_RATIO } from '../../../core/types'
+import {
+  MAX_RATIO,
+  MIN_RATIO,
+  PAGE_FONT_SIZE_MAX,
+  PAGE_FONT_SIZE_MIN,
+  clampPageFontSize
+} from '../../../core/types'
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
@@ -14008,6 +14227,14 @@ export interface SettingsDialogProps {
   /** 外观偏好：跟随系统 / 浅色 / 深色 */
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /**
+   * 阅读区正文字号（px，12–24）。**归「手动保存」那一组**：改完点保存才生效。
+   *
+   * 【它只作用于小说与 `.txt` 工作文档】md 工作文档的一整套字号是照着 Word 的标题层级
+   * 写死的 px，跟着缩会把层级弄散。见 `page.css` 的 `.wt-page__novel`。
+   */
+  pageFontSize: number
+  onPageFontSizeChange: (next: number) => void
   /**
    * 有没有打开文档：「当前书」的比例框据此禁用——没有文档就没有「当前书」。
    *
@@ -14081,6 +14308,8 @@ export function SettingsDialog({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
+  pageFontSize,
+  onPageFontSizeChange,
   novelOpen,
   shortcuts,
   platform,
@@ -14184,6 +14413,17 @@ export function SettingsDialog({
         },
         commit: (value) => setGlobalRatio(Number(value))
       },
+      {
+        // 正文字号与上面两格共用同一套「解析不出就退回当前值 → 失焦归一化 → 保存才提交」。
+        // 它落进 `settings.json`（全局一份），与文档名同一条路。
+        id: 'page-font-size',
+        committed: String(pageFontSize),
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampPageFontSize(parsed)) : committed
+        },
+        commit: (value) => onPageFontSizeChange(Number(value))
+      },
       // 快捷键：**每一条一行**，从 core 的注册表推出来（加一条快捷键不必来这里改代码）
       ...SHORTCUTS.map((def): DeferredField => ({
         id: `shortcut-${def.id}`,
@@ -14201,7 +14441,19 @@ export function SettingsDialog({
         }
       }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
+    [
+      docTitle,
+      ratio,
+      globalRatio,
+      pageFontSize,
+      onDocTitleChange,
+      setRatio,
+      setGlobalRatio,
+      onPageFontSizeChange,
+      shortcuts,
+      onShortcutsChange,
+      kind
+    ]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
@@ -14261,18 +14513,28 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
+
   /**
-   * 比例那两格的失焦处理：只归一化、不提交；**被夹紧了才提示**（普通改个数字不该弹东西）。
-   * 两格逻辑一模一样，只有 id 不同，所以抽出来——复制一份的话，夹紧提示的文案或边界一改就容易漏一处。
+   * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
+   * **被夹紧了才提示**（普通改个数字不该弹东西）。
+   *
+   * 【为什么抽出来】三格逻辑一模一样，只有 id、夹紧函数与边界不同。复制三份的话，
+   * 提示的文案或边界一改就容易漏一处。
    */
-  const blurRatio =
-    (id: 'ratio' | 'global-ratio') =>
+  const blurClamped =
+    (
+      id: 'ratio' | 'global-ratio' | 'page-font-size',
+      clamp: (n: number) => number,
+      lo: number,
+      hi: number,
+      label: string
+    ) =>
     (e: FocusEvent<HTMLInputElement>): void => {
       const raw = e.currentTarget.value
       const after = blur(id)
       const parsed = Number.parseInt(raw, 10)
-      if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
-        notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+      if (Number.isFinite(parsed) && String(clamp(parsed)) !== String(parsed)) {
+        notify(`${label}已夹紧到 ${lo}–${hi} 范围：${after}`)
       }
     }
 
@@ -14399,7 +14661,7 @@ export function SettingsDialog({
                   inputMode="numeric"
                   value={drafts['global-ratio'] ?? String(globalRatio)}
                   onChange={(e) => setDraft('global-ratio', e.target.value)}
-                  onBlur={blurRatio('global-ratio')}
+                  onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -14419,7 +14681,7 @@ export function SettingsDialog({
                   disabled={!novelOpen}
                   value={drafts['ratio'] ?? String(ratio)}
                   onChange={(e) => setDraft('ratio', e.target.value)}
-                  onBlur={blurRatio('ratio')}
+                  onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -14501,6 +14763,38 @@ export function SettingsDialog({
               />
               深色模式下也变暗
             </label>
+          </div>
+
+          <div className="wt-modal__row">
+            {/*
+              正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
+              才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
+              写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
+            */}
+            <span className="wt-modal__label">
+              <IconFontSize className="wt-modal__label-icon" />
+              正文字号
+            </span>
+            <input
+              className="wt-ratio__input"
+              data-testid="page-font-size-input"
+              aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
+              inputMode="numeric"
+              value={drafts['page-font-size'] ?? String(pageFontSize)}
+              onChange={(e) => setDraft('page-font-size', e.target.value)}
+              onBlur={blurClamped(
+                'page-font-size',
+                clampPageFontSize,
+                PAGE_FONT_SIZE_MIN,
+                PAGE_FONT_SIZE_MAX,
+                '字号'
+              )}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+              }}
+            />
+            <span className="wt-ratio__label">px</span>
+            <span className="wt-ratio__note">只作用于小说与 .txt</span>
           </div>
 
           {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
@@ -14666,6 +14960,7 @@ import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
 
@@ -14696,6 +14991,9 @@ interface SetupOptions {
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
+  /** 阅读区正文字号。不传＝默认值（`PAGE_FONT_SIZE_DEFAULT`） */
+  pageFontSize?: number
+  onPageFontSizeChange?: (next: number) => void
   /** 工作文档的文件名（去扩展名）。不传＝没导入 */
   workDocTitle?: string | null
   /** 完整路径，只用于那行的悬停提示。不传＝没有 */
@@ -14710,16 +15008,19 @@ function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
   onThemeSourceChange: ReturnType<typeof vi.fn>
+  onPageFontSizeChange: ReturnType<typeof vi.fn>
   unmount: () => void
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
   const onThemeSourceChange = vi.fn()
+  const onPageFontSizeChange = vi.fn()
   const {
     capture,
     docTitle = '文档1',
     darkPaper = false,
     themeSource = 'system',
+    pageFontSize = PAGE_FONT_SIZE_DEFAULT,
     novelOpen = true,
     // 默认走 Windows 那一套：macOS 上 import 归原生菜单管，分发器会**跳过**它，
     // 于是「录制期间静音」那条用例在 darwin 下根本走不到分发器。
@@ -14794,6 +15095,8 @@ function setup(opts: SetupOptions = {}): {
           onDarkPaperChange={onDarkPaperChange}
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
+          pageFontSize={pageFontSize}
+          onPageFontSizeChange={onPageFontSizeChange}
           novelOpen={novelOpen}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
@@ -14818,7 +15121,13 @@ function setup(opts: SetupOptions = {}): {
       <Harness />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange, unmount }
+  return {
+    onDocTitleChange,
+    onDarkPaperChange,
+    onThemeSourceChange,
+    onPageFontSizeChange,
+    unmount
+  }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -15113,6 +15422,99 @@ describe('对话框里改文档名', () => {
 
     openViaButton()
     expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 正文字号。
+ *
+ * 【它归「手动保存」那一组】改完点保存才生效——与文档名、阅读替换同一套。
+ * 所以下面每一条都要连着断言「**还没点保存时不许提交**」，否则把 `commit` 挪回
+ * onChange 上（立即生效）整组照样绿。
+ */
+describe('设置里的正文字号', () => {
+  it('改了不立即生效，出保存按钮；点保存才提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    expect(input.value).toBe('15')
+
+    fireEvent.change(input, { target: { value: '18' } })
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 有改动 → 保存按钮出现（与「手动保存」那一组同一套显隐）
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(18)
+  })
+
+  it('失焦只归一化、不提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 没有越界，所以也不该弹夹紧提示
+    expect(screen.queryByTestId('toast')).toBeNull()
+  })
+
+  it('回车＝保存', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
+  })
+
+  it('越界：失焦就夹紧并提示，但**还没生效**；回车保存夹紧后的值', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '999' } })
+    fireEvent.blur(input)
+    // 框里显示夹紧后的值、给一条提示，但回调还没发生
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MAX))
+    expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MAX)
+  })
+
+  it('比下限还小同样夹到下限', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '3' } })
+    fireEvent.blur(input)
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MIN))
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+  })
+
+  it('解析不出的输入退回当前值（不留一个空草稿）', () => {
+    // 留空草稿的话「保存」会一直亮着，而点下去什么都不提交——用户会以为按钮坏了。
+    const { onPageFontSizeChange } = setup({ pageFontSize: 17 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
+    expect(input.value).toBe('17')
+    // 草稿被拉回已提交值 → 算「没有改动」→ 保存按钮不出现
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+  })
+
+  it('重开对话框时草稿不残留（关闭＝丢弃）', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '22' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('page-font-size-input') as HTMLInputElement).value).toBe('15')
   })
 })
 
@@ -16327,6 +16729,27 @@ export function useDarkPaper(enabled: boolean): void {
   useEffect(() => {
     document.documentElement.dataset.paper = enabled ? 'dark' : 'light'
   }, [enabled])
+}
+
+/**
+ * 阅读区正文字号（px）。**只作用于小说与 `.txt` 工作文档那一路**。
+ *
+ * 【为什么是一个 CSS 变量而不是 data 属性】前面两个开关是「开/关」这类枚举，落到
+ * `data-*` 上让 CSS 用属性选择器取；字号是一个连续量，只能是变量。写的地方与它们相同
+ * （`documentElement`）——内联样式比 `:root` 那条规则优先级高，所以会盖住 `page.css` 里
+ * 那个等于默认值的初值。
+ *
+ * 【为什么不做成 `data-` + 几档选择器】档位表要在 CSS 里手写一遍、core 里再写一遍，
+ * 加一档要改两处；而它本来就是「12–24 里选一个数」。
+ *
+ * 【它为什么不作用于 md】md 工作文档不算这条路——它的一整套字号是照着 Word 的标题层级
+ * 写死的 px（`h1` 26px、`--wt-md-code-line` 20.8px…），跟着缩会把层级弄散。
+ * `page.css` 里 `.wt-page__novel` 那段是这条口径的正本。
+ */
+export function usePageFontSize(px: number): void {
+  useEffect(() => {
+    document.documentElement.style.setProperty('--wt-page-font-size', `${px}px`)
+  }, [px])
 }
 
 /**

@@ -45,6 +45,16 @@ describe('Page —— md 分支', () => {
     expect(c.querySelector('p')).toBeNull()
   })
 
+  it('md 这条路**没有** `.wt-page__novel` 那一层，正文字体与字号够不着它', () => {
+    // 【为什么要钉这一条】新正文的字体与字号挂在 `.wt-page__novel` 上（`page.css`）。
+    // 这一层若被套到 md 上（或字体被挂回共用的 `.wt-page`），md 就会跟着换字体、
+    // 跟着缩字号——而它那一整套 px 是照着 Word 的标题层级写死的，缩了层级就散了。
+    const c = page(source()).container
+    expect(c.querySelector('.wt-page__novel')).toBeNull()
+    // 前提自检：这一份确实渲染出了块，不是因为整棵树空着才没有那一层。
+    expect(c.querySelector('h1')).not.toBeNull()
+  })
+
   it('measuring 为真时多出一份隐藏的整篇副本，为假时没有', () => {
     // 【为什么必须能关掉】那份副本是**整篇**文档的 DOM，每次按键都渲染它
     // 是不可接受的；它只在算铺满的时候开一下

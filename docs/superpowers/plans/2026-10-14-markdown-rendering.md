@@ -4904,6 +4904,16 @@ describe('Page —— md 分支', () => {
     expect(c.querySelector('p')).toBeNull()
   })
 
+  it('md 这条路**没有** `.wt-page__novel` 那一层，正文字体与字号够不着它', () => {
+    // 【为什么要钉这一条】新正文的字体与字号挂在 `.wt-page__novel` 上（`page.css`）。
+    // 这一层若被套到 md 上（或字体被挂回共用的 `.wt-page`），md 就会跟着换字体、
+    // 跟着缩字号——而它那一整套 px 是照着 Word 的标题层级写死的，缩了层级就散了。
+    const c = page(source()).container
+    expect(c.querySelector('.wt-page__novel')).toBeNull()
+    // 前提自检：这一份确实渲染出了块，不是因为整棵树空着才没有那一层。
+    expect(c.querySelector('h1')).not.toBeNull()
+  })
+
   it('measuring 为真时多出一份隐藏的整篇副本，为假时没有', () => {
     // 【为什么必须能关掉】那份副本是**整篇**文档的 DOM，每次按键都渲染它
     // 是不可接受的；它只在算铺满的时候开一下
@@ -5221,7 +5231,16 @@ export function Page({
                 onMeasureNode={md.onMeasureNode}
               />
             ) : (
-              <>
+              /*
+                【这一层只为了字体】新正文的字体与字号挂在 `.wt-page__novel` 上，而不是
+                挂在共用的 `.wt-page__text` 上——md 那条路没有自己的根元素（各块都是
+                `.wt-page__text` 的直接子元素），字体挂在外层会让它一起跟着换。
+                详见 `page.css` 里那段说明。
+
+                【光标为什么在里面】它是 `height: 1.15em`，留在外面就按 `.wt-page` 那个
+                写死的 15px 算——正文字号调大时光标会矮一截。
+              */
+              <span className="wt-page__novel" data-testid="novel-text">
                 {shown}
                 {/*
                   【这个光标只属于纯文本那条路】md 那条路的光标由 `MarkdownView`
@@ -5230,7 +5249,7 @@ export function Page({
                   都按这个坐标摆。
                 */}
                 <span className="wt-caret" data-testid="caret" />
-              </>
+              </span>
             )}
           </div>
         </>
