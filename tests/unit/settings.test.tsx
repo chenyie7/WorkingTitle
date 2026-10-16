@@ -1250,7 +1250,7 @@ describe('设置对话框的左栏分页', () => {
     // `handleInput` 上**一条都没有**。所以焦点一落在那儿，按键**立刻**开始抽字。
     //
     // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
-    // 所以修法是让「打开」的那一次提交本身就是对的（见下面那段渲染期重置）。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见 `SettingsDialog` 里那段渲染期重置）。
     setup({ capture: true })
     openViaButton()
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
