@@ -125,9 +125,11 @@ const THEME_OPTIONS = [
 /**
  * 左栏的页签。数组顺序就是左栏从上到下的顺序。
  *
- * 【为什么是表而不是散在 JSX 里】页签按钮的六个属性、`aria-controls`、roving tabindex、
- * 方向键分发这几处遍历的是同一份清单；散着写的话每加一页都要各改一遍。
- * 与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ * 【为什么是表而不是散在 JSX 里】页签按钮上那**九个由表里这一项算出来的属性**
+ * （`key` / `id` / `aria-selected` / `aria-controls` / `tabIndex` / `className` /
+ * `data-testid` / `ref` / `onClick`）——十二个属性里只有 `type` / `role` / `onKeyDown`
+ * 三个与 `p` 无关——以及方向键分发要遍历的 `PAGES` 本身，用的都是同一份清单；
+ * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
  *
  * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
  * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
