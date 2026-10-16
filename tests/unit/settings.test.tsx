@@ -475,89 +475,93 @@ describe('对话框里改文档名', () => {
 /**
  * 正文字号。
  *
- * 【为什么它不归「手动保存」那一组】与外观 / 纸张同一条理由：效果当场看得见，要按保存
- * 才生效会很别扭。下面第一条钉的就是这条边界——**没有**点保存，回调也应当已经发生。
+ * 【它归「手动保存」那一组】改完点保存才生效——与文档名、阅读替换同一套。
+ * 所以下面每一条都要连着断言「**还没点保存时不许提交**」，否则把 `commit` 挪回
+ * onChange 上（立即生效）整组照样绿。
  */
 describe('设置里的正文字号', () => {
-  it('失焦即提交，不需要点保存', () => {
+  it('改了不立即生效，出保存按钮；点保存才提交', () => {
     const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
     openViaButton()
-    const input = screen.getByTestId('page-font-size') as HTMLInputElement
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
     expect(input.value).toBe('15')
 
     fireEvent.change(input, { target: { value: '18' } })
-    // 打字途中不提交：`18` 的第一下是 `1`，那一下若提交了就会被夹成 12，
-    // 而第二个字符会落进一个已经被改写的框里。
     expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 有改动 → 保存按钮出现（与「手动保存」那一组同一套显隐）
+    expect(screen.getByTestId('settings-save')).toBeTruthy()
 
-    fireEvent.blur(input)
+    fireEvent.click(screen.getByTestId('settings-save'))
     expect(onPageFontSizeChange).toHaveBeenCalledWith(18)
-    // 【与「手动保存」那一组的边界】没有点保存按钮，也没有「已保存」那条 toast
+  })
+
+  it('失焦只归一化、不提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size-input')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 没有越界，所以也不该弹夹紧提示
     expect(screen.queryByTestId('toast')).toBeNull()
   })
 
-  it('回车同样提交', () => {
+  it('回车＝保存', () => {
     const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
     openViaButton()
-    const input = screen.getByTestId('page-font-size')
+    const input = screen.getByTestId('page-font-size-input')
     fireEvent.change(input, { target: { value: '20' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
   })
 
-  it('越界被夹紧到两端，并给一条提示', () => {
+  it('越界：失焦就夹紧并提示，但**还没生效**；回车保存夹紧后的值', () => {
     const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
     openViaButton()
-    const input = screen.getByTestId('page-font-size')
-
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '999' } })
     fireEvent.blur(input)
-    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MAX)
+    // 框里显示夹紧后的值、给一条提示，但回调还没发生
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MAX))
     expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MAX)
   })
 
   it('比下限还小同样夹到下限', () => {
     const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
     openViaButton()
-    const input = screen.getByTestId('page-font-size')
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '3' } })
     fireEvent.blur(input)
-    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MIN)
-  })
-
-  it('夹到同一个值时仍然提示，但不提交（值没变就没有回调）', () => {
-    // 【为什么仍然提示】用户在框里打 200、框又弹回 24。不提示的话那看起来就是
-    // 「我打的字被忽略了」——本仓库最忌讳的那种静默。提示说的是**范围**，
-    // 与「值变没变」是两件事（`blurRatio` 那条也是「被夹紧了就提示」）。
-    const { onPageFontSizeChange } = setup({ pageFontSize: PAGE_FONT_SIZE_MAX })
-    openViaButton()
-    const input = screen.getByTestId('page-font-size')
-    fireEvent.change(input, { target: { value: '200' } })
-    fireEvent.blur(input)
+    expect(input.value).toBe(String(PAGE_FONT_SIZE_MIN))
     expect(onPageFontSizeChange).not.toHaveBeenCalled()
-    expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
   })
 
-  it('解析不出的输入退回当前值，不提交也不留草稿', () => {
+  it('解析不出的输入退回当前值（不留一个空草稿）', () => {
+    // 留空草稿的话「保存」会一直亮着，而点下去什么都不提交——用户会以为按钮坏了。
     const { onPageFontSizeChange } = setup({ pageFontSize: 17 })
     openViaButton()
-    const input = screen.getByTestId('page-font-size') as HTMLInputElement
+    const input = screen.getByTestId('page-font-size-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '' } })
     fireEvent.blur(input)
-    expect(onPageFontSizeChange).not.toHaveBeenCalled()
-    // 草稿清掉了，框里回到已提交的那个数——留一个空框比什么都不做更糟
     expect(input.value).toBe('17')
+    // 草稿被拉回已提交值 → 算「没有改动」→ 保存按钮不出现
+    expect(screen.queryByTestId('settings-save')).toBeNull()
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
   })
 
   it('重开对话框时草稿不残留（关闭＝丢弃）', () => {
     const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
     openViaButton()
-    fireEvent.change(screen.getByTestId('page-font-size'), { target: { value: '22' } })
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '22' } })
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onPageFontSizeChange).not.toHaveBeenCalled()
 
     openViaButton()
-    expect((screen.getByTestId('page-font-size') as HTMLInputElement).value).toBe('15')
+    expect((screen.getByTestId('page-font-size-input') as HTMLInputElement).value).toBe('15')
   })
 })
 

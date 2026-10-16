@@ -1994,32 +1994,6 @@ import {
   /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
   const [recording, setRecording] = useState<ShortcutId | null>(null)
 
-  /**
-   * 正文字号的**输入草稿**。
-   *
-   * 【为什么要有草稿】它是立即提交的，而一个数字输入框在打字途中会经过中间态：输入 `18`
-   * 的第一下就已经是一个合法的 `1`。直接受控于 `pageFontSize` 的话，那一下会把值提交成 1
-   * （再被夹到 12），第二个字符于是落进一个已经被改写的框里。所以照比例那两格的做法：
-   * 草稿管显示，失焦或回车那一下才解析 + 夹紧 + 提交。
-   */
-  const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null)
-
-  /**
-   * 提交字号。**只提示「被夹紧了」那一种情况**——它与外观 / 纸张同类，是立即动作，
-   * 每次改都弹一条「已保存」会很吵（「已保存」是「手动保存」那一组的反馈）。
-   */
-  const commitPageFontSize = (raw: string): void => {
-    setFontSizeDraft(null)
-    const parsed = Number.parseInt(raw, 10)
-    // 解析不出就退回当前值（草稿清掉，框里回到已提交的那个数）
-    if (!Number.isFinite(parsed)) return
-    const next = clampPageFontSize(parsed)
-    if (next !== pageFontSize) onPageFontSizeChange(next)
-    if (next !== parsed) {
-      notify(`字号已夹紧到 ${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 范围：${next}`)
-    }
-  }
-
   // 录制态一变就告诉外面（分发器据此静音）
   useEffect(() => {
     onRecordingChange(recording !== null)
@@ -2065,7 +2039,19 @@ import {
         }
       }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
+    [
+      docTitle,
+      ratio,
+      globalRatio,
+      pageFontSize,
+      onDocTitleChange,
+      setRatio,
+      setGlobalRatio,
+      onPageFontSizeChange,
+      shortcuts,
+      onShortcutsChange,
+      kind
+    ]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 ```

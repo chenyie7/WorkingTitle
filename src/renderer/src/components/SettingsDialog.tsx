@@ -61,10 +61,7 @@ export interface SettingsDialogProps {
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
   /**
-   * 阅读区正文字号（px，12–24）。
-   *
-   * 【为什么立即生效、不进「手动保存」那一组】与外观 / 纸张同一条理由：效果当场看得见，
-   * 要按保存才生效会很别扭（`fields` 上面那段说明就是这条口径）。
+   * 阅读区正文字号（px，12–24）。**归「手动保存」那一组**：改完点保存才生效。
    *
    * 【它只作用于小说与 `.txt` 工作文档】md 工作文档的一整套字号是照着 Word 的标题层级
    * 写死的 px，跟着缩会把层级弄散。见 `page.css` 的 `.wt-page__novel`。
@@ -179,32 +176,6 @@ export function SettingsDialog({
   /** 正在录哪一条（null＝没在录）。录制期间那个按钮自己接管 keydown。 */
   const [recording, setRecording] = useState<ShortcutId | null>(null)
 
-  /**
-   * 正文字号的**输入草稿**。
-   *
-   * 【为什么要有草稿】它是立即提交的，而一个数字输入框在打字途中会经过中间态：输入 `18`
-   * 的第一下就已经是一个合法的 `1`。直接受控于 `pageFontSize` 的话，那一下会把值提交成 1
-   * （再被夹到 12），第二个字符于是落进一个已经被改写的框里。所以照比例那两格的做法：
-   * 草稿管显示，失焦或回车那一下才解析 + 夹紧 + 提交。
-   */
-  const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null)
-
-  /**
-   * 提交字号。**只提示「被夹紧了」那一种情况**——它与外观 / 纸张同类，是立即动作，
-   * 每次改都弹一条「已保存」会很吵（「已保存」是「手动保存」那一组的反馈）。
-   */
-  const commitPageFontSize = (raw: string): void => {
-    setFontSizeDraft(null)
-    const parsed = Number.parseInt(raw, 10)
-    // 解析不出就退回当前值（草稿清掉，框里回到已提交的那个数）
-    if (!Number.isFinite(parsed)) return
-    const next = clampPageFontSize(parsed)
-    if (next !== pageFontSize) onPageFontSizeChange(next)
-    if (next !== parsed) {
-      notify(`字号已夹紧到 ${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 范围：${next}`)
-    }
-  }
-
   // 录制态一变就告诉外面（分发器据此静音）
   useEffect(() => {
     onRecordingChange(recording !== null)
@@ -275,6 +246,17 @@ export function SettingsDialog({
         },
         commit: (value) => setGlobalRatio(Number(value))
       },
+      {
+        // 正文字号与上面两格共用同一套「解析不出就退回当前值 → 失焦归一化 → 保存才提交」。
+        // 它落进 `settings.json`（全局一份），与文档名同一条路。
+        id: 'page-font-size',
+        committed: String(pageFontSize),
+        normalize: (raw, committed) => {
+          const parsed = Number.parseInt(raw, 10)
+          return Number.isFinite(parsed) ? String(clampPageFontSize(parsed)) : committed
+        },
+        commit: (value) => onPageFontSizeChange(Number(value))
+      },
       // 快捷键：**每一条一行**，从 core 的注册表推出来（加一条快捷键不必来这里改代码）
       ...SHORTCUTS.map((def): DeferredField => ({
         id: `shortcut-${def.id}`,
@@ -292,7 +274,19 @@ export function SettingsDialog({
         }
       }))
     ],
-    [docTitle, ratio, globalRatio, onDocTitleChange, setRatio, setGlobalRatio, shortcuts, onShortcutsChange, kind]
+    [
+      docTitle,
+      ratio,
+      globalRatio,
+      pageFontSize,
+      onDocTitleChange,
+      setRatio,
+      setGlobalRatio,
+      onPageFontSizeChange,
+      shortcuts,
+      onShortcutsChange,
+      kind
+    ]
   )
   const { drafts, setDraft, blur, dirty, save, reset } = useDeferredSettings(fields)
 
@@ -352,23 +346,28 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
-  // 字号那格同理：它不走 `fields`（立即提交），但草稿的「关掉＝丢弃」这条要一致
-  useEffect(() => {
-    if (open) setFontSizeDraft(null)
-  }, [open])
 
   /**
-   * 比例那两格的失焦处理：只归一化、不提交；**被夹紧了才提示**（普通改个数字不该弹东西）。
-   * 两格逻辑一模一样，只有 id 不同，所以抽出来——复制一份的话，夹紧提示的文案或边界一改就容易漏一处。
+   * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
+   * **被夹紧了才提示**（普通改个数字不该弹东西）。
+   *
+   * 【为什么抽出来】三格逻辑一模一样，只有 id、夹紧函数与边界不同。复制三份的话，
+   * 提示的文案或边界一改就容易漏一处。
    */
-  const blurRatio =
-    (id: 'ratio' | 'global-ratio') =>
+  const blurClamped =
+    (
+      id: 'ratio' | 'global-ratio' | 'page-font-size',
+      clamp: (n: number) => number,
+      lo: number,
+      hi: number,
+      label: string
+    ) =>
     (e: FocusEvent<HTMLInputElement>): void => {
       const raw = e.currentTarget.value
       const after = blur(id)
       const parsed = Number.parseInt(raw, 10)
-      if (Number.isFinite(parsed) && String(clampRatioInput(parsed)) !== String(parsed)) {
-        notify(`比例已夹紧到 ${MIN_RATIO}–${MAX_RATIO} 范围：${after}`)
+      if (Number.isFinite(parsed) && String(clamp(parsed)) !== String(parsed)) {
+        notify(`${label}已夹紧到 ${lo}–${hi} 范围：${after}`)
       }
     }
 
@@ -495,7 +494,7 @@ export function SettingsDialog({
                   inputMode="numeric"
                   value={drafts['global-ratio'] ?? String(globalRatio)}
                   onChange={(e) => setDraft('global-ratio', e.target.value)}
-                  onBlur={blurRatio('global-ratio')}
+                  onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -515,7 +514,7 @@ export function SettingsDialog({
                   disabled={!novelOpen}
                   value={drafts['ratio'] ?? String(ratio)}
                   onChange={(e) => setDraft('ratio', e.target.value)}
-                  onBlur={blurRatio('ratio')}
+                  onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave()
                   }}
@@ -601,8 +600,8 @@ export function SettingsDialog({
 
           <div className="wt-modal__row">
             {/*
-              正文字号：**立即生效**，与外观 / 纸张同类，不进「手动保存」那一组。
-              只作用于小说与 .txt 工作文档 —— md 那条路的字号是照着 Word 的标题层级
+              正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
+              才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
               写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
             */}
             <span className="wt-modal__label">
@@ -611,14 +610,20 @@ export function SettingsDialog({
             </span>
             <input
               className="wt-ratio__input"
-              data-testid="page-font-size"
+              data-testid="page-font-size-input"
               aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
               inputMode="numeric"
-              value={fontSizeDraft ?? String(pageFontSize)}
-              onChange={(e) => setFontSizeDraft(e.target.value)}
-              onBlur={(e) => commitPageFontSize(e.currentTarget.value)}
+              value={drafts['page-font-size'] ?? String(pageFontSize)}
+              onChange={(e) => setDraft('page-font-size', e.target.value)}
+              onBlur={blurClamped(
+                'page-font-size',
+                clampPageFontSize,
+                PAGE_FONT_SIZE_MIN,
+                PAGE_FONT_SIZE_MAX,
+                '字号'
+              )}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitPageFontSize(e.currentTarget.value)
+                if (e.key === 'Enter') handleSave()
               }}
             />
             <span className="wt-ratio__label">px</span>
