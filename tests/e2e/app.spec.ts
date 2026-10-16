@@ -117,12 +117,30 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   await win.keyboard.type('aaa')
   await expect.poll(revealed).toBe(0)
 
-  // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
-  // 此后键盘没有焦点宿主，更不该被抢回阅读区
-  await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
+  // 点对话框里不可聚焦的空白处：浏览器会把焦点交给 body，此后键盘没有焦点宿主，
+  // 更不该被抢回阅读区。
+  //
+  // 【坐标为什么从面板挪到 footer】原先点的是 `.wt-modal__panel` 的 (4, 60)，那句话写的
+  // 是「面板左边缘、行标号左侧」。加了 152px 宽的左栏之后，评审用 elementFromPoint 在面板
+  // 坐标系下量过：**(4, 60) 精确命中第一个页签按钮**（`wt-nav__item--active`）。下面那两条
+  // 断言在两个世界里都会绿——也就是说这条用例已经**静默地**不再验它声称要验的东西了。
+  //
+  // 【为什么是 footer 而不是「左栏下方的空白」】面板坐标系下那两个候选（(4,200) 左栏空白、
+  // (156,200) body 空白）在 250% 缩放时会落到 `.wt-modal` 遮罩上——而遮罩的 onClick 正是
+  // 「点它自己就关闭」，那一下会把对话框关掉、用例硬红；300% 时干脆出了视口。footer 的
+  // (4,10) 是**元素相对坐标**、与缩放无关，六档实测全部命中 `.wt-modal__footer`：它高度
+  // 48px 由内容（30px 按钮 + 18px 下内边距）撑住，两个按钮 `justify-content: flex-end`
+  // 靠右排，所以左内边距那一片永远是空的。
+  const panel = win.locator('[data-testid="settings"] .wt-modal__panel')
+  await win.locator('[data-testid="settings"] .wt-modal__footer').click({ position: { x: 4, y: 10 } })
+  // 【这一条是新加的，它让坐标自证】点到不可聚焦的空白处时，浏览器把焦点交给 body。
+  // 少了它，上面那个坐标哪天又落回某个按钮上，这条用例照样绿——而它是本次唯一能在真机里
+  // 判「焦点宿主」的用例。
+  await expect.poll(() => win.evaluate(() => document.activeElement?.tagName ?? '')).toBe('BODY')
   await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
   await win.keyboard.type('bbb')
   await expect.poll(revealed).toBe(0)
+  await expect(panel).toBeVisible()
 
   await win.keyboard.press('Escape')
   await expect(win.locator('[data-testid="settings"]')).toBeHidden()
@@ -130,6 +148,28 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   // 快捷键⌘/Ctrl + , 同样能开
   await win.keyboard.press('Meta+Comma')
   await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  // 重开之后焦点必须仍在对话框里——**这一条只有真机判得了**。
+  //
+  // 【为什么要它】Task 1 修过一条 Critical：`page` 是持久状态、组件在 open 为假时不卸载，
+  // 而 `autoFocus` 落在 `hidden`（display:none）子树里的元素上是 no-op，且只在挂载那一次跑。
+  // 修之前，**每一次「切到非首页 → 关闭 → 重开」**都会让焦点原地留在关闭时被交还的那个
+  // 隐形 textarea 上，而 `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的那条路上
+  // ——抽字路径上一条都没有。所以敲的键会在遮罩后面抽进小说，屏幕上完全看不出来。
+  //
+  // 单测已经判到了「jsdom 对 [hidden] 子树的 focus() 是 no-op」与「渲染期重置与 effect 重置
+  // 的差别」，但**「Chromium 会不会同样如此」jsdom 判不了**——就是这一条。
+  await win.locator('[data-testid="settings-tab-shortcuts"]').click()
+  await win.locator('[data-testid="settings-close"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+  await expect(win.locator('[data-testid="doc-title-input"]')).toBeFocused()
+
+  // 【只断言「焦点在文档名上」不够，还要断言**后果】**——这才是修好的真机判据。
+  // 焦点没回来的话，下面这几个字母会在遮罩后面抽进小说，`revealed` 就从 0 变成 3。
+  await win.keyboard.type('xxx')
+  await expect.poll(revealed).toBe(0)
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
