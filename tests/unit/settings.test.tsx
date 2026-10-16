@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
@@ -1135,10 +1135,20 @@ describe('设置对话框的左栏分页', () => {
     setup()
     openViaButton()
 
+    // 【必须按 DOM 顺序取，不能逐个 getByTestId】按 testid 取的话，结果数组的顺序来自左边
+    // 那个字面量数组、**不是 DOM 顺序**——把 `PAGES` 排成「外观 / 阅读 / 快捷键」（左栏真的
+    // 会变成那个顺序、真的违反设计第 1 节拍板的顺序），那一版**照样全绿**：它守的是「每个
+    // 页签各自的文案」，守不住名字里的「顺序」。
+    //
+    // 【还得限定在左栏那个 tablist 里】裸的 `getAllByRole('tab')` 会把功能区那七个页签
+    // （文件/开始/…/视图）一并捞出来——本用例渲染的是整个 App，`Ribbon.tsx` 的 `.wt-tabs`
+    // 同样是 `role="tablist"` + `role="tab"`（实测拿到 10 个）。
+    // 按 `aria-label="设置分类"` 限定到左栏之后，`within` 依旧**按 DOM 顺序**返回，
+    // 一次同时验文案与顺序。
     expect(
-      ['reading', 'appearance', 'shortcuts'].map(
-        (id) => screen.getByTestId(`settings-tab-${id}`).textContent
-      )
+      within(screen.getByRole('tablist', { name: '设置分类' }))
+        .getAllByRole('tab')
+        .map((el) => el.textContent)
     ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
   })
 

@@ -622,10 +622,21 @@
   display: flex;
 }
 
-/* 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。 */
+/*
+ * 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。
+ *
+ * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
+ * main 的高度**、会跟着面板被 `max-height` 夹而变矮；而左栏的内容是固定高的
+ * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
+ * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
+ * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
+ * footer 那一条——与标题条那条是**同一个根因**（我们加的 `max-height` 让面板开始夹紧），
+ * 所以一并认下来。
+ */
 .wt-modal__nav {
   flex: 0 0 152px;
   padding: 8px 0;
+  overflow-y: auto;
   border-right: 1px solid var(--wt-chrome-border);
 }
 
@@ -654,6 +665,26 @@
 
 .wt-nav__item:hover {
   background: var(--wt-chrome);
+}
+
+/*
+ * 【悬停**已经选中的**那一项时，要维持它的选中底色】没有这一条会坏在特异度上：
+ * `.wt-nav__item:hover` 是 (0,2,0)，而 `.wt-nav__item--active` 只有 (0,1,0)，前者恒压后者
+ * ——用户点页签的那一瞬间鼠标本来就压在那个按钮上，于是新选中的页签同时命中两者、
+ * **蓝色底色当场消失**（左缘竖条与蓝色粗体还在），看起来像「点了没反应」，得把鼠标挪开
+ * 才出现选中态。两个主题都中；深色下更糟，选中项本来是「比面板亮」，一悬停变成「比面板暗」，
+ * 读起来像个洞。
+ *
+ * 【这不是新问题，本文件里已经为它定过两次性】`.wt-tab--active:hover`（第 83 行起）的注释
+ * 原文就是「没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有
+ * (0,1,0)，前者盖后者」；`.wt-seg .wt-btn--active:hover`（第 1001 行起）则把两个选择器写进
+ * 同一组——而那一组就在同一个对话框的「外观设置」页上。
+ *
+ * 【本条靠源码顺序胜出，别往上挪】它与 `.wt-nav__item:hover` 特异度**相同** (0,2,0)，
+ * 所以必须排在它**之后**。
+ */
+.wt-nav__item--active:hover {
+  background: var(--wt-blue-light);
 }
 
 /*

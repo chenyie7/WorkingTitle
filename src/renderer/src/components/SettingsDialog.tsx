@@ -123,11 +123,17 @@ const THEME_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
- * 左栏的页签。**加一页就是加一行**——数组顺序就是左栏从上到下的顺序。
+ * 左栏的页签。数组顺序就是左栏从上到下的顺序。
  *
- * 【为什么是表而不是散在 JSX 里】页签按钮、`aria-labelledby` / `aria-controls`、
- * roving tabindex、方向键分发四处遍历的是同一份清单；散着写的话加一页要改四个地方。
+ * 【为什么是表而不是散在 JSX 里】页签按钮的六个属性、`aria-controls`、roving tabindex、
+ * 方向键分发这几处遍历的是同一份清单；散着写的话每加一页都要各改一遍。
  * 与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ *
+ * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
+ * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
+ * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
+ * 「加一行就完事」。
  */
 const PAGES = [
   { id: 'reading', label: '阅读设置', icon: IconBook },
@@ -213,8 +219,8 @@ export function SettingsDialog({
    * 【为什么选自动激活而不是「先移焦点、再按 Enter 确认」】内容区是静态表单，切过去的
    * 代价只是重画一次，没有需要确认的操作。
    *
-   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉这五个键；Enter / Space
-   * 交给浏览器去点按钮、字母键谁也别拦。
+   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉**这四个键**（↑ ↓ Home End）；
+   * Enter / Space 交给浏览器去点按钮、字母键谁也别拦。
    */
   const handleNavKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
     const i = PAGES.findIndex((p) => p.id === page)
@@ -598,7 +604,7 @@ export function SettingsDialog({
                   data-testid="doc-title-input"
                   aria-label="文档名"
                   // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
-                  // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
+                  // 里那条 role="dialog" 的闸）。
                   autoFocus
                   value={drafts['doc-title'] ?? docTitle}
                   onChange={(e) => setDraft('doc-title', e.target.value)}
