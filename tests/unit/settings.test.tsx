@@ -6,7 +6,7 @@ import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
-import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
@@ -1108,5 +1108,118 @@ describe('设置里的工作文档', () => {
     fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
     expect(onRemoveWorkDoc).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+})
+
+/**
+ * 左栏分页。
+ *
+ * 【为什么断言的是 `hidden` 属性而不是「看得见」】jsdom 没有布局，也没有真实的可见性
+ * 语义，而本仓库没装 `@testing-library/jest-dom`——`toBeVisible()` 根本不存在。
+ * 而 `hidden` 是 **DOM 属性**，正是这次用来藏非当前页的机制：断言它等于断言机制本身。
+ *
+ * 【为什么用 `hasAttribute` 而不是 `getAttribute() === ''`】React 对 `hidden` 走的是布尔
+ * 属性，**实测过**（react-dom 19.3.0，`renderToStaticMarkup`）：`hidden={true}` 渲染成
+ * `hidden=""`、`hidden={false}` 是**整条属性不出现**。但别把这个细节写进断言——
+ * `hasAttribute` 对「有/没有」这个我们真正关心的问题成立，而 React 哪天改成
+ * `hidden="true"` 这类形态，`hasAttribute` 仍然是对的。
+ */
+describe('设置对话框的左栏分页', () => {
+  /** 三个面板是不是 hidden 的，按左栏从上到下的顺序 */
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('左栏三项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置」', () => {
+    setup()
+    openViaButton()
+
+    expect(
+      ['reading', 'appearance', 'shortcuts'].map(
+        (id) => screen.getByTestId(`settings-tab-${id}`).textContent
+      )
+    ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
+  })
+
+  it('打开时停在「阅读设置」，另两页是 hidden 的', () => {
+    setup()
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('点「外观设置」：两页的 hidden 互换，aria-selected 跟着走', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(screen.getByTestId('settings-tab-appearance').getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId('settings-tab-reading').getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('点「快捷键设置」：那一页才显示', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+
+    expect(hiddenPages()).toEqual([true, true, false])
+  })
+
+  it('行归属：阅读设置收文档名 / 阅读替换 / 输入模式 / 正文字号 / 小说 / 工作文档', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tabpanel-reading')
+
+    for (const id of [
+      'doc-title-input',
+      'global-ratio-input',
+      'ratio-input',
+      'mode-button',
+      'page-font-size-input',
+      'btn-import',
+      'btn-clear-session',
+      'work-doc-status',
+      'btn-import-work-doc'
+    ]) {
+      expect(reading.contains(screen.getByTestId(id))).toBe(true)
+    }
+
+    // 外观与快捷键那几块**不**在这一页
+    expect(reading.contains(screen.getByTestId('theme-dark'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('dark-paper'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('shortcut-import-input'))).toBe(false)
+  })
+
+  it('行归属：外观设置收主题与纸张，快捷键设置收六条快捷键', () => {
+    setup()
+    openViaButton()
+
+    const appearance = screen.getByTestId('settings-tabpanel-appearance')
+    expect(appearance.contains(screen.getByTestId('theme-system'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-light'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-dark'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('dark-paper'))).toBe(true)
+
+    const shortcuts = screen.getByTestId('settings-tabpanel-shortcuts')
+    for (const def of SHORTCUTS) {
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-input`))).toBe(true)
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-reset`))).toBe(true)
+    }
+  })
+
+  it('切页不丢草稿：在阅读设置改字号，切到外观设置后「保存」仍在、点下去照样提交', () => {
+    const { onPageFontSizeChange } = setup()
+    openViaButton()
+
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '20' } })
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
   })
 })
