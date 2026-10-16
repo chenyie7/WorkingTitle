@@ -1,3 +1,32 @@
+/**
+ * 阅读区正文字体（思源宋体 / Noto Serif SC 的简体子集，SIL OFL，见同目录的 OFL.txt）。
+ *
+ * 【为什么打包而不是用系统字体】原先那串 `Songti SC` / `SimSun` 是**各平台各命中一个**：
+ * macOS 是华文宋体、Windows 是中易宋体，两端观感不同，Linux 上不可控。打包之后三端一致。
+ *
+ * 【为什么是 OTF 而不是 woff2】这是 `Serif/SubsetOTF/SC` 那一份（30928 个码位），
+ * 拿仓库里的真小说量过覆盖率 100%（`books/` 那本 9MB 的、以及三体）。woff2 那一版只有
+ * 7946 个码位、对同样的语料缺 18 / 16 个字——缺字要靠回退链上的系统宋体接住，
+ * 也就是每 5–13 页有一个字换一张脸。全量版买的是「一个都不会换脸」。
+ */
+@font-face {
+  font-family: 'WT Reading';
+  /* 相对本文件解析；构建产物里它落在 out/renderer/assets/ 下 */
+  src: url('../assets/fonts/NotoSerifSC-Regular.otf') format('opentype');
+  /* 【为什么是 block 而不是 swap】swap 会先拿回退字体画一遍、字体到位再换——正文会
+     肉眼可见地重排一次（字宽变了，整段跟着动）。它是本地文件，不存在网络那段等待。 */
+  font-display: block;
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  /* 正文字号。由 `state/theme.ts` 的 `usePageFontSize` 从设置写到这里。
+     这里的初值＝`PAGE_FONT_SIZE_DEFAULT`，即改动之前写死在 `.wt-page` 上的那个 15px
+     ——设置还没读回来之前先用它，也就不会有一帧跳版。 */
+  --wt-page-font-size: 15px;
+}
+
 .wt-page {
   width: 794px;
   min-height: 1080px;
@@ -11,6 +40,25 @@
   color: #1a1a1a;
   position: relative;
   flex: 0 0 auto;
+}
+
+/**
+ * 纯文本那一路（小说与 `.txt` 工作文档）的正文。
+ *
+ * 【为什么另起一层而不是改 `.wt-page` 的 `font-family`】`.md` 工作文档**渲染在同一张纸上**
+ * （`MarkdownView` 是 `.wt-page__text` 的直接子元素），而它没有自己的根元素——各块都是
+ * 直接子元素。字体挂在 `.wt-page` 上会让 md 一起跟着换；让 md 逐块退回去则要给十几个
+ * `.wt-md-*` 各写一条，而且以后新增块类型会静默继承错字体。
+ *
+ * 所以反过来：新字体只挂在**纯文本那一支**的包装元素上，`.wt-page` 一个字不动，
+ * md 那条路（含它写死的那一整套 px）行为不变。
+ *
+ * 【字号也跟着这一层】`--wt-page-font-size` 只写在这里，所以「正文字号」这一格
+ * 同样只作用于纯文本那一路——md 的标题层级是照着 Word 写死的，不能跟着它缩。
+ */
+.wt-page__novel {
+  font-family: 'WT Reading', Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
+  font-size: var(--wt-page-font-size);
 }
 
 .wt-page__text {

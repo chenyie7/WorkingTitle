@@ -83,6 +83,34 @@ export const MAX_RATIO = 500
 /** 阅读区渲染窗口上限，超出则折叠前文 */
 export const RENDER_WINDOW_LIMIT = 30_000
 
+/**
+ * 阅读区**正文**的字号（px）。
+ *
+ * 【为什么只作用于一条路】它只管小说与 `.txt` 工作文档那条纯文本路。`.md` 工作文档
+ * 走渲染那一路，它的一整套字号是照着 Word 的标题层级**写死的 px**（`markdown.css` 里
+ * `h1` 26px、`--wt-md-code-line` 20.8px…），正文基准一带动它，层级就散了；不带动它，
+ * 同一张纸上又会有两种正文字号。所以这一格与 `.md` 那条路无关，`markdown.css` 一个字不动。
+ *
+ * 【15 是改动之前写死在 `page.css` 上的那个值】默认值取它就是取「默认档的行为一个像素
+ * 都不变」。改这个数等于改默认版面。
+ */
+export const PAGE_FONT_SIZE_DEFAULT = 15
+export const PAGE_FONT_SIZE_MIN = 12
+export const PAGE_FONT_SIZE_MAX = 24
+
+/**
+ * 夹紧正文字号。
+ *
+ * 【非有限输入给默认值，而不是钳到某一端】NaN / ±Infinity 来自「设置文件被改坏 /
+ * 字段缺失」——那是**不可用**，不是「太大 / 太小」。与 `clampRatio` 同一姿态
+ * （`engine.ts` 里那段注释是这条口径的正本，实测 `clampRatio(Infinity) === 10`）。
+ * 有限但越界才是「用户拖到头」，钳到两端。
+ */
+export function clampPageFontSize(n: number): number {
+  if (!Number.isFinite(n)) return PAGE_FONT_SIZE_DEFAULT
+  return Math.max(PAGE_FONT_SIZE_MIN, Math.min(PAGE_FONT_SIZE_MAX, Math.round(n)))
+}
+
 /** 外观偏好：跟随系统 / 强制浅色 / 强制深色。与主进程的 `nativeTheme.themeSource` 同构。 */
 export type ThemeSource = 'system' | 'light' | 'dark'
 
@@ -125,6 +153,16 @@ export interface AppSettings {
    * 信」，不是业务规则。夹紧在 `core/bossKey.ts` 的 `clampBossFillPercent`。
    */
   bossFillPercent: number
+  /**
+   * 阅读区正文的字号（px），12–24。**全局一份**，不跟书走。
+   *
+   * 【为什么不像 `ratio` 那样分「全局 / 当前书」】比例是**内容**属性（同一段字显示多少），
+   * 换一本书就该换一个值；字号是**显示**偏好，与「当前在读哪本」无关，跟 `themeSource` /
+   * `darkPaper` 同类。
+   *
+   * 【只做结构校验，值域夹紧归 core】与 `ratio` 同一姿态。夹紧是 `clampPageFontSize`。
+   */
+  pageFontSize: number
   /**
    * 用户改过的快捷键。**稀疏表：缺条目 = 用该平台的默认值**，`{}` 就是「全默认」。
    *
@@ -171,6 +209,7 @@ export function defaultSettings(): AppSettings {
     ratio: DEFAULT_RATIO,
     workDocPath: null,
     bossFillPercent: BOSS_FILL_MAX,
+    pageFontSize: PAGE_FONT_SIZE_DEFAULT,
     /**
      * 默认的快捷键表：**空**。空的意思是「全用该平台的默认值」，逐条的默认值在
      * `shortcuts.ts` 的 `SHORTCUTS` 表里，由 `resolveShortcuts` 补齐。

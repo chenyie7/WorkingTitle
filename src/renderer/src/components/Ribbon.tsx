@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
+import { PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
 import type { ThemeSource } from '../types/global'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
@@ -1207,6 +1208,7 @@ const ignoreShortcutsChange = (): void => {}
 const ignoreRecordingChange = (): void => {}
 /** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
 const ignoreAction = (): void => {}
+const ignoreNumberChange = (): void => {}
 
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
@@ -1232,6 +1234,8 @@ export function Ribbon({
   onDarkPaperChange,
   themeSource,
   onThemeSourceChange,
+  pageFontSize = PAGE_FONT_SIZE_DEFAULT,
+  onPageFontSizeChange = ignoreNumberChange,
   novelOpen,
   settingsOpen,
   onSettingsOpenChange,
@@ -1260,6 +1264,9 @@ export function Ribbon({
   onDarkPaperChange: (next: boolean) => void
   themeSource: ThemeSource
   onThemeSourceChange: (next: ThemeSource) => void
+  /** 阅读区正文字号（只作用于小说与 `.txt` 工作文档，见 `page.css` 的 `.wt-page__novel`）。 */
+  pageFontSize?: number
+  onPageFontSizeChange?: (next: number) => void
   /**
    * 有没有打开文档。设置里「当前书」的比例框据此禁用——没有文档就没有「当前书」。
    *
@@ -1349,6 +1356,8 @@ export function Ribbon({
         onDarkPaperChange={onDarkPaperChange}
         themeSource={themeSource}
         onThemeSourceChange={onThemeSourceChange}
+        pageFontSize={pageFontSize}
+        onPageFontSizeChange={onPageFontSizeChange}
         novelOpen={novelOpen}
         shortcuts={shortcuts}
         platform={platform}

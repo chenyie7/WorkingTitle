@@ -109,8 +109,17 @@ export const CHARS_PER_SHEET = 1330
 
 export function clampBossFillPercent(n: number): number
 export function stepBossFill(current: number, dir: 1 | -1): number   // 两端夹住，不循环
-export function fillCharsFor(percent: number): number               // → 给 revealTo 用
+/** 一页装得下多少字，按正文字号折算（二次方：行数与每行字数都按 1/F 缩）。 */
+export function charsPerSheet(fontSizePx: number): number
+/** 不传字号＝按参考字号（15px）算，与「正文字号」这个设置出现之前逐位相同。 */
+export function fillCharsFor(percent: number, pageFontSize?: number): number  // → 给 revealTo 用
 ```
+
+**2026-10-16 增补：正文字号可调之后，`CHARS_PER_SHEET` 从常量变成了函数。**
+设置里新增的「正文字号」（12–24，默认 15）只作用于小说与 `.txt` 工作文档，
+`charsPerSheet` 就是那个常量按 `(15 / F)²` 缩放的结果——`charsPerSheet(15)` 逐位等于 `CHARS_PER_SHEET`，
+所以默认档的行为一个像素都没变。**值域夹紧不在这个函数里做**（它只兜「算不出来」的入参），
+夹紧是 `core/types.ts` 的 `clampPageFontSize`，在消费点上做。
 
 `CHARS_PER_SHEET` 的推导写进注释：
 

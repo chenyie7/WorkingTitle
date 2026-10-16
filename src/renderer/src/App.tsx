@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
-import { DEFAULT_DOC_TITLE, DEFAULT_RATIO } from '../../core/types'
+import {
+  DEFAULT_DOC_TITLE,
+  DEFAULT_RATIO,
+  PAGE_FONT_SIZE_DEFAULT,
+  clampPageFontSize
+} from '../../core/types'
 import type { AppSettings, InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
@@ -12,7 +17,7 @@ import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
 import { useShortcutDispatcher } from './state/shortcuts'
-import { useDarkPaper, useSystemTheme, useThemePreference } from './state/theme'
+import { useDarkPaper, usePageFontSize, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
 import { isMarkdownPath, parseMarkdown } from './markdown/parse'
 import { pickFillCut, type BlockHeight } from './markdown/fill'
@@ -125,6 +130,14 @@ export default function App() {
   const [workDocPath, setWorkDocPath] = useState<string | null>(null)
   const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
   /**
+   * 阅读区正文字号。**只作用于小说与 `.txt` 工作文档**（md 那条路的字号是写死的，见
+   * `page.css` 里 `.wt-page__novel` 那段）。
+   *
+   * 【为什么全局一份、不像比例那样分「全局 / 当前书」】字号是显示偏好，与「在读哪一本」
+   * 无关，跟 `themeSource` / `darkPaper` 同类。
+   */
+  const [pageFontSize, setPageFontSize] = useState(PAGE_FONT_SIZE_DEFAULT)
+  /**
    * 设置是否已经读回来了。
    *
    * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
@@ -137,6 +150,9 @@ export default function App() {
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
+  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。与上面三个同处一层：
+  // 全是「把用户的外观偏好写到 documentElement 上」。
+  usePageFontSize(pageFontSize)
   /**
    * **持久化专用**的引擎引用：永远指向小说那一本。
    *
@@ -171,6 +187,14 @@ export default function App() {
    */
   const bossFillPercentRef = useRef(BOSS_FILL_MAX)
   bossFillPercentRef.current = bossFillPercent
+  /**
+   * 最新的正文字号，挂在 ref 上给 `applyFill` 与那条 toast 读。
+   *
+   * 【为什么与 `bossFillPercentRef` 同一套写法】那两处一个是 `useCallback`、一个在依赖数组
+   * 里已经很长；字号只是喂给 `fillCharsFor` 的一个乘数，没有理由让它改变这两者的身份。
+   */
+  const pageFontSizeRef = useRef(PAGE_FONT_SIZE_DEFAULT)
+  pageFontSizeRef.current = pageFontSize
 
   const settingsRef = useRef<AppSettings | null>(null)
   /**
@@ -210,6 +234,7 @@ export default function App() {
       ratio: globalRatio,
       workDocPath,
       bossFillPercent,
+      pageFontSize,
       shortcuts
     }),
     [
@@ -220,6 +245,7 @@ export default function App() {
       globalRatio,
       workDocPath,
       bossFillPercent,
+      pageFontSize,
       shortcuts
     ]
   )
@@ -333,7 +359,7 @@ export default function App() {
       }
       if (!workIsMarkdown) {
         // 不是 md：没有结构可量，本来就是按字符数铺
-        eng.revealTo(fillCharsFor(percent))
+        eng.revealTo(fillCharsFor(percent, pageFontSizeRef.current))
         return
       }
       pendingFillRef.current = percent
@@ -371,7 +397,9 @@ export default function App() {
     if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
     // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
     workEngine?.revealTo(
-      heights ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100) : fillCharsFor(percent ?? 0)
+      heights
+        ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100)
+        : fillCharsFor(percent ?? 0, pageFontSizeRef.current)
     )
     setMeasuring(false)
   }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
@@ -581,7 +609,11 @@ export default function App() {
        * 兜底估算——报出来是个假数字（屏幕上根本不是那么多个字）。那种「看起来精确、
        * 其实错」的提示比不提示更糟，所以那一路只报档位。
        */
-      notify(workIsMarkdown ? `铺满 ${next}%` : `铺满 ${next}% ≈ ${fillCharsFor(next)} 字`)
+      notify(
+        workIsMarkdown
+          ? `铺满 ${next}%`
+          : `铺满 ${next}% ≈ ${fillCharsFor(next, pageFontSizeRef.current)} 字`
+      )
     },
     [bossActive, applyFill, notify, workIsMarkdown]
   )
@@ -610,6 +642,8 @@ export default function App() {
       // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
       // 而第一次按「铺满 −」会从 500 一步跳到 100。
       setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
+      // 同一姿态：settingsProblem 只判「是不是有限数字」，12–24 这个值域在这里夹。
+      setPageFontSize(clampPageFontSize(settings.pageFontSize))
       setWorkDocPath(settings.workDocPath)
       setSettingsLoaded(true)
 
@@ -892,6 +926,8 @@ export default function App() {
           onDarkPaperChange={setDarkPaper}
           themeSource={themeSource}
           onThemeSourceChange={setThemeSource}
+          pageFontSize={pageFontSize}
+          onPageFontSizeChange={setPageFontSize}
           novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}

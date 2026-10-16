@@ -7,6 +7,7 @@ import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
 
@@ -37,6 +38,9 @@ interface SetupOptions {
   onShortcutsChange?: (next: Record<string, string | undefined>) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
+  /** 阅读区正文字号。不传＝默认值（`PAGE_FONT_SIZE_DEFAULT`） */
+  pageFontSize?: number
+  onPageFontSizeChange?: (next: number) => void
   /** 工作文档的文件名（去扩展名）。不传＝没导入 */
   workDocTitle?: string | null
   /** 完整路径，只用于那行的悬停提示。不传＝没有 */
@@ -51,16 +55,19 @@ function setup(opts: SetupOptions = {}): {
   onDocTitleChange: ReturnType<typeof vi.fn>
   onDarkPaperChange: ReturnType<typeof vi.fn>
   onThemeSourceChange: ReturnType<typeof vi.fn>
+  onPageFontSizeChange: ReturnType<typeof vi.fn>
   unmount: () => void
 } {
   const onDocTitleChange = vi.fn()
   const onDarkPaperChange = vi.fn()
   const onThemeSourceChange = vi.fn()
+  const onPageFontSizeChange = vi.fn()
   const {
     capture,
     docTitle = '文档1',
     darkPaper = false,
     themeSource = 'system',
+    pageFontSize = PAGE_FONT_SIZE_DEFAULT,
     novelOpen = true,
     // 默认走 Windows 那一套：macOS 上 import 归原生菜单管，分发器会**跳过**它，
     // 于是「录制期间静音」那条用例在 darwin 下根本走不到分发器。
@@ -135,6 +142,8 @@ function setup(opts: SetupOptions = {}): {
           onDarkPaperChange={onDarkPaperChange}
           themeSource={themeSource}
           onThemeSourceChange={onThemeSourceChange}
+          pageFontSize={pageFontSize}
+          onPageFontSizeChange={onPageFontSizeChange}
           novelOpen={novelOpen}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
@@ -159,7 +168,13 @@ function setup(opts: SetupOptions = {}): {
       <Harness />
     </ToolbarProvider>
   )
-  return { onDocTitleChange, onDarkPaperChange, onThemeSourceChange, unmount }
+  return {
+    onDocTitleChange,
+    onDarkPaperChange,
+    onThemeSourceChange,
+    onPageFontSizeChange,
+    unmount
+  }
 }
 
 const settings = (): HTMLElement => screen.getByTestId('settings')
@@ -454,6 +469,95 @@ describe('对话框里改文档名', () => {
 
     openViaButton()
     expect((screen.getByTestId('doc-title-input') as HTMLInputElement).value).toBe('文档1')
+  })
+})
+
+/**
+ * 正文字号。
+ *
+ * 【为什么它不归「手动保存」那一组】与外观 / 纸张同一条理由：效果当场看得见，要按保存
+ * 才生效会很别扭。下面第一条钉的就是这条边界——**没有**点保存，回调也应当已经发生。
+ */
+describe('设置里的正文字号', () => {
+  it('失焦即提交，不需要点保存', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size') as HTMLInputElement
+    expect(input.value).toBe('15')
+
+    fireEvent.change(input, { target: { value: '18' } })
+    // 打字途中不提交：`18` 的第一下是 `1`，那一下若提交了就会被夹成 12，
+    // 而第二个字符会落进一个已经被改写的框里。
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(18)
+    // 【与「手动保存」那一组的边界】没有点保存按钮，也没有「已保存」那条 toast
+    expect(screen.queryByTestId('toast')).toBeNull()
+  })
+
+  it('回车同样提交', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size')
+    fireEvent.change(input, { target: { value: '20' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
+  })
+
+  it('越界被夹紧到两端，并给一条提示', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size')
+
+    fireEvent.change(input, { target: { value: '999' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MAX)
+    expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
+  })
+
+  it('比下限还小同样夹到下限', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size')
+    fireEvent.change(input, { target: { value: '3' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(PAGE_FONT_SIZE_MIN)
+  })
+
+  it('夹到同一个值时仍然提示，但不提交（值没变就没有回调）', () => {
+    // 【为什么仍然提示】用户在框里打 200、框又弹回 24。不提示的话那看起来就是
+    // 「我打的字被忽略了」——本仓库最忌讳的那种静默。提示说的是**范围**，
+    // 与「值变没变」是两件事（`blurRatio` 那条也是「被夹紧了就提示」）。
+    const { onPageFontSizeChange } = setup({ pageFontSize: PAGE_FONT_SIZE_MAX })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size')
+    fireEvent.change(input, { target: { value: '200' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('toast').textContent).toContain(String(PAGE_FONT_SIZE_MAX))
+  })
+
+  it('解析不出的输入退回当前值，不提交也不留草稿', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 17 })
+    openViaButton()
+    const input = screen.getByTestId('page-font-size') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+    // 草稿清掉了，框里回到已提交的那个数——留一个空框比什么都不做更糟
+    expect(input.value).toBe('17')
+  })
+
+  it('重开对话框时草稿不残留（关闭＝丢弃）', () => {
+    const { onPageFontSizeChange } = setup({ pageFontSize: 15 })
+    openViaButton()
+    fireEvent.change(screen.getByTestId('page-font-size'), { target: { value: '22' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onPageFontSizeChange).not.toHaveBeenCalled()
+
+    openViaButton()
+    expect((screen.getByTestId('page-font-size') as HTMLInputElement).value).toBe('15')
   })
 })
 

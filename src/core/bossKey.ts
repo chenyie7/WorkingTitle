@@ -46,6 +46,20 @@ export const BOSS_FILL_STEP = 10
  */
 export const CHARS_PER_SHEET = 1330
 
+/**
+ * 上面那个常量是在这个正文字号下推出来的。
+ *
+ * 【它不是「应用的默认字号」那个概念】那个是 `types.ts` 的 `PAGE_FONT_SIZE_DEFAULT`
+ * ——两者眼下同为 15，而 `bossKey.test.ts` 有一条断言钉住
+ * `charsPerSheet(PAGE_FONT_SIZE_DEFAULT) === CHARS_PER_SHEET`，所以改了一边另一边会红。
+ *
+ * 【为什么不直接 import 那一个】`types.ts` 已经 import 了本模块的 `BOSS_FILL_MAX`
+ * （`defaultSettings()` 要用它），反向再 import 就成环。那个环眼下不会出错（两边的用法
+ * 都在函数体里、不在模块顶层求值），但它把「这两个常量谁先初始化」变成一件要推的事，
+ * 换来的只是省下这一个数。
+ */
+const REFERENCE_FONT_SIZE = 15
+
 export function clampBossFillPercent(n: number): number {
   // 【非有限值落到满页，而不是 0】它来自「设置文件被改坏 / 字段缺失」。落到 0 那个退化
   // 边界的话，老板键切过去是一片空白——那正是这个功能要避免的画面。与 `clampRatio` 对
@@ -59,7 +73,30 @@ export function stepBossFill(current: number, dir: 1 | -1): number {
   return clampBossFillPercent(current + dir * BOSS_FILL_STEP)
 }
 
-/** 百分比 → 该铺多少字，喂给 `TypingEngine.revealTo`。 */
-export function fillCharsFor(percent: number): number {
-  return Math.round((CHARS_PER_SHEET * clampBossFillPercent(percent)) / 100)
+/**
+ * 一页装得下多少字，按正文字号折算。
+ *
+ * 【为什么是二次方】每行字数与行数**都**按 `1/F` 缩：正文字号翻倍，每行少一半、
+ * 页里也少一半行。所以容量按 `(参考字号 / F)²` 缩。
+ * `CHARS_PER_SHEET` 就是这个函数在参考字号下的值，逐位相等。
+ *
+ * 【不可用的入参退回参考字号，不做值域夹紧】非有限、0、负数都算不出有意义的值
+ * （0 直接得到 Infinity）。而「用户把字号调到 200」这种事不该在这里被改写成别的数——
+ * 值域夹紧是 `types.ts` 的 `clampPageFontSize` 的职责，在消费点上做，
+ * 与 `clampRatio` 同一分层。
+ */
+export function charsPerSheet(fontSizePx: number): number {
+  const f = Number.isFinite(fontSizePx) && fontSizePx > 0 ? fontSizePx : REFERENCE_FONT_SIZE
+  return Math.round(CHARS_PER_SHEET * (REFERENCE_FONT_SIZE / f) ** 2)
+}
+
+/**
+ * 百分比 → 该铺多少字，喂给 `TypingEngine.revealTo`。
+ *
+ * 【`pageFontSize` 不传时与改动之前逐位相同】不传＝按参考字号算，而
+ * `charsPerSheet(15) === CHARS_PER_SHEET`。既有那几处调用点（只关心「一页多少字」的
+ * 兜底路）因此一个字都不用改。
+ */
+export function fillCharsFor(percent: number, pageFontSize: number = REFERENCE_FONT_SIZE): number {
+  return Math.round((charsPerSheet(pageFontSize) * clampBossFillPercent(percent)) / 100)
 }
