@@ -2760,7 +2760,7 @@ git commit -F /tmp/wt-msg-task4g.txt
 - 甲：把下界改回 `rows[0].src` → 预测 Step 1 那批格子按「4g 现状」列全红。
 - 乙：把下界**整条删掉** → **原稿写的「红得更多」不成立**（落地实测）：它红的是**更少**的夹具（3 < 甲的 5），而且失败方向**相反**——实际集合是期望集合的**真子集**（`引用块里的围栏` 实测 `[0]`、期望 `[0,1]`），也就是「**该在框外的那一格被拉进了一个还没开始的元素**」。那 61 格点名到了（加厚语料 300 篇 / 5261 格逐格差分：**恰好 61 格、跨 49 篇**，偏移以 `to=1` 为最多 24/61），方向全是「乙把光标拉进框」：`BLOCKQUOTE[0]>SPAN[0]` → `BLOCKQUOTE[0]>PRE[0]>CODE[0]>SPAN[0]`。这条变异的作用是**证明本任务没有走那条路**，判据看「反向的那几格」，不看红格数。
 
-- [ ] **Step 6: 真机（`pnpm build` 之后）**：抽一个「框里还有没揭示的行」的夹具，逐字符打字，量**光标是否在 `pre>code` 内**、以及**隐形输入框的 `style.left/top` 是否仍等于光标的 `offsetLeft/offsetTop`**（候选框位置的代理指标）。另外量 Task 4g 报的那 5.75px：**本任务之后它应当消失**（光标不再在框下占一行）。
+- [ ] **Step 6: 真机（`pnpm build` 之后）**：抽一个「框里还有没揭示的行」的夹具，逐字符打字，量**光标是否在 `pre>code` 内**、以及**隐形输入框是否就摆在光标上**（候选框位置的代理指标）。**【口径改了，2026-10-16】**原来是「`style.left/top` 等于光标的 `offsetLeft`/`offsetTop`」，那条等式**已被刻意去掉**：`offsetLeft` 相对 `offsetParent`，而表格单元格里的光标其 `offsetParent` 就是那个 `td`/`th`，两者能差出几百像素（实测见 `InputCapture.tsx` 的 `placeAtCaret`）。现在比的是**两个 `getBoundingClientRect()` 的差**——`ta.rect.left − caret.rect.left` 与 `top` 都应当是 0。另外量 Task 4g 报的那 5.75px：**本任务之后它应当消失**（光标不再在框下占一行）。
 
 - [ ] **Step 7: 提交**（带 pathspec）
 
@@ -2814,7 +2814,7 @@ git commit -F /tmp/wt-msg-task4i.txt -- src/renderer/src/markdown/toReact.tsx te
 
 上表那三条（`:85`/`:192`/`:190`）+ 本任务新改的那支（关掉它 → Step 2 那条红）。**每条都要指名红的是哪几条用例**。
 
-- [ ] **Step 5: 真机**（`pnpm build` 后）：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 逐字符打字到 18–19，量**光标是否在 `blockquote` 内**、以及**隐形输入框 `style.left/top` 是否等于光标的 `offsetLeft/offsetTop`**。
+- [ ] **Step 5: 真机**（`pnpm build` 后）：`'> <b>x</b>甲一\n> 乙二\n\n末段\n'` 逐字符打字到 18–19，量**光标是否在 `blockquote` 内**、以及**隐形输入框是否就摆在光标上**（口径同上一条 Step 6：比两个矩形的差，不是比 `offsetLeft`）。
 
 - [ ] **Step 6: 提交**（带 pathspec）
 
