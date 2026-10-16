@@ -5,6 +5,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FocusEvent,
   type KeyboardEvent as ReactKeyboardEvent
@@ -201,6 +202,35 @@ export function SettingsDialog({
   }
 
   /**
+   * 左栏那几个按钮。方向键换页之后要**显式**把焦点搬过去：roving tabindex 换人时
+   * 浏览器不会自己跟（它只管 Tab 键那一下）。
+   */
+  const tabRefs = useRef<Partial<Record<SettingsPage, HTMLButtonElement | null>>>({})
+
+  /**
+   * 左栏的方向键。↑↓ 移动并**当场切页**（ARIA tabs 的「自动激活」），Home / End 跳首尾。
+   *
+   * 【为什么选自动激活而不是「先移焦点、再按 Enter 确认」】内容区是静态表单，切过去的
+   * 代价只是重画一次，没有需要确认的操作。
+   *
+   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉这五个键；Enter / Space
+   * 交给浏览器去点按钮、字母键谁也别拦。
+   */
+  const handleNavKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const i = PAGES.findIndex((p) => p.id === page)
+    let next = -1
+    if (e.key === 'ArrowDown') next = (i + 1) % PAGES.length
+    else if (e.key === 'ArrowUp') next = (i - 1 + PAGES.length) % PAGES.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = PAGES.length - 1
+    if (next < 0) return
+    e.preventDefault()
+    const target = PAGES[next].id
+    setPage(target)
+    tabRefs.current[target]?.focus()
+  }
+
+  /**
    * 「导入小说」按钮 title 里那条快捷键的显示文本。
    *
    * 【为什么在这里算，而不是像 `Toolbar` 那样收一个成品 prop】本组件的定位就是「拿着稀疏表
@@ -387,6 +417,16 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
+  /**
+   * 切页＝放弃正在进行的录制。
+   *
+   * 录制框在「快捷键设置」那一页上，切走就再也看不见它了；留着录制态只会让分发器一直
+   * 哑着，而用户完全看不出为什么快捷键忽然失效。这是既有语义（点别处＝放弃录制，见录制
+   * 框的 `onBlur`）的直接延伸。
+   */
+  useEffect(() => {
+    setRecording(null)
+  }, [page])
 
   /**
    * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
@@ -515,6 +555,10 @@ export function SettingsDialog({
                   tabIndex={active ? 0 : -1}
                   className={`wt-nav__item${active ? ' wt-nav__item--active' : ''}`}
                   data-testid={`settings-tab-${p.id}`}
+                  ref={(el) => {
+                    tabRefs.current[p.id] = el
+                  }}
+                  onKeyDown={handleNavKeyDown}
                   onClick={() => setPage(p.id)}
                 >
                   {/* 选中时图标换成实心——与功能区那些切换按钮、以及下面外观那组同一套语义 */}

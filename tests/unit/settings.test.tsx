@@ -1260,3 +1260,86 @@ describe('设置对话框的左栏分页', () => {
     expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
   })
 })
+
+/**
+ * 左栏的键盘与录制。
+ *
+ * 【这一组里几条为什么单测判得了】
+ * - `hidden` 是 DOM 属性，判得了（上面那一组同理）。
+ * - 方向键换页之后焦点跟不跟过去，判的是 `document.activeElement`——**jsdom 里判得了**，
+ *   因为那是我们自己在 keydown 处理里显式 `focus()` 的，不依赖浏览器的命中测试。
+ * - 「切页取消录制」判的是报给外面的布尔值，与真机行为无关。
+ *
+ * 判不了的（只能真机）：面板实际画出来多宽、滚动条出没出来、深色下页签的底色。
+ * 那几条在文末的验收清单里。
+ */
+describe('设置对话框左栏的键盘与录制', () => {
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('切页会取消正在进行的录制（否则分发器一直哑着，而用户看不出为什么）', () => {
+    const onRecordingChange = vi.fn()
+    setup({ onRecordingChange })
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('↓ / ↑ 在左栏里移动、当场切页，焦点跟着落到新页签上', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    fireEvent.keyDown(reading, { key: 'ArrowDown' })
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowUp' })
+
+    expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(reading)
+  })
+
+  it('↑ 从第一项绕到最后一项，↓ 从最后一项绕回第一项', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'ArrowUp' })
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'ArrowDown' })
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('Home / End 跳到第一页 / 最后一页', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('方向键之外的键不动页签（左栏不该吃掉别的按键）', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    fireEvent.keyDown(reading, { key: 'ArrowLeft' })
+    fireEvent.keyDown(reading, { key: 'a' })
+    fireEvent.keyDown(reading, { key: 'Enter' })
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+})
