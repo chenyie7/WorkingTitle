@@ -1320,15 +1320,21 @@ describe('设置对话框左栏的键盘与录制', () => {
     expect(hiddenPages()).toEqual([false, true, true])
   })
 
-  it('Home / End 跳到第一页 / 最后一页', () => {
+  it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
+    // 【「焦点也跟着」这半句不能省】设计第 8.1 节第 8 条要求的是 ↑/↓/Home/End **都**把焦点
+    // 带过去，而只断言 `hiddenPages` 是不够的——变异实测过：把 `focus()` 限制成只对
+    // ArrowUp / ArrowDown 调，只断言 `hiddenPages` 的那一版**全绿**。也就是说那半句此前
+    // 无人看住。
     setup()
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
     expect(hiddenPages()).toEqual([true, true, false])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-shortcuts'))
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
     expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
   })
 
   it('方向键之外的键不动页签（左栏不该吃掉别的按键）', () => {
@@ -1336,10 +1342,12 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
     const reading = screen.getByTestId('settings-tab-reading')
 
-    fireEvent.keyDown(reading, { key: 'ArrowLeft' })
-    fireEvent.keyDown(reading, { key: 'a' })
-    fireEvent.keyDown(reading, { key: 'Enter' })
-
-    expect(hiddenPages()).toEqual([false, true, true])
+    // 【逐键断言，绝不能只断言末态】三个键连着按、每键各前进一页的话，3 键 ≡ 0 (mod 3)，
+    // 末态与「一个都没动」**长得一模一样**——变异实测过：把认不出的键也改成前进一页，
+    // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
+    for (const key of ['ArrowLeft', 'a', 'Enter']) {
+      fireEvent.keyDown(reading, { key })
+      expect(hiddenPages()).toEqual([false, true, true])
+    }
   })
 })
