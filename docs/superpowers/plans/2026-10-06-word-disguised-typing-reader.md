@@ -6687,10 +6687,21 @@ body {
   display: flex;
 }
 
-/* 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。 */
+/*
+ * 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。
+ *
+ * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
+ * main 的高度**、会跟着面板被 `max-height` 夹而变矮；而左栏的内容是固定高的
+ * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
+ * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
+ * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
+ * footer 那一条——与标题条那条是**同一个根因**（我们加的 `max-height` 让面板开始夹紧），
+ * 所以一并认下来。
+ */
 .wt-modal__nav {
   flex: 0 0 152px;
   padding: 8px 0;
+  overflow-y: auto;
   border-right: 1px solid var(--wt-chrome-border);
 }
 
@@ -6719,6 +6730,26 @@ body {
 
 .wt-nav__item:hover {
   background: var(--wt-chrome);
+}
+
+/*
+ * 【悬停**已经选中的**那一项时，要维持它的选中底色】没有这一条会坏在特异度上：
+ * `.wt-nav__item:hover` 是 (0,2,0)，而 `.wt-nav__item--active` 只有 (0,1,0)，前者恒压后者
+ * ——用户点页签的那一瞬间鼠标本来就压在那个按钮上，于是新选中的页签同时命中两者、
+ * **蓝色底色当场消失**（左缘竖条与蓝色粗体还在），看起来像「点了没反应」，得把鼠标挪开
+ * 才出现选中态。两个主题都中；深色下更糟，选中项本来是「比面板亮」，一悬停变成「比面板暗」，
+ * 读起来像个洞。
+ *
+ * 【这不是新问题，本文件里已经为它定过两次性】`.wt-tab--active:hover`（第 83 行起）的注释
+ * 原文就是「没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有
+ * (0,1,0)，前者盖后者」；`.wt-seg .wt-btn--active:hover`（第 1001 行起）则把两个选择器写进
+ * 同一组——而那一组就在同一个对话框的「外观设置」页上。
+ *
+ * 【本条靠源码顺序胜出，别往上挪】它与 `.wt-nav__item:hover` 特异度**相同** (0,2,0)，
+ * 所以必须排在它**之后**。
+ */
+.wt-nav__item--active:hover {
+  background: var(--wt-blue-light);
 }
 
 /*
@@ -14463,11 +14494,19 @@ const THEME_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
- * 左栏的页签。**加一页就是加一行**——数组顺序就是左栏从上到下的顺序。
+ * 左栏的页签。数组顺序就是左栏从上到下的顺序。
  *
- * 【为什么是表而不是散在 JSX 里】页签按钮、`aria-labelledby` / `aria-controls`、
- * roving tabindex、方向键分发四处遍历的是同一份清单；散着写的话加一页要改四个地方。
- * 与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ * 【为什么是表而不是散在 JSX 里】页签按钮上那**九个由表里这一项算出来的属性**
+ * （`key` / `id` / `aria-selected` / `aria-controls` / `tabIndex` / `className` /
+ * `data-testid` / `ref` / `onClick`）——十二个属性里只有 `type` / `role` / `onKeyDown`
+ * 三个与 `p` 无关——以及方向键分发要遍历的 `PAGES` 本身，用的都是同一份清单；
+ * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ *
+ * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
+ * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
+ * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
+ * 「加一行就完事」。
  */
 const PAGES = [
   { id: 'reading', label: '阅读设置', icon: IconBook },
@@ -14553,8 +14592,8 @@ export function SettingsDialog({
    * 【为什么选自动激活而不是「先移焦点、再按 Enter 确认」】内容区是静态表单，切过去的
    * 代价只是重画一次，没有需要确认的操作。
    *
-   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉这五个键；Enter / Space
-   * 交给浏览器去点按钮、字母键谁也别拦。
+   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉**这四个键**（↑ ↓ Home End）；
+   * Enter / Space 交给浏览器去点按钮、字母键谁也别拦。
    */
   const handleNavKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
     const i = PAGES.findIndex((p) => p.id === page)
@@ -14938,7 +14977,7 @@ export function SettingsDialog({
                   data-testid="doc-title-input"
                   aria-label="文档名"
                   // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
-                  // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
+                  // 里那条 role="dialog" 的闸）。
                   autoFocus
                   value={drafts['doc-title'] ?? docTitle}
                   onChange={(e) => setDraft('doc-title', e.target.value)}
@@ -15284,7 +15323,7 @@ export function SettingsDialog({
 ```tsx
 import { describe, it, expect, vi } from 'vitest'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
@@ -16419,10 +16458,20 @@ describe('设置对话框的左栏分页', () => {
     setup()
     openViaButton()
 
+    // 【必须按 DOM 顺序取，不能逐个 getByTestId】按 testid 取的话，结果数组的顺序来自左边
+    // 那个字面量数组、**不是 DOM 顺序**——把 `PAGES` 排成「外观 / 阅读 / 快捷键」（左栏真的
+    // 会变成那个顺序、真的违反设计第 1 节拍板的顺序），那一版**照样全绿**：它守的是「每个
+    // 页签各自的文案」，守不住名字里的「顺序」。
+    //
+    // 【还得限定在左栏那个 tablist 里】裸的 `getAllByRole('tab')` 会把功能区那七个页签
+    // （文件/开始/…/视图）一并捞出来——本用例渲染的是整个 App，`Ribbon.tsx` 的 `.wt-tabs`
+    // 同样是 `role="tablist"` + `role="tab"`（实测拿到 10 个）。
+    // 按 `aria-label="设置分类"` 限定到左栏之后，`within` 依旧**按 DOM 顺序**返回，
+    // 一次同时验文案与顺序。
     expect(
-      ['reading', 'appearance', 'shortcuts'].map(
-        (id) => screen.getByTestId(`settings-tab-${id}`).textContent
-      )
+      within(screen.getByRole('tablist', { name: '设置分类' }))
+        .getAllByRole('tab')
+        .map((el) => el.textContent)
     ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
   })
 

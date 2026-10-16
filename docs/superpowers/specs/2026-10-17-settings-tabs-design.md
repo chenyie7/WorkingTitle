@@ -164,6 +164,13 @@ type SettingsPage = (typeof PAGES)[number]['id']
 - **常态**：透明底、`--wt-text-muted` 的字。
 - **悬停**：`background: var(--wt-chrome)`。
 - **选中**：`background: var(--wt-blue-light)`，`border-left-color: var(--wt-accent)`，`color: var(--wt-accent)`，`font-weight: 600`。
+- **悬停「已经选中的」那一项**：另有一条 `.wt-nav__item--active:hover { background: var(--wt-blue-light) }`，排在 `.wt-nav__item:hover` **之后**。
+
+  **这一条不能省（2026-10-17 补，初稿漏了）。** `:hover` 是伪类、进的是同一个 (0,b,0) 桶，所以 `.wt-nav__item:hover` 的 **(0,2,0) 恒压** `.wt-nav__item--active` 的 **(0,1,0)**、与源码顺序无关。少了它，用户点页签的那一瞬间鼠标本来就压在那个按钮上 → 新选中的页签同时命中两者 → 画出来的是 hover 的底色，**蓝色选中底当场消失**（左缘竖条与蓝色粗体还在），看起来像「点了没反应」，得把鼠标挪开才出现选中态。
+
+  **同一个文件里已经为它定过两次性**，新加的左栏没跟上：`ribbon.css` 的 `.wt-tab--active:hover`（注释原文就是「没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有 (0,1,0)，前者盖后者」）与 `.wt-seg .wt-btn--active:hover`（两个选择器写进同一组——**而那一组就在同一个对话框的「外观设置」页上**）。
+
+  **实测（真 Chromium，CDP `CSS.forcePseudoState` 强制 `:hover`，2026-10-17）**：选中项在 hover 开启时的 `background-color`，未修 = `rgb(247, 247, 248)`（浅色，即 `--wt-chrome`）/ `rgb(32, 32, 36)`（深色）；修后 = `rgb(234, 241, 251)` / `rgb(43, 43, 52)`（即 `--wt-blue-light`）。另有一个**哨兵实验**（把新规则的值换成 `rgb(1,2,3)`，hover 开读到的就是哨兵色）证明那个值**确实是新规则画出来的**，而不是 `--active` 恰好赢了。
 - **键盘焦点**：`:focus-visible` 给 `outline: 2px solid var(--wt-accent); outline-offset: -2px`。本次给左栏加了方向键导航，焦点样式不能缺。
 - 图标 `filled={active}`：与同一个对话框里外观三选一那个 `.wt-seg`、以及功能区那些切换按钮同一套语义（未选中画线框、选中画实心）。
 
