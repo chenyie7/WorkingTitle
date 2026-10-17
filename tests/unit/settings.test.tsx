@@ -1372,9 +1372,9 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
     const reading = screen.getByTestId('settings-tab-reading')
 
-    // 【逐键断言，绝不能只断言末态】三个键连着按、每键各前进一页的话，3 键 ≡ 0 (mod 3)，
-    // 末态与「一个都没动」**长得一模一样**——变异实测过：把认不出的键也改成前进一页，
-    // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
+    // 【逐键断言，绝不能只断言末态】四页下每键各前进一页时，三个键会把页面推到分章设置；
+    // 而「哪一个键被误认」在场次之间可能落到同一页，末态看不出是哪一下动的。
+    // 这正是「用例声称自身输入时要自检前提」那种形态。
     for (const key of ['ArrowLeft', 'a', 'Enter']) {
       fireEvent.keyDown(reading, { key })
       expect(hiddenPages()).toEqual([false, true, true, true])
@@ -1469,5 +1469,48 @@ describe('设置里的分章规则', () => {
     await waitFor(() =>
       expect(screen.getByTestId('chapter-rule-result').textContent).toContain('3')
     )
+  })
+
+  it('改了草稿后旧的「已重新分为」提示消失', async () => {
+    setup({ onApplyChapterRule: vi.fn(async () => ({ ok: true as const, value: 3 })) })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    await waitFor(() =>
+      expect(screen.getByTestId('chapter-rule-result').textContent).toContain('3')
+    )
+    fireEvent.click(screen.getByTestId('chapter-rule-preset-numbered'))
+    expect(screen.queryByTestId('chapter-rule-result')).toBeNull()
+  })
+
+  it('radiogroup 里只有 radio，应用按钮不在组内', () => {
+    setup()
+    openChapters()
+    const group = screen.getByRole('radiogroup', { name: '章节识别规则' })
+    expect(within(group).getAllByRole('radio')).toHaveLength(6)
+    expect(within(group).queryByTestId('chapter-rule-apply')).toBeNull()
+  })
+
+  it('自定义正则合法时回调收到 custom 规则', async () => {
+    const onApplyChapterRule = vi.fn(async () => ({ ok: true as const, value: 5 }))
+    setup({ onApplyChapterRule })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-custom'))
+    fireEvent.change(screen.getByTestId('chapter-rule-pattern'), {
+      target: { value: '^第.+章.*$' }
+    })
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    await waitFor(() =>
+      expect(onApplyChapterRule).toHaveBeenCalledWith({ kind: 'custom', pattern: '^第.+章.*$' })
+    )
+  })
+
+  it('自定义只有空白时提示先写一条正则，而不是报不合法', () => {
+    setup()
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-custom'))
+    fireEvent.change(screen.getByTestId('chapter-rule-pattern'), { target: { value: '   ' } })
+    expect(screen.getByTestId('chapter-rule-empty')).toBeTruthy()
+    expect(screen.queryByTestId('chapter-rule-error')).toBeNull()
+    expect((screen.getByTestId('chapter-rule-apply') as HTMLButtonElement).disabled).toBe(true)
   })
 })

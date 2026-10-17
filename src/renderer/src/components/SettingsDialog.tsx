@@ -241,10 +241,9 @@ export function SettingsDialog({
     }
   }
 
-  /*
-   * 对话框关着时组件仍在树上，App 把规则重置成 auto（清除阅读记录）不会触发上面那段
-   * 「打开时」的重置——少了这一条，分章页会一直选中旧规则，之后点应用又把它写回去。
-   * 刻意不动 `chapterResult`：应用成功的提示不该因为 props 回写而当场消失。
+  /**
+   * 对话框不卸载：开着时清除阅读记录、或换书重新导入，prop 会变，
+   * 草稿要跟着走；不能只靠打开时那次重置。
    */
   const lastChapterRuleRef = useRef(chapterRule)
   useEffect(() => {
@@ -292,12 +291,22 @@ export function SettingsDialog({
   const customProblem = chapterDraft.kind === 'custom' ? chapterRuleProblem(chapterDraft) : null
   const canApplyChapter = novelTitle !== null && !applying && customProblem === null
 
+  const changeChapterDraft = (rule: ChapterRule): void => {
+    setChapterDraft(rule)
+    setChapterResult(null)
+  }
+
   const handleApplyChapter = async (): Promise<void> => {
     setApplying(true)
     setChapterResult(null)
-    const result = await onApplyChapterRule(chapterDraft)
-    setApplying(false)
-    setChapterResult(result.ok ? `已重新分为 ${result.value} 章` : result.reason)
+    try {
+      const result = await onApplyChapterRule(chapterDraft)
+      setChapterResult(result.ok ? `已重新分为 ${result.value} 章` : result.reason)
+    } catch {
+      setChapterResult('分章失败，请重试')
+    } finally {
+      setApplying(false)
+    }
   }
 
   /**
@@ -1015,7 +1024,7 @@ export function SettingsDialog({
                         data-testid="chapter-rule-auto"
                         checked={chapterChoice === 'auto'}
                         disabled={novelTitle === null}
-                        onChange={() => setChapterDraft({ kind: 'auto' })}
+                        onChange={() => changeChapterDraft({ kind: 'auto' })}
                       />
                       自动识别（默认）
                     </label>
@@ -1027,7 +1036,7 @@ export function SettingsDialog({
                           data-testid={`chapter-rule-preset-${id}`}
                           checked={chapterChoice === id}
                           disabled={novelTitle === null}
-                          onChange={() => setChapterDraft({ kind: 'preset', id })}
+                          onChange={() => changeChapterDraft({ kind: 'preset', id })}
                         />
                         {CHAPTER_PRESETS[id]}
                       </label>
@@ -1039,7 +1048,9 @@ export function SettingsDialog({
                         data-testid="chapter-rule-custom"
                         checked={chapterChoice === 'custom'}
                         disabled={novelTitle === null}
-                        onChange={() => setChapterDraft({ kind: 'custom', pattern: customPattern })}
+                        onChange={() =>
+                          changeChapterDraft({ kind: 'custom', pattern: customPattern })
+                        }
                       />
                       自定义正则
                     </label>
@@ -1047,7 +1058,7 @@ export function SettingsDialog({
 
                   {chapterChoice === 'custom' && (
                     <>
-                      {customPattern === '' && (
+                      {customPattern.trim() === '' && (
                         <span className="wt-ratio__note" data-testid="chapter-rule-empty">
                           先写一条正则
                         </span>
@@ -1061,13 +1072,13 @@ export function SettingsDialog({
                         disabled={novelTitle === null}
                         onChange={(e) => {
                           setCustomPattern(e.target.value)
-                          setChapterDraft({ kind: 'custom', pattern: e.target.value })
+                          changeChapterDraft({ kind: 'custom', pattern: e.target.value })
                         }}
                       />
                       <span className="wt-ratio__note">
                         按每个整行匹配（忽略首尾空白），不区分大小写；建议用 ^ 和 $ 包住整行。
                       </span>
-                      {customPattern !== '' && customProblem !== null && (
+                      {customPattern.trim() !== '' && customProblem !== null && (
                         <span className="wt-chapter-rules__error" data-testid="chapter-rule-error">
                           这条正则不合法
                         </span>
