@@ -79,6 +79,11 @@ describe('novelService', () => {
     if (!r.ok) return
     expect(r.value.map((c) => c.title)).toEqual(['☆、开端'])
     expect(store.readNovelCacheEntry(src)?.novel.flatText).toBe(TEXT)
+    expect(store.readNovelCacheEntry(src)?.chapterRule).toEqual({
+      kind: 'preset',
+      id: 'special'
+    })
+    expect(store.readNovelCacheEntry(src)?.novel.chapters.map((c) => c.title)).toEqual(['☆、开端'])
   })
 
   it('0 章匹配时拒绝，缓存里的规则不变', () => {
@@ -93,7 +98,7 @@ describe('novelService', () => {
     expect(store.readNovelCacheEntry(src)?.chapterRule).toEqual(DEFAULT_CHAPTER_RULE)
   })
 
-  it('缓存不存在时拒绝重分章，不重读源文件', () => {
+  it('缓存不存在时拒绝重分章', () => {
     const store = createSessionStore(dir)
     const src = writeBook()
     const r = resplitNovelWithRule(store, src, { kind: 'preset', id: 'special' })
