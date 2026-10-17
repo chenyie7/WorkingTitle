@@ -7,7 +7,7 @@ import type { Chapter, ChapterRule, Novel } from '../core/types'
  * worker_threads 里的 require 读不到 app.asar 内的 node_modules（iconv-lite / jschardet）。
  */
 
-/** 后台进程起不来（启动失败）。请求中途退出用 NovelWorkerExitedError。 */
+/** 后台进程起不来，或导入请求进行中退出。重新分章的退出见 NovelWorkerExitedError。 */
 export class NovelWorkerUnavailableError extends Error {}
 
 /** 重新分章请求进行中进程退出：不能退回主进程重跑用户正则。 */
