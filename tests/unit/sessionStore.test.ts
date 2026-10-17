@@ -1321,6 +1321,8 @@ describe('书库用到的会话与缓存操作', () => {
 
   it('copySession 收到非字符串路径时返回 false 而不是抛', () => {
     const store = createSessionStore(dir)
+    // 源必须先存在：否则 toSourcePath 那条断言会停在「源读不出来」，根本走不到那个闸。
+    store.writeSession(makeSession({ sourcePath: '/tmp/x.txt' }))
     expect(store.copySession(123 as unknown as string, '/tmp/x.txt')).toBe(false)
     expect(store.copySession('/tmp/x.txt', 123 as unknown as string)).toBe(false)
   })
