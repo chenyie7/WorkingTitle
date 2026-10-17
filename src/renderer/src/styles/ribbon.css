@@ -948,6 +948,18 @@
   cursor: pointer;
 }
 
+.wt-chapter-rules {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.wt-chapter-rules__error {
+  font-size: 11px;
+  color: var(--wt-danger);
+}
+
 /* ---- 平台各自的标题条 ----
  *
  * 两个平台都把原生标题栏交给了网页画（见 `src/main/index.ts` 的 `titleBarOptions`），

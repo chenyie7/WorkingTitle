@@ -694,6 +694,72 @@ describe('分章规则随书保存', () => {
       id: 'numbered'
     })
   })
+
+  it('清除阅读记录后规则回到自动识别', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('btn-clear-session'))
+    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-chapters'))
+    expect((screen.getByTestId('chapter-rule-auto') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('在设置里应用规则：光标与已显示正文不动，章节目录换成新的', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    const chapters = [
+      { index: 0, title: 'A', start: 0, end: 10, charCount: 10 },
+      { index: 1, title: 'B', start: 10, end: 20, charCount: 10 },
+      { index: 2, title: 'C', start: 20, end: novel.flatText.length, charCount: novel.flatText.length - 20 }
+    ]
+    ;(window.api as unknown as { resplitNovel: unknown }).resplitNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: chapters
+    }))
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 先打一个字：光标 10，阅读区显示前 10 个字
+    fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-chapters'))
+    fireEvent.click(screen.getByTestId('chapter-rule-preset-numbered'))
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+
+    await waitFor(() => expect(screen.getByTestId('chapter-item-2')).toBeTruthy())
+    expect(revealedChars()).toBe(10)
+    expect((window.api.resplitNovel as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe(
+      novel.sourcePath
+    )
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
+    // 【精确值，不只是长度】长度断言挡不住「全部置 0」那种最可能的错误
+    expect(saved!.chapterPos).toEqual([10, 0, 0])
+    expect(saved!.cursor).toBe(10)
+    expect(saved!.revealStart).toBe(0)
+  })
 })
 
 describe('快捷键接线', () => {

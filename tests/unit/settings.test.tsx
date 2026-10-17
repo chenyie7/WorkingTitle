@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
@@ -10,6 +10,7 @@ import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortc
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/core/types'
+import type { ChapterRule } from '../../src/core/types'
 
 interface SetupOptions {
   ratio?: number
@@ -51,6 +52,12 @@ interface SetupOptions {
   workDocBroken?: boolean
   onImportWorkDoc?: () => void
   onRemoveWorkDoc?: () => void
+  novelTitle?: string | null
+  chapterCount?: number
+  chapterRule?: ChapterRule
+  onApplyChapterRule?: (rule: ChapterRule) => Promise<
+    { ok: true; value: number } | { ok: false; reason: string }
+  >
 }
 
 function setup(opts: SetupOptions = {}): {
@@ -87,6 +94,10 @@ function setup(opts: SetupOptions = {}): {
     workDocBroken = false,
     onImportWorkDoc = vi.fn(),
     onRemoveWorkDoc = vi.fn(),
+    novelTitle = '测试书',
+    chapterCount = 12,
+    chapterRule = { kind: 'auto' },
+    onApplyChapterRule = vi.fn(async () => ({ ok: true as const, value: 12 })),
     ...provider
   } = opts
 
@@ -158,6 +169,10 @@ function setup(opts: SetupOptions = {}): {
           workDocBroken={workDocBroken}
           onImportWorkDoc={onImportWorkDoc}
           onRemoveWorkDoc={onRemoveWorkDoc}
+          novelTitle={novelTitle}
+          chapterCount={chapterCount}
+          chapterRule={chapterRule}
+          onApplyChapterRule={onApplyChapterRule}
         />
         {capture ? <InputCapture engine={{ pump: vi.fn(), backspace: vi.fn() }} mode="key" /> : null}
         <Toast />
@@ -1130,13 +1145,13 @@ describe('设置里的工作文档', () => {
  * `hidden="true"` 这类形态，`hasAttribute` 仍然是对的。
  */
 describe('设置对话框的左栏分页', () => {
-  /** 三个面板是不是 hidden 的，按左栏从上到下的顺序 */
+  /** 四个面板是不是 hidden 的，按左栏从上到下的顺序 */
   const hiddenPages = (): boolean[] =>
-    ['reading', 'appearance', 'shortcuts'].map((id) =>
+    ['reading', 'appearance', 'shortcuts', 'chapters'].map((id) =>
       screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
     )
 
-  it('左栏三项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置」', () => {
+  it('左栏四项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置 / 分章设置」', () => {
     setup()
     openViaButton()
 
@@ -1154,14 +1169,14 @@ describe('设置对话框的左栏分页', () => {
       within(screen.getByRole('tablist', { name: '设置分类' }))
         .getAllByRole('tab')
         .map((el) => el.textContent)
-    ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
+    ).toEqual(['阅读设置', '外观设置', '快捷键设置', '分章设置'])
   })
 
-  it('打开时停在「阅读设置」，另两页是 hidden 的', () => {
+  it('打开时停在「阅读设置」，其余页都是 hidden 的', () => {
     setup()
     openViaButton()
 
-    expect(hiddenPages()).toEqual([false, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true])
   })
 
   it('点「外观设置」：两页的 hidden 互换，aria-selected 跟着走', () => {
@@ -1170,7 +1185,7 @@ describe('设置对话框的左栏分页', () => {
 
     fireEvent.click(screen.getByTestId('settings-tab-appearance'))
 
-    expect(hiddenPages()).toEqual([true, false, true])
+    expect(hiddenPages()).toEqual([true, false, true, true])
     expect(screen.getByTestId('settings-tab-appearance').getAttribute('aria-selected')).toBe('true')
     expect(screen.getByTestId('settings-tab-reading').getAttribute('aria-selected')).toBe('false')
   })
@@ -1181,7 +1196,7 @@ describe('设置对话框的左栏分页', () => {
 
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
 
-    expect(hiddenPages()).toEqual([true, true, false])
+    expect(hiddenPages()).toEqual([true, true, false, true])
   })
 
   it('行归属：阅读设置收文档名 / 阅读替换 / 输入模式 / 正文字号 / 小说 / 工作文档', () => {
@@ -1242,12 +1257,12 @@ describe('设置对话框的左栏分页', () => {
     setup()
     openViaButton()
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
-    expect(hiddenPages()).toEqual([true, true, false])
+    expect(hiddenPages()).toEqual([true, true, false, true])
 
     fireEvent.click(screen.getByTestId('settings-close'))
     openViaButton()
 
-    expect(hiddenPages()).toEqual([false, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true])
   })
 
   it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
@@ -1290,7 +1305,7 @@ describe('设置对话框的左栏分页', () => {
  */
 describe('设置对话框左栏的键盘与录制', () => {
   const hiddenPages = (): boolean[] =>
-    ['reading', 'appearance', 'shortcuts'].map((id) =>
+    ['reading', 'appearance', 'shortcuts', 'chapters'].map((id) =>
       screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
     )
 
@@ -1315,12 +1330,12 @@ describe('设置对话框左栏的键盘与录制', () => {
 
     fireEvent.keyDown(reading, { key: 'ArrowDown' })
 
-    expect(hiddenPages()).toEqual([true, false, true])
+    expect(hiddenPages()).toEqual([true, false, true, true])
     expect(document.activeElement).toBe(screen.getByTestId('settings-tab-appearance'))
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowUp' })
 
-    expect(hiddenPages()).toEqual([false, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true])
     expect(document.activeElement).toBe(reading)
   })
 
@@ -1329,10 +1344,10 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'ArrowUp' })
-    expect(hiddenPages()).toEqual([true, true, false])
+    expect(hiddenPages()).toEqual([true, true, true, false])
 
-    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'ArrowDown' })
-    expect(hiddenPages()).toEqual([false, true, true])
+    fireEvent.keyDown(screen.getByTestId('settings-tab-chapters'), { key: 'ArrowDown' })
+    expect(hiddenPages()).toEqual([false, true, true, true])
   })
 
   it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
@@ -1344,11 +1359,11 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
-    expect(hiddenPages()).toEqual([true, true, false])
-    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-shortcuts'))
+    expect(hiddenPages()).toEqual([true, true, true, false])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-chapters'))
 
-    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
-    expect(hiddenPages()).toEqual([false, true, true])
+    fireEvent.keyDown(screen.getByTestId('settings-tab-chapters'), { key: 'Home' })
+    expect(hiddenPages()).toEqual([false, true, true, true])
     expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
   })
 
@@ -1362,7 +1377,70 @@ describe('设置对话框左栏的键盘与录制', () => {
     // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
     for (const key of ['ArrowLeft', 'a', 'Enter']) {
       fireEvent.keyDown(reading, { key })
-      expect(hiddenPages()).toEqual([false, true, true])
+      expect(hiddenPages()).toEqual([false, true, true, true])
     }
+  })
+})
+
+describe('设置里的分章规则', () => {
+  function openChapters(): void {
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-chapters'))
+  }
+
+  it('新增「分章设置」页，没有小说时禁用并提示', () => {
+    setup({ novelTitle: null })
+    openChapters()
+    expect((screen.getByTestId('settings-tabpanel-chapters') as HTMLElement).hidden).toBe(false)
+    expect((screen.getByTestId('chapter-rule-apply') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByTestId('chapter-current').textContent).toContain('未导入')
+  })
+
+  it('顶部显示当前小说与章数', () => {
+    setup({ novelTitle: '测试书', chapterCount: 12 })
+    openChapters()
+    expect(screen.getByTestId('chapter-current').textContent).toContain('测试书')
+    expect(screen.getByTestId('chapter-current').textContent).toContain('12')
+  })
+
+  it('打开时选中这本书当前保存的规则', () => {
+    setup({ chapterRule: { kind: 'preset', id: 'numbered' } })
+    openChapters()
+    expect((screen.getByTestId('chapter-rule-preset-numbered') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('选中自定义正则后出现输入框；非法正则时应用按钮禁用', () => {
+    setup()
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-custom'))
+    const input = screen.getByTestId('chapter-rule-pattern') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '(' } })
+    expect(screen.getByTestId('chapter-rule-error')).toBeTruthy()
+    expect((screen.getByTestId('chapter-rule-apply') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('应用预置规则：回调收到规则并显示新章数', async () => {
+    const onApplyChapterRule = vi.fn(async () => ({ ok: true as const, value: 42 }))
+    setup({ onApplyChapterRule })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-preset-numbered'))
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    await waitFor(() =>
+      expect(screen.getByTestId('chapter-rule-result').textContent).toContain('42')
+    )
+    expect(onApplyChapterRule).toHaveBeenCalledWith({ kind: 'preset', id: 'numbered' })
+  })
+
+  it('应用失败时显示失败原因', async () => {
+    const onApplyChapterRule = vi.fn(async () => ({
+      ok: false as const,
+      reason: '没有识别出任何章节，目录未改动'
+    }))
+    setup({ onApplyChapterRule })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    await waitFor(() =>
+      expect(screen.getByTestId('chapter-rule-result').textContent).toContain('没有识别出任何章节')
+    )
   })
 })
