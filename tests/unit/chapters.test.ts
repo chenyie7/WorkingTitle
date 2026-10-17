@@ -395,10 +395,16 @@ describe('resplitChapters', () => {
     expect(result.flatText).toBe(plain)
   })
 
-  it('输入开头没有空白前言时，结果与 splitChapters 一致', () => {
-    const a = splitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
-    const b = resplitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
-    expect(b.chapters).toEqual(a.chapters)
+  it('输入开头不是全空白时，结果与 splitChapters 一致', () => {
+    const preambleInput = '作者的话\n' + text
+    // 前提自检：两个输入分别对应「前缀为空」与「前缀非空白」两支。
+    expect(text.startsWith('第一章 甲')).toBe(true)
+    expect(preambleInput.slice(0, preambleInput.indexOf('第一章 甲')).trim()).not.toBe('')
+    for (const input of [text, preambleInput]) {
+      const a = splitChapters(input, 'x', { kind: 'preset', id: 'cn-chapter' })
+      const b = resplitChapters(input, 'x', { kind: 'preset', id: 'cn-chapter' })
+      expect(b.chapters).toEqual(a.chapters)
+    }
   })
 
   it('hasChapterTitles：有标题为真，无标题为假', () => {

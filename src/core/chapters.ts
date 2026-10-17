@@ -231,15 +231,7 @@ export function splitChapters(
   return { flatText, chapters }
 }
 
-/**
- * 重新分章专用：只重算章节边界，**保证 flatText 逐字等于输入**。
- *
- * splitChapters 会重新拼正文、并丢掉文件开头的全空白前言；那套语义在导入时成立，
- * 但重新分章时 flatText 是游标与 chapterPos 的坐标系，动它会让阅读位置整体错位。
- * 这里不拼正文，只把行号换成偏移：
- * - 第一个标题前的内容非空白 → 单列「前言」一章；
- * - 全是空白 → 折进第一章，第一章仍从 0 开始。
- */
+/** 重新分章：只重算边界，保证 flatText 逐字等于输入；空白前缀折进第一章。理由见设计文档 3.2。 */
 export function resplitChapters(
   text: string,
   fallbackTitle: string,
