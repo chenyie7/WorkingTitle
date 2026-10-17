@@ -257,6 +257,34 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('page-text').textContent).toContain(novel.flatText.slice(0, 15))
   })
 
+  it('旧会话的 chapterPos 与新目录章数对不上时，按光标重算', async () => {
+    const novel = makeNovel()
+    // 前提自检：第二章从 17 开始，所以 cursor=20 落在第二章的第 3 个字
+    expect(novel.chapters[1].start).toBe(17)
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 5,
+      mode: 'key',
+      cursor: 20,
+      revealStart: 0,
+      // 旧目录只有一章，值 5 若原样套到新目录，第一章会显示成只读了 5 个字
+      chapterPos: [5],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel.sourcePath
+    }))
+    render(<App />)
+
+    await waitFor(() => expect(revealedChars()).toBe(20))
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterPos).toEqual([17, 3])
+  })
+
   /**
    * 【这条钉的是「命令行给的路径打不开」时的回退】
    *

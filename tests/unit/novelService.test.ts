@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import { openNovelWithRule, resplitNovelWithRule } from '../../src/main/novelService'
+import { CHAPTER_SPLIT_VERSION } from '../../src/core/chapters'
 import { DEFAULT_CHAPTER_RULE } from '../../src/core/types'
 import type { ChapterRule, PersistedSession } from '../../src/core/types'
 
@@ -133,15 +134,16 @@ describe('novelService', () => {
   it('选回自动识别时，即使 0 章也允许（回到最初的单章目录）', () => {
     const store = createSessionStore(dir)
     const src = join(dir, 'no-auto-titles.txt')
-    const SOURCE = '☆、开端\n正文一。\n☆、终局\n正文三。\n'
+    const SOURCE = '===开端===\n正文一。\n===终局===\n正文三。\n'
     writeFileSync(src, SOURCE, 'utf8')
 
     // 自动识别在这本书上一条标题都认不出 → 单章
     const auto = openNovelWithRule(store, src)
     expect(auto.chapters).toHaveLength(1)
 
-    // 先用特殊符号规则切成两章
-    const special = resplitNovelWithRule(store, src, { kind: 'preset', id: 'special' })
+    // 先用自定义规则切成两章
+    const custom: ChapterRule = { kind: 'custom', pattern: '^={2,6}.+={2,6}$' }
+    const special = resplitNovelWithRule(store, src, custom)
     expect(special.ok).toBe(true)
 
     // 再选回自动识别：0 匹配也必须允许，目录回到单章
@@ -158,5 +160,24 @@ describe('novelService', () => {
     const r = resplitNovelWithRule(store, src, { kind: 'preset', id: 'special' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toContain('缓存')
+  })
+
+  it('切章算法版本变旧时用缓存正文重切，并回写新版本', () => {
+    const store = createSessionStore(dir)
+    const src = writeBook()
+    openNovelWithRule(store, src)
+
+    // 只改 meta：源文件与缓存正文都没动，缓存本身仍然有效，只有目录是旧算法留下的
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    meta.chapters = [
+      { index: 0, title: '旧目录', start: 0, end: TEXT.length, charCount: TEXT.length }
+    ]
+    meta.splitVersion = 1
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+
+    const re = openNovelWithRule(store, src)
+    expect(re.chapters.map((c) => c.title)).toEqual(['前言', '第一章 甲'])
+    expect(store.readNovelCacheEntry(src)?.splitVersion).toBe(CHAPTER_SPLIT_VERSION)
   })
 })

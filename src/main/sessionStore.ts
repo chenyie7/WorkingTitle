@@ -11,7 +11,7 @@ import {
 import { dirname, join } from 'node:path'
 import { SHORTCUTS, shortcutProblem, type ShortcutId } from '../core/shortcuts'
 import type { IpcResult } from '../core/api'
-import { chapterRuleProblem } from '../core/chapters'
+import { CHAPTER_SPLIT_VERSION, chapterRuleProblem } from '../core/chapters'
 import { DEFAULT_CHAPTER_RULE, defaultSettings } from '../core/types'
 import type {
   AppSettings,
@@ -35,7 +35,9 @@ export interface SessionStore {
   clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
   writeNovelCache(novel: Novel, chapterRule?: ChapterRule): void
-  readNovelCacheEntry(filePath: string): { novel: Novel; chapterRule: ChapterRule } | null
+  readNovelCacheEntry(
+    filePath: string
+  ): { novel: Novel; chapterRule: ChapterRule; splitVersion: number } | null
   readNovelCache(filePath: string): Novel | null
 }
 
@@ -154,6 +156,10 @@ function cacheMetaProblem(v: unknown): string | null {
   if (m.chapterRule !== undefined) {
     const problem = chapterRuleProblem(m.chapterRule)
     if (problem !== null) return `chapterRule 不合法（${problem}）`
+  }
+  if (m.splitVersion !== undefined) {
+    const n = m.splitVersion
+    if (typeof n !== 'number' || !Number.isFinite(n)) return 'splitVersion 不是有限数字'
   }
   return null
 }
@@ -421,7 +427,7 @@ export function createSessionStore(baseDir: string): SessionStore {
   // 崩溃窗口见 NovelCacheMeta.textBytes；这一道门也覆盖半截文本，不必拆成两道。
   const readNovelCacheEntry = (
     filePath: string
-  ): { novel: Novel; chapterRule: ChapterRule } | null => {
+  ): { novel: Novel; chapterRule: ChapterRule; splitVersion: number } | null => {
     try {
       if (!existsSync(cacheMetaPath) || !existsSync(cacheTextPath)) return null
       const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
@@ -446,7 +452,8 @@ export function createSessionStore(baseDir: string): SessionStore {
           flatText: readFileSync(cacheTextPath, 'utf8'),
           chapters: meta.chapters
         },
-        chapterRule: meta.chapterRule ?? DEFAULT_CHAPTER_RULE
+        chapterRule: meta.chapterRule ?? DEFAULT_CHAPTER_RULE,
+        splitVersion: meta.splitVersion ?? 1
       }
     } catch (err) {
       console.warn('[wt] 读取小说缓存失败，将重新读取源文件：', err)
@@ -604,6 +611,7 @@ export function createSessionStore(baseDir: string): SessionStore {
           title: novel.title,
           chapters: novel.chapters,
           chapterRule,
+          splitVersion: CHAPTER_SPLIT_VERSION,
           // 与下面写出的字节数同源：writeFileSync 用 'utf8' 写出的就是这么多字节，
           // 读取时拿 statSync(cacheTextPath).size 与它比对即可自我校验。
           textBytes: Buffer.byteLength(text, 'utf8')

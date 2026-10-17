@@ -209,11 +209,21 @@ export default function App() {
       setBossMode(false)
       setNovel(next)
       setChapterRule(session?.chapterRule ?? DEFAULT_CHAPTER_RULE)
+      // 目录被重切过（切章算法升级）时旧 chapterPos 与新的章节数对不上，按光标重算一遍。
+      const restored =
+        session && session.chapterPos.length !== next.chapters.length
+          ? {
+              ...session,
+              chapterPos: next.chapters.map((c) =>
+                Math.max(0, Math.min(session.cursor - c.start, c.charCount))
+              )
+            }
+          : session
       // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
       // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
       setEngine(
-        session
-          ? TypingEngine.fromSession(next, session)
+        restored
+          ? TypingEngine.fromSession(next, restored)
           : new TypingEngine(next, { ratio: settingsRef.current.ratio })
       )
       setExpanded(false)

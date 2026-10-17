@@ -79,6 +79,8 @@ export interface NovelCacheMeta {
   chapters: readonly Chapter[]
   /** 这份目录是按哪条规则切的。缺字段＝自动识别。 */
   chapterRule?: ChapterRule
+  /** 切章算法版本。缺字段＝旧算法，目录不可信。 */
+  splitVersion?: number
   /**
    * novel-cache.txt 的 UTF-8 字节数，用作缓存两个文件之间的「提交点」（见 Task 5）：
    * 只有本字段与实际文本文件大小一致时，才承认这对缓存有效。

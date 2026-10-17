@@ -236,6 +236,55 @@ describe('splitChapters', () => {
   })
 })
 
+describe('自动识别的规则选择', () => {
+  it.each([
+    {
+      name: '副标题直接黏着写',
+      text: '第一章初入江湖\n正文。\n第二章再入江湖\n正文。\n',
+      titles: ['第一章初入江湖', '第二章再入江湖']
+    },
+    {
+      name: '副标题用冒号',
+      text: '第一章：初入江湖\n正文。\n第二章：再入江湖\n正文。\n',
+      titles: ['第一章：初入江湖', '第二章：再入江湖']
+    },
+    {
+      name: '卷X',
+      text: '卷一 风起\n正文。\n卷二 云涌\n正文。\n',
+      titles: ['卷一 风起', '卷二 云涌']
+    },
+    {
+      name: '章X / 卷X 在前',
+      text: '章1 甲\n正文。\n章2 乙\n正文。\n',
+      titles: ['章1 甲', '章2 乙']
+    },
+    {
+      name: '上/中/下 部',
+      text: '上 部 一\n正文。\n中 部 二\n正文。\n下 部 三\n正文。\n',
+      titles: ['上 部 一', '中 部 二', '下 部 三']
+    }
+  ])('$name 也能切出来', ({ text, titles }) => {
+    const { flatText, chapters } = splitChapters(text, 'x')
+    expect(chapters.map((c) => c.title)).toEqual(titles)
+    expect(flatText).toBe(text)
+  })
+
+  it('混用写法时只选命中最多的一条，不把规则取并集', () => {
+    const text = '序章\n正文。\n第一章 甲\n正文一。\n第二章 乙\n正文二。\n'
+    // 第X章 命中 2 次、序章 1 次 → 选第X章；若取并集，第一章会是「序章」
+    expect(splitChapters(text, 'x').chapters.map((c) => c.title)).toEqual([
+      '前言',
+      '第一章 甲',
+      '第二章 乙'
+    ])
+  })
+
+  it('只有装饰符号的行不算章节', () => {
+    const text = '※　　　※\n正文一。\n※　　　※\n正文二。\n'
+    expect(splitChapters(text, 'x').chapters).toHaveLength(1)
+  })
+})
+
 describe('可配置的分章规则', () => {
   it('cn-chapter 只认中文章节标题', () => {
     const rule = { kind: 'preset', id: 'cn-chapter' } as const
@@ -350,8 +399,9 @@ describe('可配置的分章规则', () => {
     const { flatText, chapters } = splitChapters(text, 'x', { kind: 'preset', id: 'special' })
     expect(chapters.map((c) => c.title)).toEqual(['☆、开端', '【第二章】'])
     expect(flatText).toBe(text)
-    // 前提自检：默认规则认不出这两行，否则这条用例证明不了第三个参数生效
-    expect(splitChapters(text, 'x').chapters).toHaveLength(1)
+    // 前提自检：换一条认不出这两行的规则，结果必须不同，否则证明不了第三个参数生效
+    // （自动识别本身就含特殊符号，不能拿它当反例）
+    expect(splitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' }).chapters).toHaveLength(1)
   })
 })
 
@@ -410,14 +460,13 @@ describe('resplitChapters', () => {
     }
   })
 
-  it('规则参数真的生效：special 认得出 auto 认不出的标题', () => {
-    const specialText = '简介\n正文。\n'
-    expect(
-      resplitChapters(specialText, 'x', { kind: 'preset', id: 'special' }).chapters[0].title
-    ).toBe('简介')
-    expect(resplitChapters(specialText, 'x').chapters).toHaveLength(1)
-    expect(hasChapterTitles(specialText, { kind: 'preset', id: 'special' })).toBe(true)
-    expect(hasChapterTitles(specialText)).toBe(false)
+  it('规则参数真的生效：自定义规则认得出 auto 认不出的标题', () => {
+    const customText = '===开端===\n正文。\n===终局===\n正文。\n'
+    const rule = { kind: 'custom', pattern: '^={2,6}.+={2,6}$' } as const
+    expect(resplitChapters(customText, 'x', rule).chapters[0].title).toBe('===开端===')
+    expect(resplitChapters(customText, 'x').chapters).toHaveLength(1)
+    expect(hasChapterTitles(customText, rule)).toBe(true)
+    expect(hasChapterTitles(customText)).toBe(false)
   })
 
   it('标题取 trim 后的行', () => {

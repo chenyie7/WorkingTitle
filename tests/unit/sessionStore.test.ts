@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import { resolveShortcuts } from '../../src/core/shortcuts'
+import { CHAPTER_SPLIT_VERSION } from '../../src/core/chapters'
 import {
   DEFAULT_CHAPTER_RULE,
   DEFAULT_DOC_TITLE,
@@ -619,6 +620,30 @@ describe('sessionStore 小说缓存', () => {
     const metaPath = join(dir, 'novel-cache.json')
     const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
     meta.chapterRule = { kind: 'custom', pattern: '(' }
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)).toBeNull()
+  })
+
+  it('写缓存时记下切章算法版本，旧缓存缺字段按版本 1', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    expect(store.readNovelCacheEntry(src)?.splitVersion).toBe(CHAPTER_SPLIT_VERSION)
+
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    delete meta.splitVersion
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)?.splitVersion).toBe(1)
+  })
+
+  it('缓存 meta 里的 splitVersion 不是数字时整份缓存按未命中', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    meta.splitVersion = '2'
     writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
     expect(store.readNovelCacheEntry(src)).toBeNull()
   })

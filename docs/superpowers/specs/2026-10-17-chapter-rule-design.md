@@ -43,7 +43,7 @@ export const DEFAULT_CHAPTER_RULE: ChapterRule = { kind: 'auto' }
 
 | id | 界面名称 | 判定 |
 | --- | --- | --- |
-| —（auto） | 自动识别（默认） | 现有 `isChapterTitle`：四条模式 + 长度上限 + 句读闸门 |
+| —（auto） | 自动识别（默认） | 在前 512KB 里对候选规则逐条计数，取命中最多的一条（见 2.2.1） |
 | `cn-chapter` | 第X章（中文） | `TITLE_PATTERNS[0]`：第X章/节/回/卷/篇，可带副标题 |
 | `numbered` | 数字序号 | `NUMBERED_TITLE`，并保留句读闸门 |
 | `chapter-en` | Chapter N | `TITLE_PATTERNS[2]`，不区分大小写 |
@@ -51,6 +51,22 @@ export const DEFAULT_CHAPTER_RULE: ChapterRule = { kind: 'auto' }
 
 所有规则都作用在 **trim 后的整行** 上；匹配则整行（trim 后）就是章节标题。
 预置规则沿用 `MAX_TITLE_LEN`（40 字）上限。
+
+#### 2.2.1 自动识别：按整本书选一条候选规则
+
+原先的自动识别是四条写死的模式取并集。它只覆盖「第一章 标题」这种带空格的写法，
+所以一本用「第一章初入江湖」「第一章：初入江湖」「卷一」「上 部」的小说会塌成几章。
+现在改成借鉴 Legado 的做法（算法自行实现，规则自行编写，不复制其 GPL 源码）：
+
+1. 候选规则是一张从具体到宽松的表：第X章/节/回/卷/篇/部/集、序章等关键字、卷X、章12、
+   上/中/下 部篇卷、括号里的第X章、Chapter N、数字序号、中文数字序号、特殊符号。
+2. 每条规则分别扫描正文的前 512KB；两条命中至少隔 1000 字才计一章（避开卷首目录）。
+3. 取命中数最多的一条，**并列时取表里靠前的**；整本书都用这一条切。
+   不取并集：一本小说通常只用一种标题写法，并集会把手最松的规则套到正文上。
+4. 一条都没命中 → 单章，维持原有行为。
+
+`isChapterTitle(line)` 仍是单行判定，自动识别下含义是「任一候选命中」；只有它用并集，
+切章一律走选出的那一条。规则选择是纯函数，取样不到 512KB 的短文本也能工作。
 
 `special` 的正则：
 
@@ -155,8 +171,8 @@ export function resplitNovelWithRule(
 
 1. 读这本书的会话，取 `chapterRule`，缺省 auto。
 2. 读缓存条目（正文 + 缓存里记录的规则）。
-3. 缓存存在且 `chapterRuleEqual(缓存规则, 会话规则)`：直接返回缓存。
-4. 缓存存在但规则不同：用 `resplitChapters(缓存正文, …)` 重切，写回缓存，返回。
+3. 缓存存在、`chapterRuleEqual(缓存规则, 会话规则)` 且 `splitVersion` 是当前版本：直接返回缓存。
+4. 缓存存在但规则或算法版本不同：用 `resplitChapters(缓存正文, …)` 重切，写回缓存，返回。
 5. 没有缓存：`loadNovelFromFile(filePath, rule)`，写缓存，返回。
 
 `resplitNovelWithRule`：
@@ -250,7 +266,10 @@ chapterRule?: ChapterRule
 
 - 缺失按 auto。旧缓存因此可能与 auto 规则匹配，不需要强制重建。
 - 存在但不合法：整份缓存判无效、重新切分（缓存重建代价小，失败关闭）。
-- 缓存是否可复用由 `chapterRuleEqual(缓存规则, 会话规则)` 判定。
+- 缓存是否可复用由 `chapterRuleEqual(缓存规则, 会话规则)` **且** 算法版本相等判定。
+  `NovelCacheMeta.splitVersion` 记 `CHAPTER_SPLIT_VERSION`（当前为 2）；缺字段按 1 处理。
+  版本不同不重读源文件，直接用缓存正文 `resplitChapters` 并回写——自动识别的算法改了，
+  旧缓存里可能正是「只认出 5 章」那份目录。
 
 ### 5.3 渲染层的写入
 
@@ -380,7 +399,8 @@ flatText.slice(revealStart, cursor)` 这条核心不变量不受影响。
 测试：
 
 - `tests/unit/chapters.test.ts`：每条预置的正例/反例、自定义正则、非法正则、0 匹配、
-  `chapterRuleProblem`、`chapterRuleEqual`、`resplitChapters` 的 `flatText` 不变与区间连续。
+  `chapterRuleProblem`、`chapterRuleEqual`、`resplitChapters` 的 `flatText` 不变与区间连续；
+  自动识别的黏着副标题/冒号/卷X/上下部、混用写法只选一条、装饰符号不算章节。
 - `tests/unit/sessionStore.test.ts`：无 `chapterRule` 的旧会话仍有效；规则往返；读盘时坏规则只丢字段；
   缓存的规则字段与复用判定。
 - `tests/unit/ipcContract.test.ts`：新通道与 `WtApi` 方法的形状。

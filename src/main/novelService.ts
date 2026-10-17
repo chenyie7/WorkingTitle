@@ -1,5 +1,10 @@
 import type { IpcResult } from '../core/api'
-import { chapterRuleEqual, hasChapterTitles, resplitChapters } from '../core/chapters'
+import {
+  CHAPTER_SPLIT_VERSION,
+  chapterRuleEqual,
+  hasChapterTitles,
+  resplitChapters
+} from '../core/chapters'
 import { DEFAULT_CHAPTER_RULE } from '../core/types'
 import type { Chapter, ChapterRule, Novel } from '../core/types'
 import { loadNovelFromFile } from './loadNovel'
@@ -14,7 +19,14 @@ import type { SessionStore } from './sessionStore'
 export function openNovelWithRule(store: SessionStore, filePath: string): Novel {
   const rule = store.readSession(filePath)?.chapterRule ?? DEFAULT_CHAPTER_RULE
   const entry = store.readNovelCacheEntry(filePath)
-  if (entry && chapterRuleEqual(entry.chapterRule, rule)) return entry.novel
+  // 算法版本不同也要重切：旧缓存里的目录可能正是那个只认出 5 章的结果
+  if (
+    entry &&
+    entry.splitVersion === CHAPTER_SPLIT_VERSION &&
+    chapterRuleEqual(entry.chapterRule, rule)
+  ) {
+    return entry.novel
+  }
 
   if (entry) {
     const { chapters } = resplitChapters(entry.novel.flatText, entry.novel.title, rule)
