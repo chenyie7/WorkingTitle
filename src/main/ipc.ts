@@ -1,9 +1,9 @@
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
-import { statSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
 import { getLibraryStore } from './library'
 import { titleFromFileName } from './libraryStore'
+import { importNovelToLibrary } from './novelImport'
 import { chapterRuleProblem } from '../core/chapters'
 import {
   NovelWorkerExitedError,
@@ -26,7 +26,6 @@ import type {
   ChapterRule,
   ImportNovelResult,
   LibraryEntry,
-  LibraryMeta,
   Novel,
   PersistedSession
 } from '../core/types'
@@ -80,77 +79,6 @@ function loadWorkDoc(filePath: string): Novel | null {
   }
 }
 
-async function importNovelToLibrary(sourcePath: string): Promise<ImportNovelResult> {
-  const store = getStore()
-  const library = getLibraryStore()
-  // 书库 id 按 resolve 后的路径算；命令行给的相对路径否则与旧会话对不上。
-  const src = resolve(sourcePath)
-
-  let sourceSize: number
-  try {
-    sourceSize = statSync(src).size
-  } catch (err) {
-    throw new Error(`读不了这个文件：${err instanceof Error ? err.message : String(err)}`)
-  }
-  if (sourceSize === 0) throw new Error('这个文件是空的，换一个')
-
-  const plan = library.planImport(src)
-  library.copyIntoLibrary(src, plan)
-
-  // 迁移必须先于打开：openNovelWithRule 要从会话里读分章规则。
-  if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
-    const hadOldSession = store.readSession(src) !== null
-    const migrated = store.copySession(src, plan.copyPath)
-    if (hadOldSession && !migrated) {
-      library.removeEntry(plan.id)
-      store.deleteSession(plan.copyPath)
-      throw new Error('阅读进度迁移失败')
-    }
-  }
-
-  let novel: Novel
-  try {
-    novel = await openNovel(plan.copyPath)
-  } catch (err) {
-    if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
-      library.removeEntry(plan.id)
-      store.deleteSession(plan.copyPath)
-    }
-    throw err
-  }
-
-  if (plan.kind !== 'existing') {
-    const meta: LibraryMeta = {
-      version: 1,
-      originalPath: plan.meta?.originalPath ?? src,
-      fileName: plan.fileName,
-      importedAt: plan.meta?.importedAt ?? Date.now(),
-      size: sourceSize,
-      charCount: novel.flatText.length
-    }
-    const wrote = library.writeMeta(plan.id, meta)
-    if (!wrote.ok) {
-      if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
-        library.removeEntry(plan.id)
-        store.deleteSession(plan.copyPath)
-      }
-      throw new Error(wrote.reason)
-    }
-    // 整个导入成功之后才删旧会话：失败时旧进度原样还在。
-    if (plan.kind === 'fresh' || plan.kind === 'rebuild') store.deleteSession(src)
-  }
-
-  return {
-    novel,
-    status:
-      plan.kind === 'existing'
-        ? 'already-imported'
-        : plan.kind === 'repair'
-          ? 'repaired'
-          : 'imported'
-  }
-}
-
 export interface IpcDeps {
   getWindow: () => BrowserWindow | null
   getInitialNovelPath: () => string | null
@@ -181,7 +109,14 @@ export function registerIpc(deps: IpcDeps): void {
       if (getLibraryStore().isInsideLibrary(selected)) {
         return { ok: true, value: { novel: await openNovel(selected), status: 'already-imported' } }
       }
-      return { ok: true, value: await importNovelToLibrary(selected) }
+      return {
+        ok: true,
+        value: await importNovelToLibrary(selected, {
+          store: getStore(),
+          library: getLibraryStore(),
+          openNovel
+        })
+      }
     } catch (err) {
       console.warn('[wt] 导入小说失败：', err)
       return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
@@ -245,7 +180,8 @@ export function registerIpc(deps: IpcDeps): void {
       if (getLibraryStore().isInsideLibrary(filePath)) {
         return { ok: true, value: await openNovel(filePath) }
       }
-      return { ok: true, value: (await importNovelToLibrary(filePath)).novel }
+      const deps = { store: getStore(), library: getLibraryStore(), openNovel }
+      return { ok: true, value: (await importNovelToLibrary(filePath, deps)).novel }
     } catch (err) {
       console.warn('[wt] 打开小说失败：', filePath, err)
       return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
