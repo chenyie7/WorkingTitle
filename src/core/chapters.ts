@@ -42,7 +42,7 @@ export const CHAPTER_PRESETS: Readonly<Record<ChapterPresetId, string>> = {
  *
  * 下面的 readonly 挡不住这件事：它只能阻止往表里 push、或对元素重新赋值，管不到
  * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
- * readonly 守的是另一件小事（别往这张表里塞模式）。表外的 NUMBERED_TITLE 同样受这条约束。
+ * readonly 守的是另一件小事（别往这张表里塞模式）。表外的 NUMBERED_TITLE、CN_CHAPTER_TITLE、CHAPTER_EN_TITLE 同样受这条约束。
  */
 const CN_CHAPTER_TITLE =
   /^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/
@@ -77,14 +77,16 @@ function presetMatches(id: ChapterPresetId, line: string): boolean {
       return CHAPTER_EN_TITLE.test(t)
     case 'special':
       return SPECIAL_TITLE.test(t)
-    default:
+    default: {
+      const _exhaustive: never = id
       return false
+    }
   }
 }
 
 /**
- * 规则 → 行判定器。自定义正则只编译一次；非法正则直接抛，调用方先用
- * chapterRuleProblem 校验。这里不带 /g 或 /y，避免 lastIndex 让判定变成有状态的。
+ * 规则 → 行判定器。自定义正则只编译一次；非法规则在这里直接抛错。这里不带 /g 或 /y，
+ * 避免 lastIndex 让判定变成有状态的。
  */
 function makeMatcher(rule: ChapterRule): (line: string) => boolean {
   const problem = chapterRuleProblem(rule)
@@ -116,7 +118,7 @@ export function chapterRuleProblem(v: unknown): string | null {
   }
   if (r.kind === 'custom') {
     if (typeof r.pattern !== 'string' || r.pattern.trim() === '') {
-      return 'chapterRule.pattern 不是非空字符串'
+      return 'chapterRule.pattern 不是非空白字符串'
     }
     try {
       new RegExp(r.pattern, 'i')
