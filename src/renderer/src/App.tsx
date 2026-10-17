@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
-import { clampPageFontSize } from '../../core/types'
-import type { InputMode, Novel } from '../../core/types'
+import { DEFAULT_CHAPTER_RULE, clampPageFontSize } from '../../core/types'
+import type { ChapterRule, InputMode, Novel } from '../../core/types'
+import type { IpcResult } from '../../core/api'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
 import type { MarkdownSource } from './components/Page'
@@ -29,6 +30,9 @@ const CARET_MARGIN = 24
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
   const [engine, setEngine] = useState<TypingEngine | null>(null)
+  const [chapterRule, setChapterRule] = useState<ChapterRule>(DEFAULT_CHAPTER_RULE)
+  const chapterRuleRef = useRef<ChapterRule>(DEFAULT_CHAPTER_RULE)
+  chapterRuleRef.current = chapterRule
   /**
    * **工作文档**：第二本 Novel，与小说并行存在。
    *
@@ -172,7 +176,7 @@ export default function App() {
     const current = novelEngineRef.current
     if (!api || !current) return
     // 这里没有界面可提示（关窗路径），至少让失败留下痕迹而不是被 void 吞掉。
-    void api.saveSession(current.toSession()).then((r) => {
+    void api.saveSession({ ...current.toSession(), chapterRule: chapterRuleRef.current }).then((r) => {
       if (!r.ok) console.warn('[wt] 保存阅读进度失败：', r.reason)
     })
   }, [])
@@ -204,11 +208,22 @@ export default function App() {
       // 「打开一本小说」就是「你要看小说」——老板模式下按 ⌘O 也照此办理
       setBossMode(false)
       setNovel(next)
+      setChapterRule(session?.chapterRule ?? DEFAULT_CHAPTER_RULE)
+      // 目录被重切过（切章算法升级）时旧 chapterPos 与新的章节数对不上，按光标重算一遍。
+      const restored =
+        session && session.chapterPos.length !== next.chapters.length
+          ? {
+              ...session,
+              chapterPos: next.chapters.map((c) =>
+                Math.max(0, Math.min(session.cursor - c.start, c.charCount))
+              )
+            }
+          : session
       // 有记录就接着用它自己的比例；没有记录才拿**全局**值当起点（这就是全局比例的全部作用）。
       // 读 ref 而不是闭包里的 `globalRatio`，理由见 `globalRatioRef` 那段说明。
       setEngine(
-        session
-          ? TypingEngine.fromSession(next, session)
+        restored
+          ? TypingEngine.fromSession(next, restored)
           : new TypingEngine(next, { ratio: settingsRef.current.ratio })
       )
       setExpanded(false)
@@ -239,12 +254,60 @@ export default function App() {
     // 取消的；排在 await 之后的话，一个已排上队的防抖写可能落在 IPC 删除之后，把记录又写回来。
     setNovel(null)
     setEngine(null)
+    setChapterRule(DEFAULT_CHAPTER_RULE)
+    chapterRuleRef.current = DEFAULT_CHAPTER_RULE
     // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
     // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
     patchSettings({ lastSourcePath: null })
     const result = await api.clearSession()
     if (!result.ok) notify(`清除阅读记录失败：${result.reason}`)
   }, [notify, patchSettings])
+
+  const handleApplyChapterRule = useCallback(
+    async (rule: ChapterRule): Promise<IpcResult<number>> => {
+      const api = getApi()
+      const currentNovel = novel
+      const currentEngine = engine
+      if (!api || !currentNovel || !currentEngine) {
+        return { ok: false, reason: '还没有导入小说' }
+      }
+
+      const result = await api.resplitNovel(currentNovel.sourcePath, rule)
+      if (!result.ok) return result
+      // 等待期间换了书：这次结果不能套到新书上（章节目录与书对不上）。
+      if (novelEngineRef.current !== currentEngine) {
+        return { ok: false, reason: '书已更换，本次分章未应用' }
+      }
+
+      const chapters = result.value
+      const snap = currentEngine.toSession()
+      // 光标之前的章算读完、当前章按比例、之后为 0——只由光标一条线决定。
+      const chapterPos = chapters.map((c) =>
+        Math.max(0, Math.min(snap.cursor - c.start, c.charCount))
+      )
+      const nextNovel: Novel = { ...currentNovel, chapters }
+      const nextEngine = TypingEngine.fromSession(nextNovel, {
+        ...snap,
+        chapterPos,
+        activeChapter: 0,
+        chapterRule: rule
+      })
+
+      setNovel(nextNovel)
+      setEngine(nextEngine)
+      setChapterRule(rule)
+      chapterRuleRef.current = rule
+
+      // 立即写一次：防抖 effect 也会写，但关窗/换书可能正好落在 600ms 窗口里。
+      const savedSession = await api.saveSession({
+        ...nextEngine.toSession(),
+        chapterRule: rule
+      })
+      if (!savedSession.ok) notify(`保存分章规则失败：${savedSession.reason}`)
+      return { ok: true, value: chapters.length }
+    },
+    [novel, engine, notify]
+  )
 
   /**
    * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
@@ -541,7 +604,7 @@ export default function App() {
     const api = getApi()
     if (!engine || !api) return
     const timer = window.setTimeout(() => {
-      void api.saveSession(engine.toSession()).then((r) => {
+      void api.saveSession({ ...engine.toSession(), chapterRule: chapterRuleRef.current }).then((r) => {
         if (!r.ok) notify(`保存阅读进度失败：${r.reason}`)
       })
     }, SAVE_DEBOUNCE_MS)
@@ -702,6 +765,10 @@ export default function App() {
           workDocBroken={workDocBroken}
           onImportWorkDoc={() => void handleImportWorkDoc()}
           onRemoveWorkDoc={handleRemoveWorkDoc}
+          novelTitle={novel?.title ?? null}
+          chapterCount={novel?.chapters.length ?? 0}
+          chapterRule={chapterRule}
+          onApplyChapterRule={handleApplyChapterRule}
           settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 

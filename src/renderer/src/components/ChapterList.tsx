@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { isVolumeTitle } from '../../../core/chapters'
 import type { Novel } from '../../../core/types'
 import { defaultShortcutText } from '../state/shortcuts'
 import { IconCollapse, IconExpand } from './icons'
@@ -105,6 +106,20 @@ export function ChapterList({
 
   const chapters = novel?.chapters ?? []
   const total = chapters.length
+
+  // 卷标题是章节列表里的一项，这里只负责分类；行高不变，虚拟滚动照旧。
+  const layout = useMemo(() => {
+    const volume: boolean[] = []
+    const grouped: boolean[] = []
+    let seen = false
+    for (const c of chapters) {
+      const isVolume = isVolumeTitle(c.title)
+      volume.push(isVolume)
+      grouped.push(!isVolume && seen)
+      if (isVolume) seen = true
+    }
+    return { volume, grouped }
+  }, [chapters])
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const last = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
   const visible = chapters.slice(first, last)
@@ -160,10 +175,19 @@ export function ChapterList({
             const index = first + offset
             const pos = chapterPos[index] ?? 0
             const pct = chapter.charCount === 0 ? 100 : Math.min(100, Math.round((pos / chapter.charCount) * 100))
+            const isVolume = layout.volume[index] === true
+            const classes = [
+              'chapter-item',
+              isVolume ? 'chapter-item--volume' : '',
+              layout.grouped[index] ? 'chapter-item--grouped' : '',
+              index === activeChapter ? 'chapter-item--active' : ''
+            ]
+              .filter(Boolean)
+              .join(' ')
             return (
               <div
                 key={chapter.index}
-                className={`chapter-item ${index === activeChapter ? 'chapter-item--active' : ''}`}
+                className={classes}
                 data-testid={`chapter-item-${index}`}
                 style={{
                   position: 'absolute',
@@ -176,9 +200,11 @@ export function ChapterList({
                 onClick={() => onJump(index)}
               >
                 <span className="chapter-item__title">{chapter.title}</span>
-                <span className="chapter-item__pct" data-testid={`chapter-pct-${index}`}>
-                  {pct}%
-                </span>
+                {isVolume ? null : (
+                  <span className="chapter-item__pct" data-testid={`chapter-pct-${index}`}>
+                    {pct}%
+                  </span>
+                )}
               </div>
             )
           })}

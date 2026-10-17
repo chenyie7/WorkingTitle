@@ -73,6 +73,7 @@ function installApi(
       novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
     ),
     openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
+    resplitNovel: vi.fn(async () => ({ ok: true as const, value: [] })),
     initialNovelPath: vi.fn(async () => null),
     loadSession: vi.fn(async (sourcePath: string) => {
       sessionAskedFor = sourcePath
@@ -254,6 +255,34 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:5')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
     expect(screen.getByTestId('page-text').textContent).toContain(novel.flatText.slice(0, 15))
+  })
+
+  it('旧会话的 chapterPos 与新目录章数对不上时，按光标重算', async () => {
+    const novel = makeNovel()
+    // 前提自检：第二章从 17 开始，所以 cursor=20 落在第二章的第 3 个字
+    expect(novel.chapters[1].start).toBe(17)
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 5,
+      mode: 'key',
+      cursor: 20,
+      revealStart: 0,
+      // 旧目录只有一章，值 5 若原样套到新目录，第一章会显示成只读了 5 个字
+      chapterPos: [5],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
+    ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
+      ...defaultSettings(),
+      lastSourcePath: novel.sourcePath
+    }))
+    render(<App />)
+
+    await waitFor(() => expect(revealedChars()).toBe(20))
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterPos).toEqual([17, 3])
   })
 
   /**
@@ -629,6 +658,135 @@ describe('导入一本读过的书', () => {
     // 条用例在改之前就能通过（实测：只加用例、还没动 App.tsx 的那一轮，它已经在 12 passed 里）。
     // 有证明力的是「有人按这本书的路径去问过进度」：openNovel 若不读会话，这一项恒为 null。
     expect(sessionAskedFor).toBe(novel.sourcePath)
+  })
+})
+
+describe('分章规则随书保存', () => {
+  it('打开书时读回会话里的规则，打字后落盘的会话带着它', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const capture = screen.getByTestId('input-capture')
+    fireEvent.input(capture, { target: { value: 'x' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
+  })
+
+  it('关窗落盘（flushSession）也带着分章规则', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: [PersistedSession][] }
+    }
+    const before = saveSession.mock.calls.length
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    expect(saveSession.mock.calls.length).toBe(before + 1)
+    expect(saveSession.mock.calls[before][0].chapterRule).toEqual({
+      kind: 'preset',
+      id: 'numbered'
+    })
+  })
+
+  it('清除阅读记录后规则回到自动识别', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('btn-clear-session'))
+    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-chapters'))
+    expect((screen.getByTestId('chapter-rule-auto') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('在设置里应用规则：光标与已显示正文不动，章节目录换成新的', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    const chapters = [
+      { index: 0, title: 'A', start: 0, end: 10, charCount: 10 },
+      { index: 1, title: 'B', start: 10, end: 20, charCount: 10 },
+      { index: 2, title: 'C', start: 20, end: novel.flatText.length, charCount: novel.flatText.length - 20 }
+    ]
+    ;(window.api as unknown as { resplitNovel: unknown }).resplitNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: chapters
+    }))
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    // 先打一个字：光标 10，阅读区显示前 10 个字
+    fireEvent.input(screen.getByTestId('input-capture'), { target: { value: 'x' } })
+    await waitFor(() => expect(revealedChars()).toBe(10))
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-chapters'))
+    fireEvent.click(screen.getByTestId('chapter-rule-preset-numbered'))
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+
+    await waitFor(() => expect(screen.getByTestId('chapter-item-2')).toBeTruthy())
+    expect(revealedChars()).toBe(10)
+    expect((window.api.resplitNovel as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe(
+      novel.sourcePath
+    )
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
+    // 【精确值，不只是长度】长度断言挡不住「全部置 0」那种最可能的错误
+    expect(saved!.chapterPos).toEqual([10, 0, 0])
+    expect(saved!.cursor).toBe(10)
+    expect(saved!.revealStart).toBe(0)
   })
 })
 

@@ -4,6 +4,7 @@ export const CH = {
   loadWorkDoc: 'wt:load-work-doc',
   loadWorkDocImage: 'wt:load-work-doc-image',
   openNovelPath: 'wt:open-novel-path',
+  resplitNovel: 'wt:resplit-novel',
   loadSession: 'wt:load-session',
   saveSession: 'wt:save-session',
   clearSession: 'wt:clear-session',

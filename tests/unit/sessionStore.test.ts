@@ -14,13 +14,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionStore } from '../../src/main/sessionStore'
 import { resolveShortcuts } from '../../src/core/shortcuts'
+import { CHAPTER_SPLIT_VERSION } from '../../src/core/chapters'
 import {
+  DEFAULT_CHAPTER_RULE,
   DEFAULT_DOC_TITLE,
   DEFAULT_RATIO,
   PAGE_FONT_SIZE_DEFAULT,
   defaultSettings
 } from '../../src/core/types'
-import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
+import type { AppSettings, ChapterRule, Novel, PersistedSession } from '../../src/core/types'
 
 let dir = ''
 beforeEach(() => {
@@ -306,6 +308,51 @@ describe('sessionStore 会话读写', () => {
     const store = createSessionStore(dir)
     expect(() => store.clearReadingHistory()).not.toThrow()
   })
+
+  it('chapterRule 写入后能原样读回', () => {
+    const store = createSessionStore(dir)
+    const s = makeSession({ chapterRule: { kind: 'preset', id: 'numbered' } })
+    store.writeSession(s)
+    expect(store.readSession(SRC)?.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
+  })
+
+  it('旧会话没有 chapterRule 时照常有效', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession())
+    const got = store.readSession(SRC)
+    expect(got).not.toBeNull()
+    expect(got?.chapterRule).toBeUndefined()
+  })
+
+  it('读盘时 chapterRule 坏了只丢字段，进度仍然读得回来', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const store = createSessionStore(dir)
+      mkdirSync(join(dir, 'sessions'), { recursive: true })
+      writeFileSync(
+        sessionFile(dir, SRC),
+        JSON.stringify({ ...makeSession(), chapterRule: { kind: 'custom', pattern: '(' } }),
+        'utf8'
+      )
+      const got = store.readSession(SRC)
+      expect(got).not.toBeNull()
+      expect(got!.cursor).toBe(120)
+      expect(got!.chapterRule).toBeUndefined()
+      expect(spy.mock.calls[0][0]).toContain('chapterRule')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('写盘时 chapterRule 不合法就拒绝整次写入', () => {
+    const store = createSessionStore(dir)
+    const r = store.writeSession(
+      makeSession({ chapterRule: { kind: 'custom', pattern: '(' } })
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toContain('chapterRule')
+    expect(store.readSession(SRC)).toBeNull()
+  })
 })
 
 describe('sessionStore 小说缓存', () => {
@@ -543,6 +590,62 @@ describe('sessionStore 小说缓存', () => {
     expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
 
     expect(store.readNovelCache(src)).toBeNull()
+  })
+
+  it('缓存条目带着写入时记录的规则', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    const rule: ChapterRule = { kind: 'preset', id: 'numbered' }
+    store.writeNovelCache(makeNovel(src), rule)
+    const entry = store.readNovelCacheEntry(src)
+    expect(entry?.chapterRule).toEqual(rule)
+    expect(store.readNovelCache(src)?.flatText).toBe(makeNovel(src).flatText)
+  })
+
+  it('缓存 meta 没有 chapterRule 时按自动识别', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    delete meta.chapterRule
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)?.chapterRule).toEqual(DEFAULT_CHAPTER_RULE)
+  })
+
+  it('缓存 meta 里的 chapterRule 不合法时整份缓存按未命中', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    meta.chapterRule = { kind: 'custom', pattern: '(' }
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)).toBeNull()
+  })
+
+  it('写缓存时记下切章算法版本，旧缓存缺字段按版本 1', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    expect(store.readNovelCacheEntry(src)?.splitVersion).toBe(CHAPTER_SPLIT_VERSION)
+
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    delete meta.splitVersion
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)?.splitVersion).toBe(1)
+  })
+
+  it('缓存 meta 里的 splitVersion 不是数字时整份缓存按未命中', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src))
+    const metaPath = join(dir, 'novel-cache.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    meta.splitVersion = '2'
+    writeFileSync(metaPath, JSON.stringify(meta), 'utf8')
+    expect(store.readNovelCacheEntry(src)).toBeNull()
   })
 })
 

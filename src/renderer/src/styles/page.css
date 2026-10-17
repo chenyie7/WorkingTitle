@@ -162,6 +162,23 @@
   background: #edf2fa;
 }
 
+/* 卷标题＝通栏分组头。行高仍由 ROW_HEIGHT 决定，虚拟滚动不用改。 */
+.chapter-item--volume {
+  background: #f2f3f5;
+  box-shadow: inset 3px 0 0 #c2c6cc;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.chapter-item--volume:hover {
+  background: #e9ebee;
+}
+
+/* 卷下的章节缩进一档，让分组关系一眼可见 */
+.chapter-item--grouped {
+  padding-left: 22px;
+}
+
 /* 选中用「左侧一条圆角竖条 + 浅底」，不再用整条边框——后者在浅色侧栏上显得很硬 */
 .chapter-item--active {
   background: var(--wt-blue-light);
@@ -185,6 +202,15 @@
 /* ================= 深色外观 ================= */
 [data-theme='dark'] .chapter-item:hover {
   background: #26262d;
+}
+
+[data-theme='dark'] .chapter-item--volume {
+  background: #24242a;
+  box-shadow: inset 3px 0 0 #41414c;
+}
+
+[data-theme='dark'] .chapter-item--volume:hover {
+  background: #2b2b33;
 }
 
 [data-theme='dark'] .wt-page__empty {

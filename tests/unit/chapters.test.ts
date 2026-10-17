@@ -1,7 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isChapterTitle, splitChapters, PREAMBLE_TITLE } from '../../src/core/chapters'
+import {
+  CHAPTER_PRESETS,
+  chapterRuleEqual,
+  chapterRuleProblem,
+  hasChapterTitles,
+  isChapterTitle,
+  isVolumeTitle,
+  resplitChapters,
+  splitChapters,
+  PREAMBLE_TITLE
+} from '../../src/core/chapters'
+import { DEFAULT_CHAPTER_RULE, type ChapterRule } from '../../src/core/types'
 
 const fixture = (name: string): string =>
   readFileSync(join(__dirname, '..', 'fixtures', name), 'utf8')
@@ -223,5 +234,266 @@ describe('splitChapters', () => {
     // 数量级，所以它是【结构冒烟测试】而非规模测试——给它牙齿靠的是这条保真断言，
     // 而不是把样本加大。
     expect(flatText).toBe(text)
+  })
+})
+
+describe('isVolumeTitle', () => {
+  it.each(['第一卷 起势', '第1卷', '卷一 起势', '上 部 楔子', '第三部 起势', '第 12 篇'])(
+    '卷级标题：%s',
+    (title) => {
+      expect(isVolumeTitle(title)).toBe(true)
+    }
+  )
+
+  it.each(['第1章 开端', '第一章初入江湖', '前言', '序章', '正文', '上部人员名单', '卷'])(
+    '不是卷级标题：%s',
+    (title) => {
+      expect(isVolumeTitle(title)).toBe(false)
+    }
+  )
+})
+
+describe('自动识别的规则选择', () => {
+  it.each([
+    {
+      name: '副标题直接黏着写',
+      text: '第一章初入江湖\n正文。\n第二章再入江湖\n正文。\n',
+      titles: ['第一章初入江湖', '第二章再入江湖']
+    },
+    {
+      name: '副标题用冒号',
+      text: '第一章：初入江湖\n正文。\n第二章：再入江湖\n正文。\n',
+      titles: ['第一章：初入江湖', '第二章：再入江湖']
+    },
+    {
+      name: '卷X',
+      text: '卷一 风起\n正文。\n卷二 云涌\n正文。\n',
+      titles: ['卷一 风起', '卷二 云涌']
+    },
+    {
+      name: '章X / 卷X 在前',
+      text: '章1 甲\n正文。\n章2 乙\n正文。\n',
+      titles: ['章1 甲', '章2 乙']
+    },
+    {
+      name: '上/中/下 部',
+      text: '上 部 一\n正文。\n中 部 二\n正文。\n下 部 三\n正文。\n',
+      titles: ['上 部 一', '中 部 二', '下 部 三']
+    }
+  ])('$name 也能切出来', ({ text, titles }) => {
+    const { flatText, chapters } = splitChapters(text, 'x')
+    expect(chapters.map((c) => c.title)).toEqual(titles)
+    expect(flatText).toBe(text)
+  })
+
+  it('混用写法时只选命中最多的一条，不把规则取并集', () => {
+    const text = '序章\n正文。\n第一章 甲\n正文一。\n第二章 乙\n正文二。\n'
+    // 第X章 命中 2 次、序章 1 次 → 选第X章；若取并集，第一章会是「序章」
+    expect(splitChapters(text, 'x').chapters.map((c) => c.title)).toEqual([
+      '前言',
+      '第一章 甲',
+      '第二章 乙'
+    ])
+  })
+
+  it('只有装饰符号的行不算章节', () => {
+    const text = '※　　　※\n正文一。\n※　　　※\n正文二。\n'
+    expect(splitChapters(text, 'x').chapters).toHaveLength(1)
+  })
+})
+
+describe('可配置的分章规则', () => {
+  it('cn-chapter 只认中文章节标题', () => {
+    const rule = { kind: 'preset', id: 'cn-chapter' } as const
+    expect(isChapterTitle('第一百零八回 聚义', rule)).toBe(true)
+    expect(isChapterTitle('第3节 起手', rule)).toBe(true)
+    expect(isChapterTitle('序章', rule)).toBe(false)
+    expect(isChapterTitle('Chapter 3 The Beginning', rule)).toBe(false)
+    expect(isChapterTitle('1、开端', rule)).toBe(false)
+  })
+
+  it('numbered 只认数字序号，句读闸门仍在', () => {
+    const rule = { kind: 'preset', id: 'numbered' } as const
+    expect(isChapterTitle('1、开端', rule)).toBe(true)
+    expect(isChapterTitle('12．转折', rule)).toBe(true)
+    expect(isChapterTitle('1、开端，转折', rule)).toBe(false)
+    expect(isChapterTitle('第一章 风起', rule)).toBe(false)
+  })
+
+  it('chapter-en 只认英文 Chapter N，不区分大小写', () => {
+    const rule = { kind: 'preset', id: 'chapter-en' } as const
+    expect(isChapterTitle('chapter 3 the beginning', rule)).toBe(true)
+    expect(isChapterTitle('Chapter 3 The Beginning', rule)).toBe(true)
+    expect(isChapterTitle('第一章 风起', rule)).toBe(false)
+  })
+
+  it('special 认特殊符号与单独一行的关键词', () => {
+    const rule = { kind: 'preset', id: 'special' } as const
+    expect(isChapterTitle('☆、晋江标题', rule)).toBe(true)
+    expect(isChapterTitle('【第一章】', rule)).toBe(true)
+    expect(isChapterTitle('简介', rule)).toBe(true)
+    expect(isChapterTitle('前言不搭后语', rule)).toBe(false)
+    expect(isChapterTitle('正文完', rule)).toBe(false)
+  })
+
+  it.each([
+    '☆、开端', '★ 开端', '✦ 开端', '✧ 开端', '※ 开端',
+    '简介', '内容简介', '文章简介', '文案', '前言', '序章',
+    '楔子', '正文', '终章', '尾声', '后记', '番外', '【第一章】'
+  ])('special 认得 %s', (line) => {
+    expect(isChapterTitle(line, { kind: 'preset', id: 'special' })).toBe(true)
+  })
+
+  it('自定义正则按 trim 后的整行匹配，且不区分大小写', () => {
+    const rule = { kind: 'custom', pattern: '^chapter\\s+\\d+.*$' } as const
+    expect(isChapterTitle('  CHAPTER 3 The Beginning  ', rule)).toBe(true)
+    expect(isChapterTitle('正文里提到 chapter 3 不算', rule)).toBe(false)
+  })
+
+  it('自定义正则不受 40 字上限约束', () => {
+    const rule = { kind: 'custom', pattern: '^.+$' } as const
+    const long = '字'.repeat(80)
+    expect(isChapterTitle(long, rule)).toBe(true)
+    expect(isChapterTitle(long, DEFAULT_CHAPTER_RULE)).toBe(false)
+  })
+
+  it('自定义正则也不把空行 / 纯空白行当标题', () => {
+    expect(isChapterTitle('', { kind: 'custom', pattern: '^$' })).toBe(false)
+    expect(isChapterTitle('   ', { kind: 'custom', pattern: '^.*$' })).toBe(false)
+  })
+
+  it('chapterRuleProblem 逐项校验', () => {
+    expect(chapterRuleProblem({ kind: 'auto' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'preset', id: 'numbered' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'preset', id: 'nope' })).toContain('id')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '^第.+章$' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '(' })).toContain('正则')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '' })).toContain('pattern')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '   ' })).toContain('pattern')
+    expect(chapterRuleProblem({ kind: 'nope' })).toContain('kind')
+    expect(chapterRuleProblem(null)).toContain('不是对象')
+    // 原型链上的名字不能当 preset id
+    expect(chapterRuleProblem({ kind: 'preset', id: 'toString' })).toContain('id')
+  })
+
+  it('chapterRuleEqual 只认完全相同的规则', () => {
+    expect(chapterRuleEqual({ kind: 'auto' }, { kind: 'auto' })).toBe(true)
+    expect(
+      chapterRuleEqual({ kind: 'preset', id: 'numbered' }, { kind: 'preset', id: 'numbered' })
+    ).toBe(true)
+    expect(
+      chapterRuleEqual({ kind: 'preset', id: 'numbered' }, { kind: 'preset', id: 'special' })
+    ).toBe(false)
+    expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^a' })).toBe(true)
+    expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^b' })).toBe(false)
+    expect(chapterRuleEqual({ kind: 'auto' }, { kind: 'custom', pattern: '^a' })).toBe(false)
+  })
+
+  it('chapterRuleEqual 把 undefined 归一成 auto', () => {
+    expect(chapterRuleEqual(undefined, { kind: 'auto' })).toBe(true)
+    expect(chapterRuleEqual({ kind: 'auto' }, undefined)).toBe(true)
+    expect(chapterRuleEqual(undefined, { kind: 'preset', id: 'numbered' })).toBe(false)
+  })
+
+  it('CHAPTER_PRESETS 覆盖四个 id 且文案非空', () => {
+    expect(Object.keys(CHAPTER_PRESETS).sort()).toEqual([
+      'chapter-en',
+      'cn-chapter',
+      'numbered',
+      'special'
+    ])
+    for (const label of Object.values(CHAPTER_PRESETS)) expect(label.length).toBeGreaterThan(0)
+  })
+
+  it('非法规则在切章入口直接抛错，不静默退化', () => {
+    const bogus = { kind: 'preset', id: 'nope' } as unknown as ChapterRule
+    expect(() => isChapterTitle('第一章 甲', bogus)).toThrow('id')
+    expect(() => splitChapters('第一章 甲\n正文。\n', 'x', bogus)).toThrow('id')
+  })
+
+  it('splitChapters 接受规则参数', () => {
+    const text = '☆、开端\n故事开始。\n【第二章】\n继续。'
+    const { flatText, chapters } = splitChapters(text, 'x', { kind: 'preset', id: 'special' })
+    expect(chapters.map((c) => c.title)).toEqual(['☆、开端', '【第二章】'])
+    expect(flatText).toBe(text)
+    // 前提自检：换一条认不出这两行的规则，结果必须不同，否则证明不了第三个参数生效
+    // （自动识别本身就含特殊符号，不能拿它当反例）
+    expect(splitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' }).chapters).toHaveLength(1)
+  })
+})
+
+describe('resplitChapters', () => {
+  const text = '第一章 甲\n正文一。\n第二章 乙\n正文二。\n'
+
+  it('flatText 永远等于输入，章节按新规则重切', () => {
+    const result = resplitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.flatText).toBe(text)
+    expect(result.chapters.map((c) => c.title)).toEqual(['第一章 甲', '第二章 乙'])
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('开头有非空白前言时单列前言一章', () => {
+    const withPreamble = '作者的话\n' + text
+    const result = resplitChapters(withPreamble, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters.map((c) => c.title)).toEqual([PREAMBLE_TITLE, '第一章 甲', '第二章 乙'])
+    expect(result.flatText).toBe(withPreamble)
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('开头只有空白时折进第一章，不丢字符', () => {
+    const withBlank = '\n\n' + text
+    const result = resplitChapters(withBlank, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.flatText).toBe(withBlank)
+    expect(result.chapters[0].title).toBe('第一章 甲')
+    expect(result.chapters[0].start).toBe(0)
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('一条标题都没有时整本一章，flatText 仍是输入', () => {
+    const plain = '没有标题的正文。\n第二行。'
+    const result = resplitChapters(plain, '我的小说', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters).toHaveLength(1)
+    expect(result.chapters[0]).toMatchObject({
+      index: 0,
+      title: '我的小说',
+      start: 0,
+      end: plain.length
+    })
+    expect(result.flatText).toBe(plain)
+  })
+
+  it('输入开头不是全空白时，结果与 splitChapters 一致', () => {
+    const preambleInput = '作者的话\n' + text
+    // 前提自检：两个输入分别对应「前缀为空」与「前缀非空白」两支。
+    expect(text.startsWith('第一章 甲')).toBe(true)
+    expect(preambleInput.slice(0, preambleInput.indexOf('第一章 甲')).trim()).not.toBe('')
+    const rules = [DEFAULT_CHAPTER_RULE, { kind: 'preset', id: 'cn-chapter' } as const]
+    for (const rule of rules) {
+      for (const input of [text, preambleInput]) {
+        const a = splitChapters(input, 'x', rule)
+        const b = resplitChapters(input, 'x', rule)
+        expect(b.chapters).toEqual(a.chapters)
+      }
+    }
+  })
+
+  it('规则参数真的生效：自定义规则认得出 auto 认不出的标题', () => {
+    const customText = '===开端===\n正文。\n===终局===\n正文。\n'
+    const rule = { kind: 'custom', pattern: '^={2,6}.+={2,6}$' } as const
+    expect(resplitChapters(customText, 'x', rule).chapters[0].title).toBe('===开端===')
+    expect(resplitChapters(customText, 'x').chapters).toHaveLength(1)
+    expect(hasChapterTitles(customText, rule)).toBe(true)
+    expect(hasChapterTitles(customText)).toBe(false)
+  })
+
+  it('标题取 trim 后的行', () => {
+    const padded = '　第一章 甲　\n正文。\n'
+    const result = resplitChapters(padded, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters[0].title).toBe('第一章 甲')
+  })
+
+  it('hasChapterTitles：有标题为真，无标题为假', () => {
+    expect(hasChapterTitles(text, { kind: 'preset', id: 'cn-chapter' })).toBe(true)
+    expect(hasChapterTitles('纯正文。', { kind: 'preset', id: 'cn-chapter' })).toBe(false)
   })
 })

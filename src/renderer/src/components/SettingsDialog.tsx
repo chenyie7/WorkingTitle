@@ -29,10 +29,16 @@ import {
   PAGE_FONT_SIZE_MIN,
   clampPageFontSize
 } from '../../../core/types'
+import {
+  CHAPTER_PRESETS,
+  chapterRuleEqual,
+  chapterRuleProblem
+} from '../../../core/chapters'
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
-import type { ThemeSource } from '../../../core/types'
+import type { ChapterPresetId, ChapterRule, ThemeSource } from '../../../core/types'
+import type { IpcResult } from '../../../core/api'
 import {
   IconBook,
   IconClear,
@@ -46,7 +52,8 @@ import {
   IconMoon,
   IconRename,
   IconSettings,
-  IconSun
+  IconSun,
+  IconToc
 } from './icons'
 
 export interface SettingsDialogProps {
@@ -117,6 +124,11 @@ export interface SettingsDialogProps {
   /** 立即动作，与 onImport / onClearSession 同类——**不走「草稿 + 保存」那一套**。 */
   onImportWorkDoc: () => void
   onRemoveWorkDoc: () => void
+  /** 当前小说名；null＝没导入小说。 */
+  novelTitle: string | null
+  chapterCount: number
+  chapterRule: ChapterRule
+  onApplyChapterRule: (rule: ChapterRule) => Promise<IpcResult<number>>
 }
 
 const THEME_OPTIONS = [
@@ -135,15 +147,16 @@ const THEME_OPTIONS = [
  * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
  *
  * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
- * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
- * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
- * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
- * 「加一行就完事」。
+ * **手写**的——各页内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而其余面板块的 `hidden` 仍按各自的
+ * `page !== '…'` 判，于是**内容区一片空白，而现有用例全绿**（它们把 id 逐个写死了）。
+ * 所以别把这句话读成「加一行就完事」。
  */
 const PAGES = [
   { id: 'reading', label: '阅读设置', icon: IconBook },
   { id: 'appearance', label: '外观设置', icon: IconDarkTheme },
-  { id: 'shortcuts', label: '快捷键设置', icon: IconKeyboard }
+  { id: 'shortcuts', label: '快捷键设置', icon: IconKeyboard },
+  { id: 'chapters', label: '分章设置', icon: IconToc }
 ] as const satisfies ReadonlyArray<{ id: string; label: string; icon: FluentIcon }>
 
 type SettingsPage = (typeof PAGES)[number]['id']
@@ -179,7 +192,11 @@ export function SettingsDialog({
   workDocPath,
   workDocBroken,
   onImportWorkDoc,
-  onRemoveWorkDoc
+  onRemoveWorkDoc,
+  novelTitle,
+  chapterCount,
+  chapterRule,
+  onApplyChapterRule
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()
@@ -190,6 +207,12 @@ export function SettingsDialog({
   const [page, setPage] = useState<SettingsPage>('reading')
   /** 上一次渲染时对话框开着没有。只服务于下面那一段「打开」时的就地重置。 */
   const [wasOpen, setWasOpen] = useState(open)
+  const [chapterDraft, setChapterDraft] = useState<ChapterRule>(chapterRule)
+  const [customPattern, setCustomPattern] = useState(
+    chapterRule.kind === 'custom' ? chapterRule.pattern : ''
+  )
+  const [applying, setApplying] = useState(false)
+  const [chapterResult, setChapterResult] = useState<string | null>(null)
 
   /*
    * 「每次打开都拉回第一页」。**必须写在渲染期，不能放进 effect。**
@@ -209,8 +232,26 @@ export function SettingsDialog({
    */
   if (open !== wasOpen) {
     setWasOpen(open)
-    if (open) setPage('reading')
+    if (open) {
+      setPage('reading')
+      setChapterDraft(chapterRule)
+      setCustomPattern(chapterRule.kind === 'custom' ? chapterRule.pattern : '')
+      setApplying(false)
+      setChapterResult(null)
+    }
   }
+
+  /**
+   * 对话框不卸载：开着时清除阅读记录、或换书重新导入，prop 会变，
+   * 草稿要跟着走；不能只靠打开时那次重置。
+   */
+  const lastChapterRuleRef = useRef(chapterRule)
+  useEffect(() => {
+    if (chapterRuleEqual(lastChapterRuleRef.current, chapterRule)) return
+    lastChapterRuleRef.current = chapterRule
+    setChapterDraft(chapterRule)
+    setCustomPattern(chapterRule.kind === 'custom' ? chapterRule.pattern : '')
+  }, [chapterRule])
 
   /**
    * 左栏那几个按钮。方向键换页之后要**显式**把焦点搬过去：roving tabindex 换人时
@@ -239,6 +280,33 @@ export function SettingsDialog({
     const target = PAGES[next].id
     setPage(target)
     tabRefs.current[target]?.focus()
+  }
+
+  const chapterChoice: 'auto' | ChapterPresetId | 'custom' =
+    chapterDraft.kind === 'auto'
+      ? 'auto'
+      : chapterDraft.kind === 'preset'
+        ? chapterDraft.id
+        : 'custom'
+  const customProblem = chapterDraft.kind === 'custom' ? chapterRuleProblem(chapterDraft) : null
+  const canApplyChapter = novelTitle !== null && !applying && customProblem === null
+
+  const changeChapterDraft = (rule: ChapterRule): void => {
+    setChapterDraft(rule)
+    setChapterResult(null)
+  }
+
+  const handleApplyChapter = async (): Promise<void> => {
+    setApplying(true)
+    setChapterResult(null)
+    try {
+      const result = await onApplyChapterRule(chapterDraft)
+      setChapterResult(result.ok ? `已重新分为 ${result.value} 章` : result.reason)
+    } catch {
+      setChapterResult('分章失败，请重试')
+    } finally {
+      setApplying(false)
+    }
   }
 
   /**
@@ -583,7 +651,7 @@ export function SettingsDialog({
 
           <div className="wt-modal__body">
             {/*
-              三个面板**都渲染**，非当前页加 `hidden`。
+              各面板**都渲染**，非当前页加 `hidden`。
               条件渲染的话，本文件与 ribbon.test.tsx 里 40 多处跨页取元素的断言全都要先切页，
               而且「打开时焦点落在文档名上（autoFocus）」那条会当场坏。
               `hidden` 也是 ARIA tabs 对非当前 tabpanel 的标准做法。
@@ -919,6 +987,122 @@ export function SettingsDialog({
                   </div>
                 )
               })}
+            </div>
+
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-chapters"
+              aria-labelledby="wt-tab-chapters"
+              data-testid="settings-tabpanel-chapters"
+              hidden={page !== 'chapters'}
+            >
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconToc className="wt-modal__label-icon" />
+                  当前小说
+                </span>
+                <span className="wt-chapter-current" data-testid="chapter-current">
+                  {novelTitle === null
+                    ? '未导入小说（先到「阅读设置」导入）'
+                    : `${novelTitle} · 共 ${chapterCount} 章`}
+                </span>
+              </div>
+
+              <div className="wt-modal__row wt-modal__row--top">
+                <span className="wt-modal__label">识别规则</span>
+                <div className="wt-chapter-rules">
+                  <div
+                    role="radiogroup"
+                    aria-label="章节识别规则"
+                    className="wt-chapter-rules__choices"
+                  >
+                    <label className="wt-modal__check">
+                      <input
+                        type="radio"
+                        name="chapter-rule"
+                        data-testid="chapter-rule-auto"
+                        checked={chapterChoice === 'auto'}
+                        disabled={novelTitle === null}
+                        onChange={() => changeChapterDraft({ kind: 'auto' })}
+                      />
+                      自动识别（默认）
+                    </label>
+                    {(Object.keys(CHAPTER_PRESETS) as ChapterPresetId[]).map((id) => (
+                      <label className="wt-modal__check" key={id}>
+                        <input
+                          type="radio"
+                          name="chapter-rule"
+                          data-testid={`chapter-rule-preset-${id}`}
+                          checked={chapterChoice === id}
+                          disabled={novelTitle === null}
+                          onChange={() => changeChapterDraft({ kind: 'preset', id })}
+                        />
+                        {CHAPTER_PRESETS[id]}
+                      </label>
+                    ))}
+                    <label className="wt-modal__check">
+                      <input
+                        type="radio"
+                        name="chapter-rule"
+                        data-testid="chapter-rule-custom"
+                        checked={chapterChoice === 'custom'}
+                        disabled={novelTitle === null}
+                        onChange={() =>
+                          changeChapterDraft({ kind: 'custom', pattern: customPattern })
+                        }
+                      />
+                      自定义正则
+                    </label>
+                  </div>
+
+                  {chapterChoice === 'custom' && (
+                    <>
+                      {customPattern.trim() === '' && (
+                        <span className="wt-ratio__note" data-testid="chapter-rule-empty">
+                          先写一条正则
+                        </span>
+                      )}
+                      <input
+                        className="wt-modal__text"
+                        data-testid="chapter-rule-pattern"
+                        aria-label="自定义章节标题正则"
+                        placeholder="^第.+章.*$"
+                        value={customPattern}
+                        disabled={novelTitle === null}
+                        onChange={(e) => {
+                          setCustomPattern(e.target.value)
+                          changeChapterDraft({ kind: 'custom', pattern: e.target.value })
+                        }}
+                      />
+                      <span className="wt-ratio__note">
+                        按每个整行匹配（忽略首尾空白），不区分大小写；建议用 ^ 和 $ 包住整行。
+                      </span>
+                      {customPattern.trim() !== '' && customProblem !== null && (
+                        <span className="wt-chapter-rules__error" data-testid="chapter-rule-error">
+                          这条正则不合法
+                        </span>
+                      )}
+                    </>
+                  )}
+
+                  <button
+                    type="button"
+                    className="wt-btn wt-btn--primary"
+                    data-testid="chapter-rule-apply"
+                    disabled={!canApplyChapter}
+                    onClick={() => void handleApplyChapter()}
+                  >
+                    {applying ? '处理中…' : '应用'}
+                  </button>
+
+                  {chapterResult !== null && (
+                    <span className="wt-ratio__note" data-testid="chapter-rule-result" role="status">
+                      {chapterResult}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

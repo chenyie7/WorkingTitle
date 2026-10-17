@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import { decodeBuffer } from '../core/decode'
 import { splitChapters } from '../core/chapters'
-import type { Novel } from '../core/types'
+import { DEFAULT_CHAPTER_RULE, type ChapterRule, type Novel } from '../core/types'
 
 /**
  * 读文件 → 解码 → 切章，顺序是契约而不是风格。
@@ -32,7 +32,10 @@ import type { Novel } from '../core/types'
  * 而归一化是 decode 对外的契约（设计文档 §8 也写明缓存的是「解码并归一化后的全文」）。
  * tests/unit/loadNovel.test.ts 里的这两条用例锁住本函数这一段管线。
  */
-export function loadNovelFromFile(filePath: string): Novel {
+export function loadNovelFromFile(
+  filePath: string,
+  rule: ChapterRule = DEFAULT_CHAPTER_RULE
+): Novel {
   const buf = readFileSync(filePath)
   const { text, encoding, hadBom } = decodeBuffer(buf)
   // `|| '未命名'` 是防御性兜底，对本函数【能读到的】路径不可达：主干为空只可能出现在以 '/'
@@ -41,6 +44,6 @@ export function loadNovelFromFile(filePath: string): Novel {
   // （点文件没有扩展名），于是 basename('.txt', '') 得到 '.txt' 本身，标题就是 '.txt'。
   // 所以没有用例钉它：不是漏了，是没有可构造的输入。
   const title = basename(filePath, extname(filePath)) || '未命名'
-  const { flatText, chapters } = splitChapters(text, title)
+  const { flatText, chapters } = splitChapters(text, title, rule)
   return { title, sourcePath: filePath, encoding, hadBom, flatText, chapters }
 }
