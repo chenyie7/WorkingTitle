@@ -36,11 +36,30 @@
   --wt-text: #242424;
   --wt-text-muted: #616161;
 
+  /* 功能区与对话框的交互态。原先散在 ribbon.css 里写死，深色要逐条再镜像一份——
+     漏一条就是两个主题下并排的控件颜色不一致。放到这里后，深色只改下面的同名 token。 */
+  --wt-surface: #ffffff;
+  --wt-control: #fbfbfc;
+  --wt-control-hover-border: #c4d9f5;
+  --wt-control-hover-border-strong: #a8c7ef;
+  --wt-control-active: #d3e3fa;
+  --wt-control-active-border: #a8c7ef;
+  --wt-panel-bg: #ffffff;
+  --wt-menu-active: #d3e3fa;
+  --wt-card-active: #ffffff;
+  --wt-panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  /* 标签条不直接跟 --wt-titlebar：深色下选中页签与功能区同为 #202024，标签条必须再暗一档。 */
+  --wt-tabstrip: var(--wt-titlebar);
+  --wt-tab-hover: rgba(255, 255, 255, 0.16);
+  --wt-input-bg: #ffffff;
+  --wt-primary-text: #ffffff;
+  --wt-seg-active-fg: #ffffff;
+
   --wt-statusbar: #185abd;
   --wt-titlebar-text: #ffffff;
 
   /* 「出错了」的警示色（设置里工作文档读不出来那一行）。浅色主题下白底上约 5.4:1，
-     过 AA；深色下**必须换一档**（见下）——这个红压在 #26262b 的面板上只有 2.8:1。 */
+     过 AA；深色下**必须换一档**（见下）——这个红压在 #26262c 的面板上只有 2.8:1。 */
   --wt-danger: #c0392b;
 
   /* 画布：2013 是 #9e9e9e 的中灰，今天的 Word 浅得多，纸张才跳得出来 */
@@ -264,7 +283,22 @@ body {
   --wt-text: #e6e6ea;
   --wt-text-muted: #9c9ca6;
 
-  /* 警示色在深色下要**提亮**：浅色那版 #c0392b 压在设置面板 #26262b 上只有 2.8:1，
+  --wt-surface: #202024;
+  --wt-control: #2a2a31;
+  --wt-control-hover-border: #3d4d66;
+  --wt-control-hover-border-strong: #3d4d66;
+  --wt-control-active: #2c3a52;
+  --wt-control-active-border: #405a80;
+  --wt-panel-bg: #26262c;
+  --wt-menu-active: #3a3a44;
+  --wt-card-active: #2a2a31;
+  --wt-panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --wt-tabstrip: #191919;
+  --wt-tab-hover: rgba(255, 255, 255, 0.07);
+  --wt-input-bg: #1c1c20;
+  --wt-seg-active-fg: #10141a;
+
+  /* 警示色在深色下要**提亮**：浅色那版 #c0392b 压在设置面板 #26262c 上只有 2.8:1，
      12px 下低于 AA 的 4.5:1。这一档约 5.0:1。
      与 `--wt-blue` / `--wt-primary` 是同一个理由：一个值要扮演两种底上的角色时，
      角色必须拆成两个变量，否则总有一边读不出来。 */
