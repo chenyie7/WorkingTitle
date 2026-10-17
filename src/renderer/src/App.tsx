@@ -240,7 +240,10 @@ export default function App() {
       if (result.reason !== 'canceled') notify(`导入失败：${result.reason}`)
       return
     }
-    await openNovel(result.value)
+    const { novel, status } = result.value
+    if (status === 'already-imported') notify('这本书已经导入过了')
+    else if (status === 'repaired') notify('这本书已经在书库里，拷贝文件已修复')
+    await openNovel(novel)
   }, [openNovel, notify])
 
   const handleClearSession = useCallback(async () => {

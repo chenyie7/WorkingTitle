@@ -9,6 +9,8 @@ describe('IPC 契约', () => {
       loadWorkDoc: 'wt:load-work-doc',
       loadWorkDocImage: 'wt:load-work-doc-image',
       openNovelPath: 'wt:open-novel-path',
+      listNovels: 'wt:list-novels',
+      deleteNovel: 'wt:delete-novel',
       resplitNovel: 'wt:resplit-novel',
       loadSession: 'wt:load-session',
       saveSession: 'wt:save-session',

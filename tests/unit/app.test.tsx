@@ -70,7 +70,9 @@ function installApi(
     // 重复键（TS1117）。
     platform: 'darwin',
     importNovel: vi.fn(async () =>
-      novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
+      novel
+        ? { ok: true as const, value: { novel, status: 'imported' as const } }
+        : { ok: false as const, reason: 'canceled' }
     ),
     openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
     resplitNovel: vi.fn(async () => ({ ok: true as const, value: [] })),
@@ -84,6 +86,8 @@ function installApi(
       return { ok: true as const, value: undefined }
     }),
     clearSession: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    listNovels: vi.fn(async () => []),
+    deleteNovel: vi.fn(async () => ({ ok: true as const, value: undefined })),
     /**
      * 【默认桩刻意不指任何书】`lastSourcePath` 是启动恢复的唯一线索，给成 null 就等于
      * 「用户上次什么都没打开」——启动什么都不开。于是凡是要有书的用例**都必须自己走导入路径**

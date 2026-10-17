@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
 import type { IpcResult, WtApi } from '../core/api'
-import type { Chapter, Novel } from '../core/types'
+import type { Chapter, ImportNovelResult, Novel } from '../core/types'
 
 type Channel = (typeof CH)[keyof typeof CH]
 
@@ -20,11 +20,13 @@ async function call<T>(channel: Channel, ...args: unknown[]): Promise<IpcResult<
 const api: WtApi = {
   /** 沙箱 preload 能拿到 process.platform，渲染层拿不到——在这里读一次当普通值交出去。 */
   platform: process.platform,
-  importNovel: () => call<Novel>(CH.importNovel),
+  importNovel: () => call<ImportNovelResult>(CH.importNovel),
   importWorkDoc: () => call<Novel>(CH.importWorkDoc),
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
   loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
   openNovelPath: (path: string) => call<Novel>(CH.openNovelPath, path),
+  listNovels: () => ipcRenderer.invoke(CH.listNovels),
+  deleteNovel: (id: string) => call<void>(CH.deleteNovel, id),
   resplitNovel: (sourcePath: string, rule) => call<Chapter[]>(CH.resplitNovel, sourcePath, rule),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),

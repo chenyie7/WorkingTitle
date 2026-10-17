@@ -273,3 +273,10 @@ export interface LibraryEntry {
   lastReadAt: number | null
   broken: boolean
 }
+
+export type ImportNovelStatus = 'imported' | 'already-imported' | 'repaired'
+
+export interface ImportNovelResult {
+  novel: Novel
+  status: ImportNovelStatus
+}

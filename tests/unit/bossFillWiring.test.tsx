@@ -72,7 +72,7 @@ function installApi(workDoc: Novel | null): void {
   loadWorkDoc = vi.fn(async (_path: string) => workDoc)
   ;(window as unknown as { api: WtApi }).api = {
     ...(window.api as WtApi),
-    importNovel: async () => ({ ok: true, value: makeNovel() }),
+    importNovel: async () => ({ ok: true, value: { novel: makeNovel(), status: 'imported' } }),
     loadSettings: async () => ({ ...defaultSettings(), workDocPath: workDoc?.sourcePath ?? null }),
     loadWorkDoc
   }
