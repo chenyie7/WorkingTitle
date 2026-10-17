@@ -3,7 +3,7 @@ import { clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bos
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
 import { DEFAULT_CHAPTER_RULE, clampPageFontSize } from '../../core/types'
-import type { ChapterRule, InputMode, Novel } from '../../core/types'
+import type { ChapterRule, InputMode, LibraryEntry, Novel } from '../../core/types'
 import type { IpcResult } from '../../core/api'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
@@ -245,6 +245,38 @@ export default function App() {
     else if (status === 'repaired') notify('这本书已经在书库里，拷贝文件已修复')
     await openNovel(novel)
   }, [openNovel, notify])
+
+  const handleOpenNovel = useCallback(
+    async (sourcePath: string): Promise<boolean> => {
+      const api = getApi()
+      if (!api) return false
+      const result = await api.openNovelPath(sourcePath)
+      if (!result.ok) {
+        notify(`打开失败：${result.reason}`)
+        return false
+      }
+      await openNovel(result.value)
+      return true
+    },
+    [notify, openNovel]
+  )
+
+  const handleDeleteNovel = useCallback(
+    async (entry: LibraryEntry): Promise<IpcResult<void>> => {
+      const api = getApi()
+      if (!api) return { ok: false, reason: '应用接口不可用' }
+      // 删当前书时先把状态清空，否则待发的防抖写会在删除之后把会话写回来。
+      if (novel?.sourcePath === entry.sourcePath) {
+        openSeqRef.current++
+        setNovel(null)
+        setEngine(null)
+        setChapterRule(DEFAULT_CHAPTER_RULE)
+        patchSettings({ lastSourcePath: null })
+      }
+      return api.deleteNovel(entry.id)
+    },
+    [novel, patchSettings]
+  )
 
   const handleClearSession = useCallback(async () => {
     const api = getApi()
@@ -707,7 +739,7 @@ export default function App() {
       onRatioChange: (n: number) => shownEngine?.setRatio(n),
       onGlobalRatioChange: (n: number) => patchSettings({ ratio: n }),
       onModeChange: (m: InputMode) => shownEngine?.setMode(m),
-      onImport: () => void handleImport(),
+      onImport: () => handleImport(),
       onClearSession: () => void handleClearSession(),
       toast,
       notify
@@ -772,6 +804,9 @@ export default function App() {
           chapterCount={novel?.chapters.length ?? 0}
           chapterRule={chapterRule}
           onApplyChapterRule={handleApplyChapterRule}
+          currentSourcePath={novel?.sourcePath ?? null}
+          onOpenNovel={handleOpenNovel}
+          onDeleteNovel={handleDeleteNovel}
           settingsShortcut={formatShortcut(shortcutTable['open-settings'], kind)}
         />
 

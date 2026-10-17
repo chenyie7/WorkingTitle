@@ -37,9 +37,16 @@ import {
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
-import type { ChapterPresetId, ChapterRule, ThemeSource } from '../../../core/types'
+import { LibraryPanel } from './LibraryPanel'
+import type {
+  ChapterPresetId,
+  ChapterRule,
+  LibraryEntry,
+  ThemeSource
+} from '../../../core/types'
 import type { IpcResult } from '../../../core/api'
 import {
+  IconBibliography,
   IconBook,
   IconClear,
   IconClose,
@@ -129,6 +136,12 @@ export interface SettingsDialogProps {
   chapterCount: number
   chapterRule: ChapterRule
   onApplyChapterRule: (rule: ChapterRule) => Promise<IpcResult<number>>
+  /** 当前正在读的那本书的拷贝路径；null＝没打开小说。 */
+  currentSourcePath: string | null
+  /** 从书库打开一本。返回是否成功——成功才关对话框。 */
+  onOpenNovel: (sourcePath: string) => Promise<boolean>
+  /** 删除一本。渲染层对「删的是当前书」的状态清理在 App 里做。 */
+  onDeleteNovel: (entry: LibraryEntry) => Promise<IpcResult<void>>
 }
 
 const THEME_OPTIONS = [
@@ -154,6 +167,7 @@ const THEME_OPTIONS = [
  */
 const PAGES = [
   { id: 'reading', label: '阅读设置', icon: IconBook },
+  { id: 'library', label: '小说管理', icon: IconBibliography },
   { id: 'appearance', label: '外观设置', icon: IconDarkTheme },
   { id: 'shortcuts', label: '快捷键设置', icon: IconKeyboard },
   { id: 'chapters', label: '分章设置', icon: IconToc }
@@ -196,7 +210,10 @@ export function SettingsDialog({
   novelTitle,
   chapterCount,
   chapterRule,
-  onApplyChapterRule
+  onApplyChapterRule,
+  currentSourcePath,
+  onOpenNovel,
+  onDeleteNovel
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()
@@ -880,6 +897,23 @@ export function SettingsDialog({
                   </button>
                 )}
               </div>
+            </div>
+
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-library"
+              aria-labelledby="wt-tab-library"
+              data-testid="settings-tabpanel-library"
+              hidden={page !== 'library'}
+            >
+              <LibraryPanel
+                active={page === 'library'}
+                currentSourcePath={currentSourcePath}
+                onOpenNovel={onOpenNovel}
+                onDeleteNovel={onDeleteNovel}
+                onClose={onClose}
+              />
             </div>
 
             <div

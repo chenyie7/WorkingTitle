@@ -21,7 +21,7 @@ interface SetupOptions {
   /** 「当前书」那格据此禁用；不传＝当作已经打开了小说 */
   novelOpen?: boolean
   onModeChange?: (m: InputMode) => void
-  onImport?: () => void
+  onImport?: () => void | Promise<void>
   onClearSession?: () => void
   /** 额外挂一个 InputCapture：焦点那几条用例需要它来当「被抢的对象」 */
   capture?: boolean
@@ -1151,7 +1151,7 @@ describe('设置对话框的左栏分页', () => {
       screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
     )
 
-  it('左栏四项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置 / 分章设置」', () => {
+  it('左栏五项的顺序是「阅读设置 / 小说管理 / 外观设置 / 快捷键设置 / 分章设置」', () => {
     setup()
     openViaButton()
 
@@ -1169,7 +1169,7 @@ describe('设置对话框的左栏分页', () => {
       within(screen.getByRole('tablist', { name: '设置分类' }))
         .getAllByRole('tab')
         .map((el) => el.textContent)
-    ).toEqual(['阅读设置', '外观设置', '快捷键设置', '分章设置'])
+    ).toEqual(['阅读设置', '小说管理', '外观设置', '快捷键设置', '分章设置'])
   })
 
   it('打开时停在「阅读设置」，其余页都是 hidden 的', () => {
@@ -1330,10 +1330,10 @@ describe('设置对话框左栏的键盘与录制', () => {
 
     fireEvent.keyDown(reading, { key: 'ArrowDown' })
 
-    expect(hiddenPages()).toEqual([true, false, true, true])
-    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-appearance'))
+    expect(hiddenPages()).toEqual([true, true, true, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-library'))
 
-    fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowUp' })
+    fireEvent.keyDown(screen.getByTestId('settings-tab-library'), { key: 'ArrowUp' })
 
     expect(hiddenPages()).toEqual([false, true, true, true])
     expect(document.activeElement).toBe(reading)

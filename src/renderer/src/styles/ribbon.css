@@ -1054,3 +1054,103 @@
   border-color: var(--wt-primary);
   border-style: dashed;
 }
+
+/* ---- 小说管理页 ---- */
+.wt-library {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+}
+
+.wt-library__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wt-library__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wt-library__empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--wt-text-muted);
+}
+
+.wt-library__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.wt-library__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--wt-chrome-border);
+  border-radius: var(--wt-radius);
+}
+
+.wt-library__row--current {
+  border-color: var(--wt-primary);
+  background: var(--wt-chrome);
+}
+
+.wt-library__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wt-library__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-library__meta {
+  font-size: 11px;
+  color: var(--wt-text-muted);
+}
+
+.wt-library__broken {
+  color: var(--wt-danger);
+}
+
+.wt-library__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.wt-library__badge {
+  font-size: 11px;
+  color: var(--wt-primary);
+}
+
+.wt-library__confirm {
+  max-width: 220px;
+  font-size: 11px;
+  color: var(--wt-danger);
+}
+
+.wt-library__danger {
+  color: var(--wt-danger);
+}

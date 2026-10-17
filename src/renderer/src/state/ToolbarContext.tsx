@@ -26,7 +26,7 @@ export interface ToolbarValue {
   setGlobalRatio: (n: number) => void
   mode: InputMode
   setMode: (m: InputMode) => void
-  onImport: () => void
+  onImport: () => void | Promise<void>
   onClearSession: () => void
 }
 
@@ -51,7 +51,7 @@ export interface ToolbarProviderProps {
   onRatioChange?: (n: number) => void
   onGlobalRatioChange?: (n: number) => void
   onModeChange?: (m: InputMode) => void
-  onImport?: () => void
+  onImport?: () => void | Promise<void>
   onClearSession?: () => void
   /**
    * toast 的受控入口。**不传就自己持有**——与 `ratio` 那几个同形，让既有测试不必改动。
