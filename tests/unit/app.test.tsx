@@ -177,6 +177,34 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('page-text').textContent!.length).toBeGreaterThanOrEqual(10)
   })
 
+  it('导入已在书库的书：提示已导入过，并照常打开', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'already-imported' as const }
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    expect(screen.getByTestId('toast').textContent).toContain('已经导入过了')
+  })
+
+  it('导入拷贝文件缺失的书：提示已修复，并照常打开', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'repaired' as const }
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    expect(screen.getByTestId('toast').textContent).toContain('拷贝文件已修复')
+  })
+
   it('退格回吐显示，但小说内容不变', async () => {
     const novel = makeNovel()
     const originalFlat = novel.flatText

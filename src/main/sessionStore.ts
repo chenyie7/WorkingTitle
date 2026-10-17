@@ -529,7 +529,11 @@ export function createSessionStore(baseDir: string): SessionStore {
       const target = sessionFile(toSourcePath)
       // 目标已可读时短路：那一份通常更新（同一本书上一次已经迁过）。
       if (readSessionFile(target, toSourcePath) !== null) return true
-      return writeSessionFile(target, { ...session, sourcePath: toSourcePath })
+      // 写成功不等于读得回来：迁移成功后要删旧会话，必须确认新文件真的可用。
+      return (
+        writeSessionFile(target, { ...session, sourcePath: toSourcePath }) &&
+        readSessionFile(target, toSourcePath) !== null
+      )
     },
 
     deleteCacheFor(sourcePath: string): void {

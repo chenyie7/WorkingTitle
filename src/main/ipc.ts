@@ -83,21 +83,29 @@ function loadWorkDoc(filePath: string): Novel | null {
 async function importNovelToLibrary(sourcePath: string): Promise<ImportNovelResult> {
   const store = getStore()
   const library = getLibraryStore()
+  // 书库 id 按 resolve 后的路径算；命令行给的相对路径否则与旧会话对不上。
+  const src = resolve(sourcePath)
 
   let sourceSize: number
   try {
-    sourceSize = statSync(sourcePath).size
+    sourceSize = statSync(src).size
   } catch (err) {
     throw new Error(`读不了这个文件：${err instanceof Error ? err.message : String(err)}`)
   }
   if (sourceSize === 0) throw new Error('这个文件是空的，换一个')
 
-  const plan = library.planImport(sourcePath)
-  library.copyIntoLibrary(sourcePath, plan)
+  const plan = library.planImport(src)
+  library.copyIntoLibrary(src, plan)
 
   // 迁移必须先于打开：openNovelWithRule 要从会话里读分章规则。
   if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
-    store.copySession(sourcePath, plan.copyPath)
+    const hadOldSession = store.readSession(src) !== null
+    const migrated = store.copySession(src, plan.copyPath)
+    if (hadOldSession && !migrated) {
+      library.removeEntry(plan.id)
+      store.deleteSession(plan.copyPath)
+      throw new Error('阅读进度迁移失败')
+    }
   }
 
   let novel: Novel
@@ -114,10 +122,10 @@ async function importNovelToLibrary(sourcePath: string): Promise<ImportNovelResu
   if (plan.kind !== 'existing') {
     const meta: LibraryMeta = {
       version: 1,
-      originalPath: plan.meta?.originalPath ?? resolve(sourcePath),
+      originalPath: plan.meta?.originalPath ?? src,
       fileName: plan.fileName,
       importedAt: plan.meta?.importedAt ?? Date.now(),
-      size: statSync(plan.copyPath).size,
+      size: sourceSize,
       charCount: novel.flatText.length
     }
     const wrote = library.writeMeta(plan.id, meta)
@@ -129,7 +137,7 @@ async function importNovelToLibrary(sourcePath: string): Promise<ImportNovelResu
       throw new Error(wrote.reason)
     }
     // 整个导入成功之后才删旧会话：失败时旧进度原样还在。
-    if (plan.kind === 'fresh' || plan.kind === 'rebuild') store.deleteSession(sourcePath)
+    if (plan.kind === 'fresh' || plan.kind === 'rebuild') store.deleteSession(src)
   }
 
   return {
@@ -169,7 +177,11 @@ export function registerIpc(deps: IpcDeps): void {
         ? await dialog.showOpenDialog(win, options)
         : await dialog.showOpenDialog(options)
       if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
-      return { ok: true, value: await importNovelToLibrary(result.filePaths[0]) }
+      const selected = result.filePaths[0]
+      if (getLibraryStore().isInsideLibrary(selected)) {
+        return { ok: true, value: { novel: await openNovel(selected), status: 'already-imported' } }
+      }
+      return { ok: true, value: await importNovelToLibrary(selected) }
     } catch (err) {
       console.warn('[wt] 导入小说失败：', err)
       return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
@@ -310,6 +322,7 @@ export function registerIpc(deps: IpcDeps): void {
     const store = getStore()
     const session = store.deleteSession(raw.copyPath)
     store.deleteCacheFor(raw.copyPath)
+    if (!session.ok) return { ok: false, reason: `${session.reason}：${raw.copyPath}` }
     return session
   })
 
