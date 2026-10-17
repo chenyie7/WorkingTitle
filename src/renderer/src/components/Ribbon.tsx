@@ -1211,6 +1211,8 @@ const ignoreRecordingChange = (): void => {}
 /** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
 const ignoreAction = (): void => {}
 const ignoreNumberChange = (): void => {}
+
+/** 分章设置的默认实现：没有可用功能时返回可展示的失败。 */
 const ignoreApplyChapterRule = async (): Promise<IpcResult<number>> => ({
   ok: false,
   reason: '没有可用的分章功能'
