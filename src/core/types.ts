@@ -244,3 +244,32 @@ export function defaultSettings(): AppSettings {
     shortcuts: {}
   }
 }
+
+export interface LibraryMeta {
+  version: 1
+  /** 原文件绝对路径（resolve 之后）。只用于说明与排查，重复判定靠目录名。 */
+  originalPath: string
+  /** 拷贝件的文件名。必须是 basename。 */
+  fileName: string
+  importedAt: number
+  /** 拷贝件的字节数。 */
+  size: number
+  /** 解码后的全文长度，进度百分比的分母。 */
+  charCount: number
+}
+
+export interface LibraryEntry {
+  id: string
+  title: string
+  /** 拷贝路径；坏条目可能是空串。 */
+  sourcePath: string
+  originalPath: string
+  size: number
+  importedAt: number
+  charCount: number
+  /** 会话里的 cursor；没有会话为 0。 */
+  cursor: number
+  /** 会话文件 mtime；从没读过为 null。 */
+  lastReadAt: number | null
+  broken: boolean
+}
