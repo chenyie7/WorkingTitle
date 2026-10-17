@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
 import type { IpcResult, WtApi } from '../core/api'
-import type { Novel } from '../core/types'
+import type { Chapter, Novel } from '../core/types'
 
 type Channel = (typeof CH)[keyof typeof CH]
 
@@ -25,6 +25,7 @@ const api: WtApi = {
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
   loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
   openNovelPath: (path: string) => call<Novel>(CH.openNovelPath, path),
+  resplitNovel: (sourcePath: string, rule) => call<Chapter[]>(CH.resplitNovel, sourcePath, rule),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
   // 写通道的参数在 main 侧会再校验一遍；这里不做任何「看起来安全」的裁剪。

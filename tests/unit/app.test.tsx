@@ -73,6 +73,7 @@ function installApi(
       novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
     ),
     openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
+    resplitNovel: vi.fn(async () => ({ ok: true as const, value: [] })),
     initialNovelPath: vi.fn(async () => null),
     loadSession: vi.fn(async (sourcePath: string) => {
       sessionAskedFor = sourcePath

@@ -1,7 +1,14 @@
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
 import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
-import { NovelWorkerUnavailableError, openNovelInBackground } from './novelLoader'
+import { chapterRuleProblem } from '../core/chapters'
+import {
+  NovelWorkerTimeoutError,
+  NovelWorkerUnavailableError,
+  openNovelInBackground,
+  resplitNovelInBackground
+} from './novelLoader'
+import { openNovelWithRule, resplitNovelWithRule } from './novelService'
 import { getStore } from './session'
 import { loadWorkDocImage } from './workDocImage'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
@@ -9,7 +16,7 @@ import { loadWorkDocImage } from './workDocImage'
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
 import { CH } from './channels'
 import type { IpcResult } from '../core/api'
-import type { AppSettings, Novel, PersistedSession } from '../core/types'
+import type { AppSettings, Chapter, ChapterRule, Novel, PersistedSession } from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 
@@ -27,11 +34,7 @@ export async function openNovel(filePath: string): Promise<Novel> {
     console.warn('[wt] 后台解码不可用，回退到主进程同步读取：', err)
   }
   const store = getStore()
-  const cached = store.readNovelCache(filePath)
-  if (cached) return cached
-  const novel = loadNovelFromFile(filePath)
-  store.writeNovelCache(novel)
-  return novel
+  return openNovelWithRule(store, filePath)
 }
 
 /**
@@ -155,6 +158,29 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
     }
   })
+
+  ipcMain.handle(
+    CH.resplitNovel,
+    async (_e, sourcePath: unknown, rule: unknown): Promise<IpcResult<Chapter[]>> => {
+      if (typeof sourcePath !== 'string') return { ok: false, reason: '路径不是字符串' }
+      const problem = chapterRuleProblem(rule)
+      if (problem !== null) return { ok: false, reason: `分章规则不合法：${problem}` }
+      const chapterRule = rule as ChapterRule
+      try {
+        return { ok: true, value: await resplitNovelInBackground(sourcePath, chapterRule) }
+      } catch (err) {
+        if (err instanceof NovelWorkerTimeoutError) {
+          return { ok: false, reason: '规则执行超时，目录未改动' }
+        }
+        if (!(err instanceof NovelWorkerUnavailableError)) {
+          // 预期内的失败（例如 0 章匹配）原样交给界面，不加前缀。
+          return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+        }
+        console.warn('[wt] 后台进程不可用，回退到主进程重新分章：', err)
+        return resplitNovelWithRule(getStore(), sourcePath, chapterRule)
+      }
+    }
+  )
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
 
