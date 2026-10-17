@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 注释
+
+新代码默认不写注释。只有四类允许：
+
+1. 不变量：代码本身表达不了、写错会静默出错的约束。
+2. 非显然的取舍：为什么不用更简单的做法。
+3. 外部系统怪癖：Electron / 浏览器 / 输入法的实测行为。
+4. 安全或数据风险。
+
+硬规则：
+
+- 每条注释 ≤ 3 行。超过 3 行的理由写进 docs/superpowers/specs/，注释只留一句和章节名。
+- 禁止写：历史（"此前""上一版"）、Task 编号、文件/用例计数、行号。
+- 禁止复述代码。注释不解释「做了什么」。
+- 不确定的事实写「推断」。没跑过的验证，不写「实测」。
+- 先改名、拆函数、加类型。仍然说不清，才写注释。
+- 本仓库历史注释偏多。新代码不要模仿，以本节为准。
+
 ## 这是什么
 
 一个**外观伪装成 Microsoft Word 的 Electron 桌面应用**：导入 txt 小说后，用户在文档区打字时**不显示原字符**，而是按顺序抽出小说后续文本显示（默认 1 键 : N 字，N=10，范围 1–500）。
@@ -14,10 +32,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **但 README 是双语的，改的时候别只改一份**：
 
-| 文件 | 语言 | 谁在看 |
-|---|---|---|
-| `README.md` | **英文** | GitHub 首页与 Release 页面默认显示的就是它 |
-| `README.zh-CN.md` | 中文 | 从英文版顶部那行跳过去 |
+| 文件              | 语言     | 谁在看                                     |
+| ----------------- | -------- | ------------------------------------------ |
+| `README.md`       | **英文** | GitHub 首页与 Release 页面默认显示的就是它 |
+| `README.zh-CN.md` | 中文     | 从英文版顶部那行跳过去                     |
 
 两份顶部互相跳转，**结构与标题一一对应**（同样的二级/三级标题、同样的顺序）。改一份就同步另一份——
 别看到 `README.md` 是英文就"顺手统一"成中文，那是刻意的布局（Vue / Vite 这些双语项目都是这个排法）。
@@ -28,12 +46,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm install      # 会跑 postinstall 把 Electron 二进制下下来，见下
 pnpm dev          # electron-vite dev（渲染层热更新）
 pnpm build        # 构建到 out/ —— 手动跑 _electron 之前必须先跑这个，见下
-pnpm typecheck    # 跑【两个】tsconfig，缺一不可（第二个是 core 纯净性的门禁）
+pnpm typecheck    # 三个 tsconfig（渲染 / node / tests）+ 渲染层 import 边界门禁
 pnpm test         # vitest，全部单测
 pnpm vitest run tests/unit/engine.test.ts   # 跑单个文件
 pnpm vitest run -t '合成中的 input'          # 按用例名筛
 pnpm test:e2e     # 先 build 再 playwright（跑真 Electron 进程）
 pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
+
+node scripts/check-imports.mjs      # 渲染层 import 边界（`pnpm typecheck` 已经先跑它）
+node scripts/check-plan-fences.mjs  # 计划围栏逐字节校验；CI 的 check 作业会跑
 ```
 
 **产物名在 `electron-builder.yml` 里显式写死，别删那几行 `artifactName`。** 两个原因：
@@ -71,6 +92,7 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 国内下载慢/失败时设镜像：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
 **验收一律看 exit code，别只 grep 摘要行。** 本仓库出现过两类「摘要行看着是绿的」形态：
+
 - unhandled rejection：用例行照旧 `passed`，只有汇总行多一条 `Errors 1 error`，而 exit code 是 1；
 - 某个测试文件整体失败（例如缺了环境判断）：汇总行 `Test Files 1 failed | 15 passed`，而 `Tests 195 passed` 那行一个「failed」都没有。
 
@@ -87,14 +109,16 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 ### `src/core/` 的纯净性是被构建配置强制的，不是靠自觉
 
-`tsconfig.node.json` 的 `lib` 是 `["ES2023"]`（**没有 DOM**）且 `include` 了 `src/core`，而 `pnpm typecheck` 会跑两个 tsconfig。所以在 `core` 里写 `document` / `window` 会直接编译失败。
+`tsconfig.node.json` 的 `lib` 是 `["ES2023"]`（**没有 DOM**）且 `include` 了 `src/core`，而 `pnpm typecheck` 会跑它。所以在 `core` 里写 `document` / `window` 会直接编译失败。
+
+反方向那半由 `tsconfig.json`（渲染层，`types` 为空）与 `scripts/check-imports.mjs` 管：`src/core/decode.ts` 不在渲染层 project 的 `include` 里，所以渲染层 import `node:*`、`electron`、`src/main/*`、`src/preload/*`、`core/decode` 都会在 typecheck 阶段报错；同一批越界还会被那个脚本按「文件:行」列出来并 exit 1。三个 project 的分工是：`tsconfig.json` 渲染层、`tsconfig.node.json` main / preload / core、`tsconfig.test.json` tests + src。
 
 `core` 内部也不是同一类东西：
 
-| 模块 | 依赖 | 谁能用 |
-|---|---|---|
-| `types.ts` / `chapters.ts` / `engine.ts` / `shortcuts.ts` | 只 import 相对路径（`shortcuts.ts` 连 import 都没有） | main **和** renderer |
-| `decode.ts` | `node:util`、`iconv-lite`、`jschardet` | **只有 main** —— 渲染进程引它会拉进 node 依赖 |
+| 模块                                                      | 依赖                                                  | 谁能用                                        |
+| --------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------- |
+| `types.ts` / `chapters.ts` / `engine.ts` / `shortcuts.ts` | 只 import 相对路径（`shortcuts.ts` 连 import 都没有） | main **和** renderer                          |
+| `decode.ts`                                               | `node:util`、`iconv-lite`、`jschardet`                | **只有 main** —— 渲染进程引它会拉进 node 依赖 |
 
 ### 核心不变量
 
@@ -145,12 +169,12 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 是一套姿势：**逐字段问、返回不合格的那个字段名**，而不是 true/false——静默回退会让「进度莫名其妙没了」
 无从查起）：
 
-| 文件 | 是什么 | 关键点 |
-|---|---|---|
-| `settings.json` | 文档名 / 外观 / 纸张 / **全局**的阅读替换 `ratio`（新导入的书拿它当起点；**当前书**那份在 `sessions/` 里）/ `lastSourcePath` / `shortcuts`（**稀疏表**，`{}` 即全默认） | 一个字段不合格就**整份退回默认值**；旧版缺字段先按 `FILLED_DEFAULTS` 补齐再校验（判据是**键不存在**，不是值是 undefined），否则升级一次就把用户改过的设置一起抹掉 |
-| `sessions/<sha256 前 32 hex>.json` | **每本书一份**的进度 | 文件名是 `sourcePath` 的哈希（定长、只含 hex），所以文件**内容**里也带着 `sourcePath`，读回来要**比对是不是同一本**——放过的话会把 B 书的进度套到 A 书上 |
-| `novel-cache.json` + `novel-cache.txt` | 解码后的目录与正文 | 靠 `NovelCacheMeta.textBytes` 当**提交点**自我校验——没有它，进程在两次写之间崩溃会读出「A 书的目录配 B 书的正文」。它只管字节数，两段**等长**的文本仍会被放行（边界写在函数注释里） |
-| `session.json` | **旧版**的单槽会话 | 只在升级时被 `migrateLegacySession()` 搬进 `sessions/`。这是**唯一会毁数据的路径**：先确认新位置**读得出来**、再删旧文件，且 `lastSourcePath` 必须排在两条会话写入**之后**（顺序反了会把进度永久锁死） |
+| 文件                                   | 是什么                                                                                                                                                                  | 关键点                                                                                                                                                                                                 |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `settings.json`                        | 文档名 / 外观 / 纸张 / **全局**的阅读替换 `ratio`（新导入的书拿它当起点；**当前书**那份在 `sessions/` 里）/ `lastSourcePath` / `shortcuts`（**稀疏表**，`{}` 即全默认） | 一个字段不合格就**整份退回默认值**；旧版缺字段先按 `FILLED_DEFAULTS` 补齐再校验（判据是**键不存在**，不是值是 undefined），否则升级一次就把用户改过的设置一起抹掉                                      |
+| `sessions/<sha256 前 32 hex>.json`     | **每本书一份**的进度                                                                                                                                                    | 文件名是 `sourcePath` 的哈希（定长、只含 hex），所以文件**内容**里也带着 `sourcePath`，读回来要**比对是不是同一本**——放过的话会把 B 书的进度套到 A 书上                                                |
+| `novel-cache.json` + `novel-cache.txt` | 解码后的目录与正文                                                                                                                                                      | 靠 `NovelCacheMeta.textBytes` 当**提交点**自我校验——没有它，进程在两次写之间崩溃会读出「A 书的目录配 B 书的正文」。它只管字节数，两段**等长**的文本仍会被放行（边界写在函数注释里）                    |
+| `session.json`                         | **旧版**的单槽会话                                                                                                                                                      | 只在升级时被 `migrateLegacySession()` 搬进 `sessions/`。这是**唯一会毁数据的路径**：先确认新位置**读得出来**、再删旧文件，且 `lastSourcePath` 必须排在两条会话写入**之后**（顺序反了会把进度永久锁死） |
 
 - 三份写盘（settings / session / cache meta）全部走 **temp + rename**：直接写目标路径的话，进程死在写完之前，
   留下的是截断甚至空文件，游标、chapterPos、ratio、mode 全部**静默丢失**。
@@ -248,7 +272,6 @@ Windows / Linux 的原生菜单栏渲染在**窗口内部**、标题栏正下方
 2. **名字必须带 `Regular` / `Filled` 后缀**（`TextBold` 不存在，只有 `TextBoldRegular` /
    `TextBoldFilled`）。
 3. **写名字之前先从包里枚举核对，别凭记忆。** 这个包的取名很不直观，两个方向的意外都有：
-
    - 看着该有、**确实有**：`TextColor`、`TextLineSpacing`、`TextGrammarCheckmark`、
      `DocumentMargins`（复数）、`PositionToFront` / `PositionToBack`、`BoardSplit`
    - 看着更顺、**偏偏没有**：`FontColor`、`Shading`、`MultilevelList`、`CoverPage`、`BlankPage`、
@@ -279,8 +302,8 @@ for (const k of process.argv.slice(1)) console.log(k, "→", all.filter(n => n.t
 
 ### 1. 实现计划里的代码围栏 = 源码的逐字节副本
 
-`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md`（**一万四千多行**，Task 编号排到 20
-——行数会随围栏同步继续涨，**别写死它**）里的 ` ```ts ` 围栏**不是示意，是源文件的副本**。口径：
+`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md`（**上万行**，行数会随围栏同步继续涨，
+**别写死它**）里的 ` ```ts ` 围栏**不是示意，是源文件的副本**。口径：
 
 ```
 md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；不要 rstrip
@@ -289,39 +312,25 @@ md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；�
 **改了源码（包括只改注释）就要同步改围栏。** 用 python 抽/写块（块内行整体替换、保留围栏行；多块按块索引**倒序** splice），别手抄。交付前用脚本重抽比对。
 
 注意两个坑：
+
 - 同一份代码在计划里可能出现多次，且**有些块是历史版本**（注定与当前文件不符）。判据是**正向**的：遍历全部源/测试文件，报告「没有任何围栏与它逐字节相等」的集合——那个集合必须是空的。
 - 用锚点行定位围栏前**先确认它在计划里唯一命中**（`import type { Novel, PersistedSession }` 这类行会命中多次）。另外别把 `difflib.unified_diff` 喂给两个大字符串，会在**上万行**的计划上跑到超时——先落临时文件再 `diff`。
 
-**三份计划里哪份是正本：`2026-10-06-…`。** 实测（脚本见下）：56 个源/测试文件里它覆盖 **52** 个，包括后来
-三次功能改动**回写进它**的那些（`sessionStore.ts` / `types.ts` / `ipc.ts` / `menu.ts` / `SettingsDialog.tsx` /
-`App.tsx` / `statusBar.tsx` …）。另两份 10-11 的计划里**只有它们新建的文件**是逐字节的：`configurable-shortcuts`
-覆盖 `core/shortcuts.ts`、`renderer/state/shortcuts.ts` 与它那两个测试文件（4 个）；`settings-and-per-book-progress`
-**一个都没有**（它那 40 个 `ts` / `tsx` 围栏全是过程中间版本）。落到操作上是一句话：**新建的文件写进它自己那份计划，
-改动已有文件的写进 06 那份**——别去追那两份里注定对不上的旧块。
+**正本是 `2026-10-06-…`；「哪份计划覆盖了哪些文件」以脚本结果为准，别按文档里的计数认
+（计数会随功能改动漂）。** 落到操作上是一句话：**新建的文件写进它自己那份计划，改动已有文件的写进 06 那份**
+——别的计划里那些对不上的旧块是历史版本，别去追。
 
-交付前复核（口径含末尾换行，**别 rstrip**）：
+交付前复核就一条命令（口径含末尾换行，**别 rstrip**）：
 
 ```bash
-python3 - <<'PY'
-import pathlib, os
-blocks = set()
-for p in pathlib.Path('docs/superpowers/plans').glob('*.md'):
-    L = p.read_text(encoding='utf-8').split('\n'); i = 0
-    while i < len(L):
-        if L[i].startswith('```'):
-            j = i + 1; b = []
-            while j < len(L) and not L[j].startswith('```'):
-                b.append(L[j]); j += 1
-            blocks.add('\n'.join(b) + '\n')
-            i = j + 1
-        else:
-            i += 1
-miss = [os.path.join(r, f) for root in ('src', 'tests') for r, _, fs in os.walk(root)
-        for f in fs if f.endswith(('.ts', '.tsx', '.css', '.json'))
-        and pathlib.Path(os.path.join(r, f)).read_text(encoding='utf-8') not in blocks]
-print('\n'.join(miss) if miss else 'OK：每个源/测试文件都命中至少一个围栏')
-PY
+node scripts/check-plan-fences.mjs
 ```
+
+它扫描 `docs/superpowers/plans/*.md` 的**全部**围栏，再逐个检查：`src/**`、`tests/**` 里的
+`.ts` / `.tsx` / `.css` / `.json`，加上根配置 `package.json`、`tsconfig*.json`、
+`electron.vite.config.ts`、`vitest.config.ts`、`playwright.config.ts`、`electron-builder.yml`、
+`.github/workflows/build.yml`。**缺一个就列出文件、exit 1**；全命中打印 OK。CI 的 `check` 作业会跑它，
+所以没同步围栏的 PR 过不去。
 
 `docs/superpowers/specs/` 是面向人的设计文档，改行为时一并更新它。
 
@@ -339,6 +348,10 @@ git tag v0.2.0 && git push origin v0.2.0
 
 `.github/workflows/build.yml` 会：校验标签与 `package.json` 的 version 一致 → 在 macOS 与
 Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂到该标签的 Release 上。
+
+**PR 与 push 到 main 不走这条发布链路**，只跑只读的 `check` 作业：`pnpm install --frozen-lockfile` →
+`pnpm typecheck`（含 import 边界）→ `pnpm test` → `pnpm build` → `node scripts/check-plan-fences.mjs`。
+构建 / 发版两个作业带 `if:`，普通提交不会启动 macOS / Windows 打包。
 
 几件必须知道的（**不写死条数**——这里加过条目）：
 
@@ -374,13 +387,13 @@ Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂
 - 分组依据仍然是 **PR 的标签**（GitHub 读不到提交信息的 `feat:` / `fix:` 前缀，**绕不过去**），
   所以**开 PR 时打上标签**，否则该 PR 会落进「其它改动」那一类：
 
-| 标签 | 归到哪一类 |
-|---|---|
-| `feat` | 新功能 |
-| `bug` | 修复 |
-| `docs` | 文档 |
-| `chore` / `style` / `refactor` | 内部改动 |
-| `skip-changelog` | **不进发布说明**（纯内部改动、依赖升级用） |
+| 标签                           | 归到哪一类                                 |
+| ------------------------------ | ------------------------------------------ |
+| `feat`                         | 新功能                                     |
+| `bug`                          | 修复                                       |
+| `docs`                         | 文档                                       |
+| `chore` / `style` / `refactor` | 内部改动                                   |
+| `skip-changelog`               | **不进发布说明**（纯内部改动、依赖升级用） |
 
 这几个标签**已经建好了**（`gh label list` 可查）；漏建的话脚本不报错，只是那一类会空掉。
 标签名大体照提交前缀抄，**但「修复」那一类挂的是 `bug`，不是 `fix`**——仓库里**没有**名为 `fix`
@@ -459,11 +472,18 @@ Active，或 `gh api -X PUT repos/chenyie7/WorkingTitle/rulesets/<id> -f enforce
 
   ```js
   // playwright 不是直接依赖，要从 .pnpm 路径引；且先 pnpm build
-  const { _electron } = require('<repo>/node_modules/.pnpm/playwright@1.63.0/node_modules/playwright')
-  const app = await _electron.launch({ args: ['.', '<某本 txt>'], cwd: '<repo>',
-    env: { ...process.env, WT_USER_DATA: '<mkdtemp 出来的空目录>' } })
+  const {
+    _electron,
+  } = require("<repo>/node_modules/.pnpm/playwright@1.63.0/node_modules/playwright");
+  const app = await _electron.launch({
+    args: [".", "<某本 txt>"],
+    cwd: "<repo>",
+    env: { ...process.env, WT_USER_DATA: "<mkdtemp 出来的空目录>" },
+  });
   ```
+
   传一个**空的 `WT_USER_DATA`**，否则会读到开发时的会话，把「恢复旧会话」误当成「导入成功」。
 
   这个办法**能截图、能驱动交互、能取计算样式**；截图存 `/tmp` 后用 Read 工具看。但**截不到 macOS 原生标题栏**，也**看不到输入法候选框**（系统绘制、不在 DOM 里）——后者只能用代理指标（例如「textarea 的光标是否落在阅读光标处」），**不要声称验证了候选框位置**。
+
 - 输入法相关的改动，`pnpm build` 之后**请用户用手上的中文输入法试一遍**，那才是验收。

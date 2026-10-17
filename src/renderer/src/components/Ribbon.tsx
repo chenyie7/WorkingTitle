@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { getApi } from '../api'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
-import type { ThemeSource } from '../types/global'
+import type { ThemeSource } from '../../../core/types'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
   IconAlignCenter,
@@ -1222,8 +1223,7 @@ const DEFAULT_SHORTCUTS: Record<string, string | undefined> = {}
  * `'other'` 走：宁可显示成 Windows 的那一套，也不要因为一个读不到的值把界面炸掉。
  */
 function hostPlatform(): string {
-  const host = (window as unknown as { api?: { platform?: string } }).api
-  return host?.platform ?? 'other'
+  return getApi()?.platform ?? 'other'
 }
 
 export function Ribbon({
@@ -1288,7 +1288,10 @@ export function Ribbon({
    */
   shortcuts?: Record<string, string | undefined>
   platform?: string
-  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  /** 函数式更新：一次保存会连续提交多条，基于旧表各自覆盖会只剩最后一条。 */
+  onShortcutsChange?: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   onRecordingChange?: (recording: boolean) => void
   /**
    * 工作文档那一组。与上面四个同属「可选带默认值」——`App` 是唯一的真调用方，

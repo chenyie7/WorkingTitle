@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, expectTypeOf } from 'vitest'
 import {
   SHORTCUTS,
   defaultShortcut,
@@ -11,7 +11,9 @@ import {
   resolveShortcuts,
   shortcutProblem,
   toAccelerator,
-  type KeyChord
+  type KeyChord,
+  type ResolvedShortcuts,
+  type ShortcutId
 } from '../../src/core/shortcuts'
 
 /** 只写关心的那几个修饰键，其余默认 false。 */
@@ -160,6 +162,27 @@ describe('resolveShortcuts', () => {
   it('返回的表覆盖注册表里的每一条', () => {
     const out = resolveShortcuts({}, 'other')
     for (const def of SHORTCUTS) expect(typeof out[def.id]).toBe('string')
+  })
+
+  it('解析结果的键集恰好等于表里的 id 集合——加一行表就自动多一项，没有第二份清单', () => {
+    for (const kind of ['darwin', 'other'] as const) {
+      const keys = Object.keys(resolveShortcuts({}, kind)).sort()
+      expect(keys).toEqual(SHORTCUTS.map((def) => def.id).sort())
+    }
+  })
+})
+
+/**
+ * 类型闸：`ShortcutId` 必须就是表里 id 的联合（真正的保证在 shortcuts.ts 的 `as const` 推导）。
+ * 断言只在 tsconfig.test.json 做类型检查时生效；`vitest run` 本身不做类型检查。
+ */
+describe('ShortcutId 由 SHORTCUTS 推导', () => {
+  it('type: ShortcutId 等于表里 id 的联合', () => {
+    expectTypeOf<ShortcutId>().toEqualTypeOf<(typeof SHORTCUTS)[number]['id']>()
+  })
+
+  it('type: ResolvedShortcuts 的键恰好是 ShortcutId', () => {
+    expectTypeOf<keyof ResolvedShortcuts>().toEqualTypeOf<ShortcutId>()
   })
 })
 

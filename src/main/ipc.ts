@@ -7,6 +7,7 @@ import { loadWorkDocImage } from './workDocImage'
 // 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
 import { CH } from './channels'
+import type { IpcResult } from '../core/api'
 import type { AppSettings, Novel, PersistedSession } from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
@@ -58,7 +59,7 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  ipcMain.handle(CH.importNovel, async (): Promise<Novel | null> => {
+  ipcMain.handle(CH.importNovel, async (): Promise<IpcResult<Novel>> => {
     const win = deps.getWindow()
     const options: Electron.OpenDialogOptions = {
       title: '导入小说',
@@ -71,12 +72,19 @@ export function registerIpc(deps: IpcDeps): void {
     }
     // 【与下面 import-work-doc 那个对话框是同一套骨架】改一处要改两处——这 8 行逐字重复。
     // 没提成公共函数是刻意的：这条路径至今零测试覆盖，顺手重构等于拿纯外观收益去冒静默回归。
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return openNovel(result.filePaths[0])
+    try {
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
+      return { ok: true, value: openNovel(result.filePaths[0]) }
+    } catch (err) {
+      console.warn('[wt] 导入小说失败：', err)
+      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   })
 
-  ipcMain.handle(CH.importWorkDoc, async (): Promise<Novel | null> => {
+  ipcMain.handle(CH.importWorkDoc, async (): Promise<IpcResult<Novel>> => {
     const win = deps.getWindow()
     const options: Electron.OpenDialogOptions = {
       title: '导入工作文档',
@@ -89,11 +97,19 @@ export function registerIpc(deps: IpcDeps): void {
       properties: ['openFile']
     }
     // 骨架与上面 import-novel 那个逐字相同，改一处要改两处（理由见那处的注释）。
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    // **空 Novel 原样返回**（不判空）：返回 null 会与「取消」撞成同一个值，渲染层就没法
-    // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
-    return loadWorkDoc(result.filePaths[0])
+    try {
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
+      // **空 Novel 原样返回**（不判空）：返回失败会与「取消」撞成同一个值，渲染层就没法
+      // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
+      const doc = loadWorkDoc(result.filePaths[0])
+      return doc ? { ok: true, value: doc } : { ok: false, reason: '这个文件读不出来' }
+    } catch (err) {
+      console.warn('[wt] 导入工作文档失败：', err)
+      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   })
 
   // 启动这条路**判空**：空文档在这里等同于「读不出来」，落到 `workDocBroken`（设置里标红、
@@ -119,7 +135,14 @@ export function registerIpc(deps: IpcDeps): void {
     return loadWorkDocImage(src, baseDir)
   })
 
-  ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
+  ipcMain.handle(CH.openNovelPath, (_e, filePath: string): IpcResult<Novel> => {
+    try {
+      return { ok: true, value: openNovel(filePath) }
+    } catch (err) {
+      console.warn('[wt] 打开小说失败：', filePath, err)
+      return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
+    }
+  })
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
 
@@ -127,22 +150,19 @@ export function registerIpc(deps: IpcDeps): void {
     getStore().readSession(sourcePath)
   )
 
-  ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
+  ipcMain.handle(CH.saveSession, (_e, session: unknown): IpcResult<void> =>
     getStore().writeSession(session)
-  })
+  )
 
-  ipcMain.handle(CH.clearSession, (): void => {
-    getStore().clearReadingHistory()
-  })
+  ipcMain.handle(CH.clearSession, (): IpcResult<void> => getStore().clearReadingHistory())
 
   ipcMain.handle(CH.loadSettings, (): AppSettings => getStore().readSettings())
 
-  ipcMain.handle(CH.saveSettings, (_e, settings: AppSettings): void => {
-    getStore().writeSettings(settings)
-    // 【为什么在这里重建而不是新开一条 IPC 通道】设置本来就要从这条路进主进程，顺手重建
-    // 比让渲染层再喊一声省一条通道、也少一个「谁先谁后」的问题。
-    // 【为什么可以无条件重建】非 darwin 上 buildAppMenu 直接 return，成本是一次判断。
-    deps.rebuildMenu()
+  ipcMain.handle(CH.saveSettings, (_e, settings: unknown): IpcResult<void> => {
+    const result = getStore().writeSettings(settings)
+    // 只在确实落盘之后重建：菜单的 accelerator 要跟着磁盘上那份键走。
+    if (result.ok) deps.rebuildMenu()
+    return result
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
@@ -154,8 +174,11 @@ export function registerIpc(deps: IpcDeps): void {
   // 由 `themeSource` 决定；只在页面里换 class 的话，网页变暗了而红绿灯仍是系统色——
   // 那正是刚修好的那个「两块颜色对不上」。改这里会触发下面的 `nativeTheme.on('updated')`
   // 广播，原生与网页一起变。
-  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): void => {
-    if (source !== 'system' && source !== 'light' && source !== 'dark') return
+  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): IpcResult<void> => {
+    if (source !== 'system' && source !== 'light' && source !== 'dark') {
+      return { ok: false, reason: '未知的外观取值' }
+    }
     nativeTheme.themeSource = source
+    return { ok: true, value: undefined }
   })
 }

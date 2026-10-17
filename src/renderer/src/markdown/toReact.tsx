@@ -2,39 +2,29 @@ import { createElement, Fragment, type CSSProperties, type ReactNode } from 'rea
 import type { Root } from 'mdast'
 import { tokenizeHtml, type HtmlToken } from './html'
 import { MarkdownImage } from './MarkdownImage'
-import { readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from './clip'
-import { lineStartsOf, valueStartOf } from './parse'
+import { BLOCK_END_ATTR } from './measure'
+import { blankCountOf, lineStartsOf, valueStartOf, type BlankKind } from './nodeMeta'
+import { linesOf, type ValueLine } from './offsets'
 
 /** mdast 的节点联合。`Root['children'][number]` 就是 `Content`，写出来更直白。 */
 type MdNode = Root['children'][number]
 
-/** 表头单元格与普通单元格的唯一区别，外加阅读光标那一份状态。 */
+/** 表头单元格与普通单元格的唯一区别，外加光标与「量高度那一份」两份状态。 */
 interface Ctx {
   readonly header: boolean
-  /**
-   * 阅读光标。`null` 表示不插，有**两条**路走到这里：
-   * 1. **没传 `caretAt`**——`renderMarkdown(tree)` 不带 opts 的整篇渲染，量高度那份副本
-   *    与一切「只想要排版、不要光标」的调用都走这条；
-   * 2. `withBlockEnds` 那条支路**显式写死 `caret: null`**（见那里的注释），与调用方传没传
-   *    `caretAt` 无关——那是「机器保证」，不是「靠自觉」。
-   */
   readonly caret: Caret | null
+  /** 量高度那一份：不挂真实图片、不插光标（设计 8.2）。 */
+  readonly layoutOnly: boolean
 }
 
 /**
  * 阅读光标的状态。
  *
- * 【为什么 `placed` 是可变字段】它要在整棵树里只命中一次，而渲染是深度优先的递归——
- * 用一个共享的小对象带下去，比让每一层返回「插过了没」再往上并简单得多。
- * 它每次 `renderMarkdown` 都新造一个，所以两次渲染之间不会互相串。
- *
- * 【`tail` 是「末尾兜底」该落进哪个节点】由 `tailTarget` 在渲染前算一次，渲染中按节点身份
- * 比对——**不是**让每一层自己判「我在不在文档末尾」（渲染是自上而下的，一个容器看不到
- * 它后面还有没有兄弟）。
+ * 【`placed` 可变】整棵树只命中一次，用一个共享小对象带下去；每次 `renderMarkdown` 新造。
+ * 【`tail`】末尾兜底该落进哪个节点，由 `tailTarget` 渲染前算一次、按节点身份比对。
  */
 interface Caret {
   readonly at: number
-  /** 末尾兜底的目标节点；`null` 表示这一趟不做那条兜底（树是空的、或者树上还有占位） */
   readonly tail: MdNode | null
   placed: boolean
 }
@@ -43,42 +33,24 @@ interface Caret {
 const HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const
 
 /**
- * 裁剪后的树 → React 元素。
+ * 裁剪后的树 → React 元素。**这一层不做「该不该显示」的判断**（那是 `clip.ts` 的事）。
  *
- * 【这一层不做任何「该不该显示」的判断】那是 `clip.ts` 的事。这里只把拿到的树
- * 按类型画出来，所以它是纯粹的视图层。
+ * 【安全口径】全仓不出现 `dangerouslySetInnerHTML`；内嵌 HTML 走白名单 tokenizer，
+ * `renderTokens` 里的 `createElement` 一个属性都不传（设计第 11 节）。
+ * 【链接是 `span` 不是 `a`】点了不做事（设计 9.3）。
  *
- * 【全仓不出现 `dangerouslySetInnerHTML`】内嵌 HTML 那一行走 `tokenizeHtml` →
- * `createElement`，白名单之外的标签**连元素都建不出来**（设计第 11 节）。
- * `renderTokens` 那几处 `createElement` **一个属性都不传**，这是安全性的来源，
- * 不是省事——别顺手把 `class` 之类透传进去。
- *
- * 【链接为什么不是 `<a>`】点了不做事是明确的决定（设计 9.3）：点开会拉起系统浏览器，
- * 一个伪装成 Word 的应用突然开浏览器太显眼。画成 `<span>` 配链接的样子，
- * `title` 里留着真实地址，想复制的人拿得到。
- *
- * 【表格对齐不做】GFM 的 `align` 要逐列算，而真 Word 里数字右对齐是「单元格属性」
- * 而不是「表格属性」。这一段做到「细网格线 + 表头加粗」为止。
- *
- * 【`default` 分支落到哪里】`definition`（链接引用定义）走那里：它本身不该出现在正文里。
- * 其余 mdast 节点类型（yaml / toml / math 之类）本仓库的插件集产不出来。
- *
- * 【`withBlockEnds` 是给量高度那一份用的】它为真时每个顶层块**多套一层带
- * `data-block-end` 的包装**，让「有几个块」只由这一处决定：渲染成 `null` 的节点
- * （`definition`）也照样有一个包装、高度 0，于是 DOM 与偏移按构造一一对应，
- * `measureBlocks` 那条「对不上就退回兜底」永远不会因为节点类型被误触。
- * 包装本身没有内外边距与边框，子元素的外边距**照常折叠穿透**，所以量出来的高度
- * 与不套包装时一致；有可见那一份在，这一份的层级再多也不影响用户看到的东西。
- * 为假时走 `renderAll`，输出**一个字节都不变**。
- *
- * 【`caretAt` 是「揭示到哪个偏移」，见设计 3.5；量高度那一份永远不传它】
+ * 【`withBlockEnds`】每个顶层块多套一层带 `data-block-end` 的包装：渲染成 `null` 的节点
+ * （`definition`）也有包装、高度 0，于是「有几个块」与 DOM 一一对应。包装无内外边距，
+ * 外边距照常穿透，量出的高度不变。为假时走 `renderAll`，输出一个字节都不变。
+ * 【`caretAt`】「揭示到哪个偏移」（设计 3.5）；`layoutOnly` 为真时一律不插光标。
  */
 export function renderMarkdown(
   root: Root,
-  opts: { withBlockEnds?: boolean; caretAt?: number | null } = {}
+  opts: { withBlockEnds?: boolean; caretAt?: number | null; layoutOnly?: boolean } = {}
 ): ReactNode {
+  const layoutOnly = opts.layoutOnly === true
   const caret: Caret | null =
-    typeof opts.caretAt === 'number' && Number.isFinite(opts.caretAt)
+    !layoutOnly && typeof opts.caretAt === 'number' && Number.isFinite(opts.caretAt)
       ? {
           at: opts.caretAt,
           placed: false,
@@ -90,39 +62,14 @@ export function renderMarkdown(
       <div
         className="wt-md-measure-block"
         key={i}
-        data-block-end={node.position?.end.offset ?? ''}
+        {...{ [BLOCK_END_ATTR]: node.position?.end.offset ?? '' }}
       >
-        {/*
-          【这里显式传 `caret: null`，不是省事】量高度那一份是**整篇未裁剪**的树，
-          多一个光标不但没用，还会让 `[data-testid="caret"]` 在文档里出现两次——
-          而 `InputCapture` 取的是**第一个**。今天靠「调用方永不传 `caretAt`」这条
-          自觉，显式写 `null` 才有机器保证。
-        */}
-        {renderNode(node, { header: false, caret: null })}
+        {renderNode(node, { header: false, caret: null, layoutOnly })}
       </div>
     ))
   }
-  const out = renderAll(root.children, { header: false, caret })
-  // 【这一句只在「一个能放光标的节点都没有」时才走到】它是**最后一条**兜底，落点是容器的
-  // 末尾，也就是最后一个块**下方**——正是用户最初报的那条（隐形输入框与输入法候选框都按
-  // 这个坐标摆）。所以它现在只留给两类情形：
-  //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
-  //     树是空的，一个节点都没有——本来也没有别的位置可放。
-  //  2. 链尾是**放不下光标**的节点：文档以分隔线 / 图片 / 内嵌 HTML 收尾，或者树上还有占位
-  //     （`tail` 为 `null`，见 `tailTarget`）。这时光标落在最后一个元素**之后**，与「放在
-  //     它后面」是同一个位置。
-  //
-  // 【前一版这里写的是「实测只有两类」，第二类不成立】它把「揭示偏移落在所有已揭示文字的
-  // 后面」也归进兜底、还说「内容本来也到头了，位置看不出差别」。**实测那正是缺陷**：
-  // 14 份夹具逐偏移 230 格里有 15 格落在文档**中间**（多行列表的每个列表项边界、容器里的
-  // 围栏、表格尾部、标题后面那个换行），内容都还剩很多——「下一个块还没到它的起点」时，
-  // 屏幕上明明还有一整块已渲染的内容，光标却在它下面一行。现在那些格子由 `tailTarget`
-  // 收进**最后一块已渲染的内容**里，只有上面两类才落到这里。
-  //
-  // 【这一句也**不该**在文档中间开火】占位那几格（表格 `to = 8–20` / `28–30`、代码块
-  // `to = 1–3`）曾经也走这里，被甩到占位**后面**；已经由「占位自己接光标」修掉
-  // （见 `BlankSpace`）。两条的优先级由 `tailTarget` 那句「树上有占位就返回 null」保证。
-  // 外面套一层 Fragment 只为挂 `key`——`CaretSpan` 没有 props，别给它传。
+  const out = renderAll(root.children, { header: false, caret, layoutOnly })
+  // 最后一条兜底：树是空的（`to = 0`）或链尾放不下光标时才用。
   if (caret && !caret.placed) out.push(<Fragment key="caret-fallback"><CaretSpan /></Fragment>)
   return out
 }
@@ -132,20 +79,14 @@ function childrenOf(node: Root | MdNode): readonly MdNode[] | null {
   return 'children' in node ? node.children : null
 }
 
-/** 带**可裁**文本、能自己接住光标的三个节点类型（`clip.ts` 的 `VALUE_TYPES` 是同一组）。 */
+/** 带**可裁**文本、能自己接住光标的三个节点类型（`clip.ts` 的 `ValueNode` 是同一组）。 */
 function isValueNode(node: MdNode): boolean {
   return node.type === 'text' || node.type === 'code' || node.type === 'inlineCode'
 }
 
-/**
- * 树上还有没有「未揭示的占位」（`wtBlankLines` / `wtBlankRows`，`clip.ts` 挂的）。
- *
- * 它决定 `tailTarget` 要不要整个让路——理由见那里的最后一段。
- */
+/** 树上还有没有「未揭示的占位」。它决定 `tailTarget` 要不要整个让路——理由见那里的最后一段。 */
 function hasPlaceholder(node: Root | MdNode): boolean {
-  if (readBlankCount(node, WT_BLANK_LINES) > 0 || readBlankCount(node, WT_BLANK_ROWS) > 0) {
-    return true
-  }
+  if (blankCountOf(node, 'lines') > 0 || blankCountOf(node, 'rows') > 0) return true
   const kids = childrenOf(node)
   return kids !== null && kids.some((child) => hasPlaceholder(child))
 }
@@ -160,7 +101,7 @@ function hasPlaceholder(node: Root | MdNode): boolean {
  * 评审逐格扫过（14 份夹具 × 逐偏移 = 230 格）：文档中间有 15 格落在这里，四种形态——
  * 多行列表的每个列表项边界、容器里的围栏、表格尾部、标题后面那个换行。本 Task 按同一条
  * 判据在六份夹具上逐偏移复核过：四种形态都在，而「容器里的围栏」那一组要用**单行**的夹具
- * 才复现（多行的那种 `wtBlankLines > 0`，占位自己接住了光标）——见测试里那段说明。
+ * 才复现（多行的那种 `blankCountOf(node, 'lines') > 0`，占位自己接住了光标）——见测试里那段说明。
  *
  * 【判据：沿「最后一个孩子」一路往下走】走到头的那个节点就是**最后一块已渲染的内容**
  * （`clip` 丢掉的节点不在树上，所以「最后一个孩子」恒是最后一个**已经开始揭示**的）：
@@ -178,7 +119,7 @@ function hasPlaceholder(node: Root | MdNode): boolean {
  * 但它们既然后面什么都没有，「追加在末尾」与「放在它后面」是同一个位置，不必区别对待。
  * （`definition` 渲染成 `null`，跳过它接着看前一个兄弟。）
  *
- * 【树上有占位（`wtBlankLines` / `wtBlankRows`）时一律返回 `null`——这条必须保住】
+ * 【树上有占位（`blankCountOf`）时一律返回 `null`——这条必须保住】
  * 占位代表「还没到的东西」，设计 3.5 让它**自己**接住光标（`BlankSpace`），而占位渲染在
  * 块的内部、比链尾更深也**更晚**：不让路的话，表格剩余行、代码块剩余行那几格会被本条抢回
  * 块里，「光标落在占位之前」这条既有口径（实测连续 13 个偏移位）当场就破。两者本来也
@@ -439,7 +380,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           */}
           {BlankSpace({
             node,
-            field: WT_BLANK_LINES,
+            kind: 'lines',
             className: 'wt-md-pre-blank',
             cssVar: '--wt-md-blank-lines',
             ctx
@@ -506,10 +447,19 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           {tailCaretIn(node, ctx)}
         </span>
       )
+    // 量高度那一份不挂真实图片：一挂就触发取图 IPC，违反设计 8.2「只抓已经抽出来的那张」。
     case 'image':
-      return <MarkdownImage url={node.url} alt={node.alt ?? ''} />
+      return ctx.layoutOnly ? (
+        <LayoutImage url={node.url} alt={node.alt ?? ''} />
+      ) : (
+        <MarkdownImage url={node.url} alt={node.alt ?? ''} />
+      )
     case 'imageReference':
-      return <MarkdownImage url="" alt={node.alt ?? ''} />
+      return ctx.layoutOnly ? (
+        <LayoutImage url="" alt={node.alt ?? ''} />
+      ) : (
+        <MarkdownImage url="" alt={node.alt ?? ''} />
+      )
     case 'table': {
       const [head, ...body] = node.children
       return (
@@ -527,7 +477,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           {/* 同 `case 'code'`：**直接调用**，理由（渲染时序）见那里 */}
           {BlankSpace({
             node,
-            field: WT_BLANK_ROWS,
+            kind: 'rows',
             className: 'wt-md-table-blank',
             cssVar: '--wt-md-blank-rows',
             ctx
@@ -565,6 +515,18 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
   }
 }
 
+/**
+ * 量高度那一份的图片占位：高度按「图片还没加载」那一档算（可见那份此刻也是它）。
+ * 真实高度要取图才知道，而量高度不能为此提前发 IPC（设计 8.2）。
+ */
+function LayoutImage({ url, alt }: { url: string; alt: string }): ReactNode {
+  return (
+    <span className="wt-md-img" data-src={url}>
+      {alt}
+    </span>
+  )
+}
+
 /** 一段内嵌 HTML 走完白名单之后剩下的东西。 */
 function HtmlFragment({ raw }: { raw: string }): ReactNode {
   return <>{renderTokens(tokenizeHtml(raw))}</>
@@ -584,59 +546,22 @@ function CaretSpan(): ReactNode {
  * 才算得对。**在裁剪后的树上读到失真的起点是静默的**（光标差几个字符、不报错），
  * 所以这条链路两侧的注释都点名了它。
  *
- * 普通 `text` 节点原本没有这个标注、用 `position.start.offset` 兜；切片之后 `clip.ts`
- * 也给它们写上了。两者都没有（手工造的单测树）时给 0——那时不会传 `caretAt`。
+ * 没有标注（手工造的单测树）时退回 `position.start.offset`，再没有给 0——那时不会传 `caretAt`。
  */
 function originOf(node: MdNode): number {
   return valueStartOf(node) ?? node.position?.start.offset ?? 0
 }
 
-/** 摊平后的一行：它在 `value` 里的下标、长度（不含行尾换行），以及它在源码里的起点。 */
-interface Row {
-  /** 这一行首字符在 `value` 里的下标 */
-  readonly base: number
-  /** 这一行在 `value` 里的长度（**不含**行尾换行） */
-  readonly len: number
-  /** 这一行首字符在源码里的偏移 */
-  readonly src: number
-}
-
 /**
- * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1）。
+ * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1，实现见 `offsets.ts`）。
  *
- * 【没有逐行表时摊成**一行**】那时候「起点 + 字符数」本来就是线性的，退化成一行正好等价于
- * 旧算法（下标 `= 揭示偏移 − 起点`、区间 `[起点, 起点 + 长度]`），所以下面两处调用都不必
- * 分岔——分岔两份判据就等于两份会各自走样的东西。
- *
- * 【行数由 `value` 定，**不是**由表长定】这两者会差一行：`clip` 把末行那个换行也算进
- * revealed，于是切出来的 `value` 会多出一个**空行**，而表里只有「起点 < 揭示偏移」的那几行
- * 的起点（实测 `'> 引用甲\n> 引用乙\n'` 在 `to=6` 上是 `value='引用甲\n'`、表 `[2]`）。
- * 差出来的那一行恒为空行，用「上一行起点 + 上一行长度 + 1」兜即可——它的**长度是 0**，
- * 所以这个兜法不会把任何字符划给它。
- *
- * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
- * 走空表会拿到不存在的 `rows[0]`。
- *
- * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
- * 循环在这里、`parse.ts` 的 `isContiguous`、`clip.ts` 的 `sliceByLineStarts` 各写了一份——
- * 用途不同（摊成行 / 判连续性 / 求窗口），所以**不合并**，但**行尾口径三份不一样**：这里的
- * 行长**不含**换行（`base = nl + 1` 才进下一行），`isContiguous` 把换行**算给上一行**，
- * `sliceByLineStarts` 用 `+ 1` 把换行**括进窗口**。动任何一处之前先把三处对一遍。
+ * 【没有逐行表时摊成一行】「起点 + 字符数」那时本来就是线性的，退化成一行与旧算法等价。
+ * 【空表当没有表】手工造的树上可能出现空数组，走空表会拿到不存在的首行。
  */
-function rowsOf(node: MdNode, value: string, origin: number): Row[] {
+function rowsOf(node: MdNode, value: string, origin: number): ValueLine[] {
   const starts = lineStartsOf(node)
   if (starts === null || starts.length === 0) return [{ base: 0, len: value.length, src: origin }]
-  const rows: Row[] = []
-  let base = 0
-  for (let i = 0; ; i++) {
-    const nl = value.indexOf('\n', base)
-    const len = (nl < 0 ? value.length : nl) - base
-    const prev = rows[rows.length - 1]
-    rows.push({ base, len, src: starts[i] ?? (prev ? prev.src + prev.len + 1 : origin) })
-    if (nl < 0) break
-    base = nl + 1
-  }
-  return rows
+  return linesOf(value, starts, origin)
 }
 
 /**
@@ -828,8 +753,7 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
  * （13px × 1.6）与表格行的行高（14px × 1.9 + 单元格内边距）**不是同一个数**。
  * 这里只报「几行」，换算留给 `markdown.css`，两处各自可调。
  *
- * 【行数从哪来】`clip.ts` 挂在节点上的（见那里的 `readBlankCount`）。它返回 0 时
- * 整个元素都不渲染——已经全部揭示的块不该在 DOM 里多出一样东西。
+ * 【行数从哪来】`clip.ts` 算好挂在节点元数据上（`blankCountOf`）。为 0 时整个元素都不渲染。
  *
  * 【为什么值要转成字符串 —— 理由已按实测更正】原来那句「取决于 React 版本行为、可能补
  * 一个 `px`」**在本仓库不成立**：实测 React 19.3.0 对 `--*` 自定义属性走 `setProperty`，
@@ -839,23 +763,18 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
  */
 function BlankSpace({
   node,
-  field,
+  kind,
   className,
   cssVar,
   ctx
 }: {
   node: MdNode
-  /**
-   * 【为什么不是裸 `string`】`clip.ts` 把 `readBlankCount` 的参数收成了那两个常量的联合，
-   * 传 `WT_VALUE_START` 之类会**编译不过**。这里必须跟它一致，否则本 Task 一落地就红。
-   * 用 `typeof` 取那两个常量的类型，不必让 `clip.ts` 再多导出一个类型别名。
-   */
-  field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
+  kind: BlankKind
   className: string
   cssVar: string
   ctx: Ctx
 }): ReactNode {
-  const count = readBlankCount(node, field)
+  const count = blankCountOf(node, kind)
   if (count <= 0) return null
   /*
     【占位自己接住光标】占位代表「还没走到的东西」，一个还没落地的光标本来就该落在它

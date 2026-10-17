@@ -154,9 +154,10 @@ playwright-report/
     "resolveJsonModule": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node", "vitest/globals"]
+    "types": []
   },
-  "include": ["src/renderer/src", "src/core", "tests"]
+  "include": ["src/renderer/src", "src/core"],
+  "exclude": ["src/core/decode.ts"]
 }
 ```
 
@@ -477,25 +478,29 @@ import { BOSS_FILL_MAX } from './bossKey'
 import type { ShortcutId } from './shortcuts'
 
 export interface Chapter {
-  index: number
-  title: string
+  readonly index: number
+  readonly title: string
   /** 在 flatText 中的起始偏移（含） */
-  start: number
+  readonly start: number
   /** 结束偏移（不含） */
-  end: number
-  charCount: number
+  readonly end: number
+  readonly charCount: number
 }
 
+/**
+ * 只读：`flatText` 同时是游标坐标系与章节偏移的基准，运行期改它等于把两者一起弄错，
+ * 而没有任何地方会因此抛错。所有字段都是 `readonly`，构造之后只读。
+ */
 export interface Novel {
   /** 文件名（去扩展名） */
-  title: string
-  sourcePath: string
+  readonly title: string
+  readonly sourcePath: string
   /** 检测到的编码名，如 'UTF-8' / 'GB18030' */
-  encoding: string
-  hadBom: boolean
+  readonly encoding: string
+  readonly hadBom: boolean
   /** 所有章节首尾相接（含标题行本身） */
-  flatText: string
-  chapters: Chapter[]
+  readonly flatText: string
+  readonly chapters: readonly Chapter[]
 }
 
 export type InputMode = 'ime' | 'key'
@@ -535,7 +540,7 @@ export interface NovelCacheMeta {
   encoding: string
   hadBom: boolean
   title: string
-  chapters: Chapter[]
+  chapters: readonly Chapter[]
   /**
    * novel-cache.txt 的 UTF-8 字节数，用作缓存两个文件之间的「提交点」（见 Task 5）：
    * 只有本字段与实际文本文件大小一致时，才承认这对缓存有效。
@@ -1290,6 +1295,11 @@ describe('isChapterTitle', () => {
     'Chapter 3 The Beginning',
     '1、开端',
     '12．转折',
+    // 副标题里的句读不拦：强前缀（第 X 章 / 序章 / Chapter N）已经把「这是标题」说清楚了。
+    // 句读闸门只服务于「数字 + 顿号」那条，见下面「不把正文当标题」里的编号正文样本。
+    '第一章 风起，云涌',
+    '序章 雪夜，风起',
+    'Chapter 3 The Beginning, and More',
     // 前后各垫 20 个全角空格：上限量的是 trim 后的串，补白不该影响判定
     PADDED_TITLE
   ])('识别标题行：%s', (line) => {
@@ -1300,11 +1310,11 @@ describe('isChapterTitle', () => {
     '第三章的内容很有意思，我读了三遍。',
     '前言不搭后语',
     '林昭站在城墙上。',
-    // 下面这条是【唯一】只被 SENTENCE_PUNCT 那道闸拦下的样本：它匹配 TITLE_PATTERNS[3]
-    // （数字 + 、/.． + 正文），长度也在上限内。上面三条其实都被【模式不匹配】拒掉，
-    // 等于同一个分支测了三遍——删掉那道闸，只有这一条会红。没有它，一行普通的编号正文
-    // （「1．他说道，这是第一章。」）就会变成章节标题。
+    // 下面两条是【只】被 SENTENCE_PUNCT 那道闸拦下的样本：它们匹配 NUMBERED_TITLE
+    // （数字 + 、/.． + 正文），长度也在上限内。删掉那道闸，这两条会红——一行普通的编号正文
+    // 就会变成章节标题。上面三条其实都被【模式不匹配】拒掉，等于同一个分支测了三遍。
     '1．他说道，这是第一章。',
+    '1、开端，转折',
     ''
   ])('不把正文当标题：%s', (line) => {
     expect(isChapterTitle(line)).toBe(false)
@@ -1354,6 +1364,14 @@ describe('splitChapters', () => {
     // 【保真律】完整表述见「标题前只有空白时…」那条：flatText 是 text 的后缀，被去掉的前缀全是空白。
     // 本用例是「前缀为空」的那一支（什么都没丢）→ flatText === text。
     expect(flatText).toBe(text)
+  })
+
+  it('副标题带标点时仍按标题切开（句读闸门只作用于数字 + 顿号那条）', () => {
+    const text = '第一章 风起，云涌\n正文一。\n第二章 云涌；雷动\n正文二。\n'
+    const { flatText, chapters } = splitChapters(text, 'x')
+    expect(chapters.map((c) => c.title)).toEqual(['第一章 风起，云涌', '第二章 云涌；雷动'])
+    expect(flatText).toBe(text)
+    expectContiguous(flatText, chapters)
   })
 
   it('章节正文包含标题行本身', () => {
@@ -1476,7 +1494,7 @@ import type { Chapter } from './types'
 
 export const PREAMBLE_TITLE = '前言'
 
-/** 正文里常见的句读符号：标题行不会包含它们 */
+/** 正文里常见的句读符号。编号正文与编号标题只靠它区分，见 isChapterTitle。 */
 const SENTENCE_PUNCT = /[。！？；，]/
 
 /**
@@ -1488,6 +1506,9 @@ const SENTENCE_PUNCT = /[。！？；，]/
  */
 const MAX_TITLE_LEN = 40
 
+/** 「数字 + 顿号」没有强前缀，只能靠句读与编号正文区分；单独取出，闸门只对它生效。 */
+const NUMBERED_TITLE = /^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
+
 /**
  * 【每个模式都不得带 /g 或 /y】——这条靠注释与评审守，类型系统守不住。
  *
@@ -1497,7 +1518,7 @@ const MAX_TITLE_LEN = 40
  *
  * 下面的 readonly 挡不住这件事：它只能阻止往表里 push、或对元素重新赋值，管不到
  * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
- * readonly 守的是另一件小事（别往这张表里塞模式）。
+ * readonly 守的是另一件小事（别往这张表里塞模式）。表外的 NUMBERED_TITLE 同样受这条约束。
  */
 const TITLE_PATTERNS: readonly RegExp[] = [
   // 第一章 / 第 12 章 / 第十二章 / 第一百零八回 / 第3节
@@ -1508,13 +1529,14 @@ const TITLE_PATTERNS: readonly RegExp[] = [
   // Chapter 3 The Beginning
   /^\s*chapter\s+\d+.*$/i,
   // 1、开端 / 12．转折
-  /^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
+  NUMBERED_TITLE
 ]
 
 export function isChapterTitle(line: string): boolean {
   const t = line.trim()
   if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
-  if (SENTENCE_PUNCT.test(t)) return false
+  // 句读闸门只作用于数字 + 顿号那条：前三条的强前缀足够与正文区分，副标题允许带标点。
+  if (SENTENCE_PUNCT.test(t) && NUMBERED_TITLE.test(t)) return false
   return TITLE_PATTERNS.some((re) => re.test(t))
 }
 
@@ -3819,6 +3841,36 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(store.readSettings()).toEqual(settings)
   })
 })
+
+describe('写通道先校验再落盘', () => {
+  it('writeSettings 拒绝不合法载荷，磁盘上原来那份不被覆盖', () => {
+    const store = createSessionStore(dir)
+    const good = { ...defaultSettings(), docTitle: '季度汇报' }
+    expect(store.writeSettings(good).ok).toBe(true)
+    const result = store.writeSettings({ ...good, ratio: Number.NaN })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toContain('ratio 不是有限数字')
+    expect(store.readSettings().docTitle).toBe('季度汇报')
+  })
+
+  it('writeSession 拒绝不合法载荷，上一份进度不被覆盖', () => {
+    const store = createSessionStore(dir)
+    const good = makeSession({ cursor: 120 })
+    expect(store.writeSession(good).ok).toBe(true)
+    const result = store.writeSession({ ...good, cursor: Number.NaN })
+    expect(result.ok).toBe(false)
+    expect(store.readSession('/tmp/测试书.txt')).toEqual(good)
+  })
+
+  it('clearReadingHistory 返回 ok，只清阅读记录、不碰设置', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession())
+    store.writeSettings(defaultSettings())
+    expect(store.clearReadingHistory().ok).toBe(true)
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+  })
+})
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -3841,6 +3893,7 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { SHORTCUTS, shortcutProblem, type ShortcutId } from '../core/shortcuts'
+import type { IpcResult } from '../core/api'
 import { defaultSettings } from '../core/types'
 import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
 
@@ -3851,10 +3904,11 @@ function isShortcutId(id: string): id is ShortcutId {
 
 export interface SessionStore {
   readSettings(): AppSettings
-  writeSettings(s: AppSettings): void
+  /** 写前按读盘同一套校验；不合格的载荷不落盘，把字段名交回去。 */
+  writeSettings(s: unknown): IpcResult<void>
   readSession(sourcePath: string): PersistedSession | null
-  writeSession(s: PersistedSession): void
-  clearReadingHistory(): void
+  writeSession(s: unknown): IpcResult<void>
+  clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
   writeNovelCache(novel: Novel): void
   readNovelCache(filePath: string): Novel | null
@@ -4087,6 +4141,13 @@ function readSettingsFile(path: string): AppSettings {
   }
 }
 
+/** 临时文件名带 pid 与自增序号：两个进程写同一目标时不会抢同一个临时文件。 */
+let tempSeq = 0
+function tempPathFor(path: string): string {
+  tempSeq += 1
+  return `${path}.${process.pid}.${tempSeq}.tmp`
+}
+
 /**
  * 返回「这一次是否确实落地了」——迁移里「上次打开的是哪本有没有落盘」那道闸用它。
  *
@@ -4098,8 +4159,9 @@ function writeSettingsFile(path: string, s: AppSettings): boolean {
     mkdirSync(dirname(path), { recursive: true })
     // 与 session 同样的 temp+rename。文档名是用户敲进去的、不可再生，
     // 截断的 settings.json 读回来只会是默认值。
-    writeFileSync(`${path}.tmp`, JSON.stringify(s), 'utf8')
-    renameSync(`${path}.tmp`, path)
+    const tmp = tempPathFor(path)
+    writeFileSync(tmp, JSON.stringify(s), 'utf8')
+    renameSync(tmp, path)
     return true
   } catch (err) {
     console.warn('[wt] 保存设置失败，本次改动未落盘：', err)
@@ -4184,8 +4246,9 @@ function writeSessionFile(file: string, s: PersistedSession): boolean {
     // 游标、chapterPos、activeChapter、ratio、mode、startedAt 全部静默丢失。
     // 实测这种残留的表现：截断成 20 字节与空文件都读回 null。
     // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
-    writeFileSync(`${file}.tmp`, JSON.stringify(s), 'utf8')
-    renameSync(`${file}.tmp`, file)
+    const tmp = tempPathFor(file)
+    writeFileSync(tmp, JSON.stringify(s), 'utf8')
+    renameSync(tmp, file)
     return true
   } catch (err) {
     console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
@@ -4211,8 +4274,15 @@ export function createSessionStore(baseDir: string): SessionStore {
       return readSettingsFile(settingsPath)
     },
 
-    writeSettings(s: AppSettings): void {
-      writeSettingsFile(settingsPath, s)
+    writeSettings(s: unknown): IpcResult<void> {
+      const problem = settingsProblem(s)
+      if (problem) {
+        console.warn(`[wt] 保存设置失败：结构不合法（${problem}），本次改动未落盘`)
+        return { ok: false, reason: `设置结构不合法：${problem}` }
+      }
+      return writeSettingsFile(settingsPath, s as AppSettings)
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: '设置写盘失败' }
     },
 
     readSession(sourcePath: string): PersistedSession | null {
@@ -4229,18 +4299,23 @@ export function createSessionStore(baseDir: string): SessionStore {
       return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
 
-    writeSession(s: PersistedSession): void {
-      if (typeof s?.sourcePath !== 'string') {
-        console.warn('[wt] 保存会话失败：sourcePath 不是字符串，本次进度未落盘')
-        return
+    writeSession(s: unknown): IpcResult<void> {
+      const problem = sessionProblem(s)
+      if (problem) {
+        console.warn(`[wt] 保存会话失败：结构不合法（${problem}），本次进度未落盘`)
+        return { ok: false, reason: `会话结构不合法：${problem}` }
       }
-      writeSessionFile(sessionFile(s.sourcePath), s)
+      const session = s as PersistedSession
+      return writeSessionFile(sessionFile(session.sourcePath), session)
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: '会话写盘失败' }
     },
 
-    clearReadingHistory(): void {
+    clearReadingHistory(): IpcResult<void> {
       // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
       // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
       // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
+      const failed: string[] = []
       for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
         try {
           // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
@@ -4248,6 +4323,7 @@ export function createSessionStore(baseDir: string): SessionStore {
           // 告警更糟：它教会看日志的人忽略这一行。
           rmSync(p, { force: true })
         } catch (err) {
+          failed.push(p)
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
       }
@@ -4256,8 +4332,12 @@ export function createSessionStore(baseDir: string): SessionStore {
       try {
         rmSync(sessionsDir, { recursive: true, force: true })
       } catch (err) {
+        failed.push(sessionsDir)
         console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
       }
+      return failed.length === 0
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: `删除失败：${failed.join('、')}` }
     },
 
     migrateLegacySession(): void {
@@ -5090,7 +5170,7 @@ export function resetStore(): void {
 
 ```ts
 import { app, Menu, shell, type BrowserWindow } from 'electron'
-import { CH, type MenuCommand } from './ipc'
+import { CH, type MenuCommand } from './channels'
 import type { ResolvedShortcuts } from '../core/shortcuts'
 import { toAccelerator } from '../core/shortcuts'
 
@@ -5195,7 +5275,7 @@ export function buildAppMenu(
         {
           label: '项目主页',
           click: () => {
-            void shell.openExternal('https://github.com/')
+            void shell.openExternal('https://github.com/chenyie7/WorkingTitle')
           }
         }
       ]
@@ -5250,6 +5330,7 @@ import { loadWorkDocImage } from './workDocImage'
 // 绑定 CH**，而下面的 registerIpc 要用 CH.*。实测（Task 6）：只写一行 re-export，typecheck
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
 import { CH } from './channels'
+import type { IpcResult } from '../core/api'
 import type { AppSettings, Novel, PersistedSession } from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
@@ -5301,7 +5382,7 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  ipcMain.handle(CH.importNovel, async (): Promise<Novel | null> => {
+  ipcMain.handle(CH.importNovel, async (): Promise<IpcResult<Novel>> => {
     const win = deps.getWindow()
     const options: Electron.OpenDialogOptions = {
       title: '导入小说',
@@ -5314,12 +5395,19 @@ export function registerIpc(deps: IpcDeps): void {
     }
     // 【与下面 import-work-doc 那个对话框是同一套骨架】改一处要改两处——这 8 行逐字重复。
     // 没提成公共函数是刻意的：这条路径至今零测试覆盖，顺手重构等于拿纯外观收益去冒静默回归。
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return openNovel(result.filePaths[0])
+    try {
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
+      return { ok: true, value: openNovel(result.filePaths[0]) }
+    } catch (err) {
+      console.warn('[wt] 导入小说失败：', err)
+      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   })
 
-  ipcMain.handle(CH.importWorkDoc, async (): Promise<Novel | null> => {
+  ipcMain.handle(CH.importWorkDoc, async (): Promise<IpcResult<Novel>> => {
     const win = deps.getWindow()
     const options: Electron.OpenDialogOptions = {
       title: '导入工作文档',
@@ -5332,11 +5420,19 @@ export function registerIpc(deps: IpcDeps): void {
       properties: ['openFile']
     }
     // 骨架与上面 import-novel 那个逐字相同，改一处要改两处（理由见那处的注释）。
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    // **空 Novel 原样返回**（不判空）：返回 null 会与「取消」撞成同一个值，渲染层就没法
-    // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
-    return loadWorkDoc(result.filePaths[0])
+    try {
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
+      // **空 Novel 原样返回**（不判空）：返回失败会与「取消」撞成同一个值，渲染层就没法
+      // 出声了。出声与拒绝都归渲染层——见 `loadWorkDoc` 的说明与 App 里的 `handleImportWorkDoc`。
+      const doc = loadWorkDoc(result.filePaths[0])
+      return doc ? { ok: true, value: doc } : { ok: false, reason: '这个文件读不出来' }
+    } catch (err) {
+      console.warn('[wt] 导入工作文档失败：', err)
+      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+    }
   })
 
   // 启动这条路**判空**：空文档在这里等同于「读不出来」，落到 `workDocBroken`（设置里标红、
@@ -5362,7 +5458,14 @@ export function registerIpc(deps: IpcDeps): void {
     return loadWorkDocImage(src, baseDir)
   })
 
-  ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<Novel> => openNovel(filePath))
+  ipcMain.handle(CH.openNovelPath, (_e, filePath: string): IpcResult<Novel> => {
+    try {
+      return { ok: true, value: openNovel(filePath) }
+    } catch (err) {
+      console.warn('[wt] 打开小说失败：', filePath, err)
+      return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
+    }
+  })
 
   ipcMain.handle(CH.initialNovelPath, (): string | null => deps.getInitialNovelPath())
 
@@ -5370,22 +5473,19 @@ export function registerIpc(deps: IpcDeps): void {
     getStore().readSession(sourcePath)
   )
 
-  ipcMain.handle(CH.saveSession, (_e, session: PersistedSession): void => {
+  ipcMain.handle(CH.saveSession, (_e, session: unknown): IpcResult<void> =>
     getStore().writeSession(session)
-  })
+  )
 
-  ipcMain.handle(CH.clearSession, (): void => {
-    getStore().clearReadingHistory()
-  })
+  ipcMain.handle(CH.clearSession, (): IpcResult<void> => getStore().clearReadingHistory())
 
   ipcMain.handle(CH.loadSettings, (): AppSettings => getStore().readSettings())
 
-  ipcMain.handle(CH.saveSettings, (_e, settings: AppSettings): void => {
-    getStore().writeSettings(settings)
-    // 【为什么在这里重建而不是新开一条 IPC 通道】设置本来就要从这条路进主进程，顺手重建
-    // 比让渲染层再喊一声省一条通道、也少一个「谁先谁后」的问题。
-    // 【为什么可以无条件重建】非 darwin 上 buildAppMenu 直接 return，成本是一次判断。
-    deps.rebuildMenu()
+  ipcMain.handle(CH.saveSettings, (_e, settings: unknown): IpcResult<void> => {
+    const result = getStore().writeSettings(settings)
+    // 只在确实落盘之后重建：菜单的 accelerator 要跟着磁盘上那份键走。
+    if (result.ok) deps.rebuildMenu()
+    return result
   })
 
   // 系统是不是深色外观。渲染层拿不到这个值（见 preload 里那段说明），只能从这里问。
@@ -5397,9 +5497,12 @@ export function registerIpc(deps: IpcDeps): void {
   // 由 `themeSource` 决定；只在页面里换 class 的话，网页变暗了而红绿灯仍是系统色——
   // 那正是刚修好的那个「两块颜色对不上」。改这里会触发下面的 `nativeTheme.on('updated')`
   // 广播，原生与网页一起变。
-  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): void => {
-    if (source !== 'system' && source !== 'light' && source !== 'dark') return
+  ipcMain.handle(CH.setThemeSource, (_e, source: unknown): IpcResult<void> => {
+    if (source !== 'system' && source !== 'light' && source !== 'dark') {
+      return { ok: false, reason: '未知的外观取值' }
+    }
     nativeTheme.themeSource = source
+    return { ok: true, value: undefined }
   })
 }
 ```
@@ -5456,28 +5559,38 @@ import { CH } from '../main/channels'
 ```ts
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
+import type { IpcResult, WtApi } from '../core/api'
+import type { Novel } from '../core/types'
 
-const api = {
-  /**
-   * 宿主平台。渲染层要据此决定标题条左侧留多少空位——macOS 用了
-   * `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上，必须给它们让出位置；
-   * Windows/Linux 没有红绿灯，留空反而是个洞。
-   *
-   * 沙箱化的 preload 能拿到 `process.platform`（Electron 在沙箱里保留了这几个字段），
-   * 但**渲染层拿不到**——所以在这里读取、作为普通值交给它。
-   */
+type Channel = (typeof CH)[keyof typeof CH]
+
+/**
+ * 统一把「主进程抛错」折成 `IpcResult`：invoke 的 rejection 在渲染层只是一个没有字段的
+ * Error，而调用方需要区分「取消」与「出错」，不该各自再猜。
+ */
+async function call<T>(channel: Channel, ...args: unknown[]): Promise<IpcResult<T>> {
+  try {
+    return (await ipcRenderer.invoke(channel, ...args)) as IpcResult<T>
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+const api: WtApi = {
+  /** 沙箱 preload 能拿到 process.platform，渲染层拿不到——在这里读一次当普通值交出去。 */
   platform: process.platform,
-  importNovel: () => ipcRenderer.invoke(CH.importNovel),
-  importWorkDoc: () => ipcRenderer.invoke(CH.importWorkDoc),
+  importNovel: () => call<Novel>(CH.importNovel),
+  importWorkDoc: () => call<Novel>(CH.importWorkDoc),
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
   loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
-  openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
+  openNovelPath: (path: string) => call<Novel>(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
-  saveSession: (session: unknown) => ipcRenderer.invoke(CH.saveSession, session),
-  clearSession: () => ipcRenderer.invoke(CH.clearSession),
+  // 写通道的参数在 main 侧会再校验一遍；这里不做任何「看起来安全」的裁剪。
+  saveSession: (session) => call<void>(CH.saveSession, session),
+  clearSession: () => call<void>(CH.clearSession),
   loadSettings: () => ipcRenderer.invoke(CH.loadSettings),
-  saveSettings: (settings: unknown) => ipcRenderer.invoke(CH.saveSettings, settings),
+  saveSettings: (settings) => call<void>(CH.saveSettings, settings),
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
     const listener = (_e: unknown, cmd: string): void => cb(cmd)
     ipcRenderer.on(CH.menuCommand, listener)
@@ -5485,18 +5598,10 @@ const api = {
       ipcRenderer.removeListener(CH.menuCommand, listener)
     }
   },
-  /**
-   * 系统是不是深色外观。
-   *
-   * 【为什么必须走 IPC，而不是在 CSS 里写 `@media (prefers-color-scheme: dark)`】
-   * 实测（Electron 44 / macOS 深色系统）：渲染层的 `matchMedia('(prefers-color-scheme: dark)')`
-   * **恒为 false**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、`themeSource` 设成 'dark'
-   * 之后重载整窗也仍是 false。也就是说那条 media query 在本应用里**永远不会命中**，
-   * 只能由主进程把值显式递过来。别把它"简化"回 CSS 媒体查询。
-   */
-  getTheme: (): Promise<boolean> => ipcRenderer.invoke(CH.getTheme),
-  setThemeSource: (source: 'system' | 'light' | 'dark'): Promise<void> =>
-    ipcRenderer.invoke(CH.setThemeSource, source),
+  // 渲染层读不到系统外观（`@media (prefers-color-scheme: dark)` 在本应用恒不命中），
+  // 只能由主进程递过来。
+  getTheme: () => ipcRenderer.invoke(CH.getTheme),
+  setThemeSource: (source) => call<void>(CH.setThemeSource, source),
   onThemeChange: (cb: (dark: boolean) => void): (() => void) => {
     const listener = (_e: unknown, dark: boolean): void => cb(dark)
     ipcRenderer.on(CH.themeChanged, listener)
@@ -5507,8 +5612,6 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
-
-export type WtApi = typeof api
 ```
 
 - [ ] **Step 8: 重写 `src/main/index.ts`**
@@ -5661,54 +5764,78 @@ function isRegularFile(p: string): boolean {
   }
 }
 
-app.whenReady().then(() => {
-  initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
+/** 第二个实例启动时把已有窗口叫回前台。最小化时先 restore 再 focus（推断：只 focus 会停在任务栏）。 */
+function focusExistingWindow(): void {
+  const existing = BrowserWindow.getAllWindows()[0]
+  if (!existing) return
+  if (existing.isMinimized()) existing.restore()
+  existing.show()
+  existing.focus()
+}
 
-  /**
-   * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
-   * 「用户按下去真正生效的键」不会分岔的唯一保证。
-   *
-   * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
-   * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
-   */
-  const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
-    resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
-  registerIpc({
-    getWindow: () => win,
-    getInitialNovelPath: () => initialNovelPath,
-    rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
-  })
-  buildAppMenu(() => win, getShortcuts)
-  win = createWindow()
+// 拿不到锁的实例必须停在这里：两个进程会往同一份 settings / 会话文件写，互相覆盖。
+// 也**不能**再挂 whenReady——它照样会 resolve。
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  // 第二个实例自己会退出，把窗口恢复与聚焦交给主实例做。
+  app.on('second-instance', focusExistingWindow)
 
-  // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
-  // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
-  // 在这个应用里恒为浅色，主进程不推它就没人知道。
-  nativeTheme.on('updated', () => {
-    const dark = nativeTheme.shouldUseDarkColors
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
-      // Windows：右上角那三个按钮是【系统】画的，翻主题时它不会自己跟着变——不显式喂新底色，
-      // 深色下就会留一条蓝的。macOS 的红绿灯由系统按外观自理，不需要这一步。
-      if (process.platform === 'win32') {
-        w.setTitleBarOverlay({
-          ...(dark ? TITLEBAR_DARK : TITLEBAR_LIGHT),
-          height: TITLEBAR_HEIGHT
-        })
+  app.whenReady().then(() => {
+    // 必须在建窗之前把用户选的外观落到 nativeTheme：窗口底色与标题栏取自
+    // shouldUseDarkColors，晚一步就会按系统外观画一帧（推断：深色用户看到白闪）。
+    nativeTheme.themeSource = getStore().readSettings().themeSource
+
+    initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
+
+    /**
+     * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
+     * 「用户按下去真正生效的键」不会分岔的唯一保证。
+     *
+     * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
+     * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
+     */
+    const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
+      resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+
+    registerIpc({
+      getWindow: () => win,
+      getInitialNovelPath: () => initialNovelPath,
+      rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
+    })
+    buildAppMenu(() => win, getShortcuts)
+    win = createWindow()
+
+    // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
+    // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
+    // 在这个应用里恒为浅色，主进程不推它就没人知道。
+    nativeTheme.on('updated', () => {
+      const dark = nativeTheme.shouldUseDarkColors
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
+        // Windows：右上角那三个按钮是【系统】画的，翻主题时它不会自己跟着变——不显式喂新底色，
+        // 深色下就会留一条蓝的。macOS 的红绿灯由系统按外观自理，不需要这一步。
+        if (process.platform === 'win32') {
+          w.setTitleBarOverlay({
+            ...(dark ? TITLEBAR_DARK : TITLEBAR_LIGHT),
+            height: TITLEBAR_HEIGHT
+          })
+        }
+        w.webContents.send(CH.themeChanged, dark)
       }
-      w.webContents.send(CH.themeChanged, dark)
-    }
+    })
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
+    })
   })
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
   })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+}
 ```
 
 - [ ] **Step 9: 跑测试 + typecheck + 构建**
@@ -6245,6 +6372,12 @@ body {
 
 /* 按下态（加粗/斜体/对齐这类切换按钮）。图标本身也会从线框换成实心，见 icons.tsx。 */
 .wt-btn--active {
+  background: #d3e3fa;
+  border-color: #a8c7ef;
+}
+
+/* `.wt-btn:hover` 的特异度 (0,2,0) 压过 `.wt-btn--active` (0,1,0)，不补这条，选中的按钮一悬停就变浅。 */
+.wt-btn--active:hover {
   background: #d3e3fa;
   border-color: #a8c7ef;
 }
@@ -7042,7 +7175,8 @@ body {
 }
 
 [data-theme='dark'] .wt-btn:active,
-[data-theme='dark'] .wt-btn--active {
+[data-theme='dark'] .wt-btn--active,
+[data-theme='dark'] .wt-btn--active:hover {
   background: #2c3a52;
   border-color: #405a80;
 }
@@ -7253,6 +7387,9 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   min-height: 40px;
+  /* 隐藏的测量副本是 absolute + width:100%。没有这一行，它的包含块是 .wt-page（794px），
+     而可见正文只有 626px——副本折行更少，量出的块高系统性偏小。 */
+  position: relative;
 }
 
 .wt-caret {
@@ -8143,10 +8280,11 @@ export function Toolbar({
 
 ```tsx
 import { useState } from 'react'
+import { getApi } from '../api'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
-import type { ThemeSource } from '../types/global'
+import type { ThemeSource } from '../../../core/types'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
   IconAlignCenter,
@@ -9366,8 +9504,7 @@ const DEFAULT_SHORTCUTS: Record<string, string | undefined> = {}
  * `'other'` 走：宁可显示成 Windows 的那一套，也不要因为一个读不到的值把界面炸掉。
  */
 function hostPlatform(): string {
-  const host = (window as unknown as { api?: { platform?: string } }).api
-  return host?.platform ?? 'other'
+  return getApi()?.platform ?? 'other'
 }
 
 export function Ribbon({
@@ -9432,7 +9569,10 @@ export function Ribbon({
    */
   shortcuts?: Record<string, string | undefined>
   platform?: string
-  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  /** 函数式更新：一次保存会连续提交多条，基于旧表各自覆盖会只剩最后一条。 */
+  onShortcutsChange?: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   onRecordingChange?: (recording: boolean) => void
   /**
    * 工作文档那一组。与上面四个同属「可选带默认值」——`App` 是唯一的真调用方，
@@ -10276,10 +10416,8 @@ export function Page({
   const shownLength = md ? md.cursor - md.revealStart : visibleText.length
   const folded = !expanded && shownLength > RENDER_WINDOW_LIMIT
   /**
-   * 【md 的折叠为什么按块边界】按字符硬切会把一段话、一张表切成两半，屏幕上就是残缺的
-   * 东西（设计第 12 节最后一行）。块的字符跨度从语法树上直接读得到，不需要布局信息，
-   * 所以折叠这一步**不**去量高度——它吃的是 `BlockSpan`，与铺满吃的 `BlockHeight`
-   * 不是一回事。
+   * 【md 的折叠按块边界】按字符硬切会把一段话、一张表切成两半（设计第 12 节）。
+   * 块的字符跨度从语法树直接读得到，不需要布局信息，所以折叠不量高度。
    */
   const spans: BlockSpan[] = md
     ? md.doc.children.map((n) => ({
@@ -10287,7 +10425,11 @@ export function Page({
         end: n.position?.end.offset ?? 0
       }))
     : []
-  const foldStart = md ? (folded ? pickFoldStart(spans, RENDER_WINDOW_LIMIT) : md.revealStart) : 0
+  const foldStart = md
+    ? folded
+      ? pickFoldStart(spans, RENDER_WINDOW_LIMIT, md.cursor)
+      : md.revealStart
+    : 0
   const foldedChars = md ? foldStart - md.revealStart : visibleText.length - RENDER_WINDOW_LIMIT
   const shown = !md && folded ? visibleText.slice(visibleText.length - RENDER_WINDOW_LIMIT) : visibleText
 
@@ -10357,7 +10499,8 @@ import type { InputMode, Novel } from '../../../core/types'
 
 export interface StatusBarProps {
   novel: Novel | null
-  revealedChars: number
+  /** 阅读游标在全书 flatText 里的下标。进度必须按它算，不能按当前显示窗口的长度算。 */
+  cursor: number
   activeChapter: number
   ratio: number
   mode: InputMode
@@ -10394,7 +10537,7 @@ export interface StatusBarProps {
  */
 export function StatusBar({
   novel,
-  revealedChars,
+  cursor,
   activeChapter,
   ratio,
   mode,
@@ -10402,7 +10545,8 @@ export function StatusBar({
 }: StatusBarProps) {
   const totalChars = novel?.flatText.length ?? 0
   const totalChapters = novel?.chapters.length ?? 0
-  const percent = totalChars === 0 ? 0 : Math.floor((revealedChars / totalChars) * 100)
+  // 跳章会把 revealStart 抬到章首；按 cursor - revealStart 算，进度会退成「章内偏移 ÷ 全书」。
+  const percent = totalChars === 0 ? 0 : Math.floor((cursor / totalChars) * 100)
 
   return (
     <div className="wt-statusbar" data-testid="statusbar">
@@ -10549,7 +10693,7 @@ const novel: Novel = {
 
 describe('StatusBar', () => {
   it('未导入小说时显示占位', () => {
-    render(<StatusBar novel={null} revealedChars={0} activeChapter={0} ratio={10} mode="ime" />)
+    render(<StatusBar novel={null} cursor={0} activeChapter={0} ratio={10} mode="ime" />)
     expect(screen.getByTestId('status-chapter').textContent).toBe('—')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 —')
     // 全书 0 字时百分比必须短路成 0，否则是 NaN%（0/0）。
@@ -10557,7 +10701,7 @@ describe('StatusBar', () => {
   })
 
   it('章节位置写成 `2 / 2`，而不是「第 2 章 / 共 2 章」', () => {
-    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    render(<StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" />)
     // 写成页码形状（真 Word 状态栏左下角就是页码）。**断言里刻意不含「章」字**——
     // 那个字是小说阅读器最直接的标志，这份用例守的就是「它不出现」。
     const chapter = screen.getByTestId('status-chapter').textContent
@@ -10566,7 +10710,7 @@ describe('StatusBar', () => {
   })
 
   it('显示比例、编码与模式', () => {
-    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    render(<StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" />)
     expect(screen.getByTestId('status-ratio').textContent).toBe('比例 1:25')
     expect(screen.getByTestId('status-encoding').textContent).toBe('编码 GB18030')
     expect(screen.getByTestId('status-mode').textContent).toBe('输入模式 纯按键')
@@ -10574,7 +10718,7 @@ describe('StatusBar', () => {
   })
 
   it('不再有「已显示字数」与「用时」这两项', () => {
-    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    render(<StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" />)
     const text = screen.getByTestId('statusbar').textContent ?? ''
     // 「已显示 N / 全书 M 字」是伪装上的破绽：真 Word 只报全文字数，从不报「已显示多少」。
     expect(text).not.toContain('已显示')
@@ -10586,8 +10730,15 @@ describe('StatusBar', () => {
 
   it('百分比向下取整', () => {
     // 259 / 1000 = 25.9%：floor 得 25，round 得 26，两者可判。
-    render(<StatusBar novel={novel} revealedChars={259} activeChapter={0} ratio={10} mode="ime" />)
+    render(<StatusBar novel={novel} cursor={259} activeChapter={0} ratio={10} mode="ime" />)
     expect(screen.getByTestId('status-percent').textContent).toBe('25%')
+  })
+
+  it('跳章后进度按全书的 cursor 算，而不是按当前显示窗口的长度算', () => {
+    // 跳到第 2 章章首：游标 500/1000 = 50%，而「当前窗口」只有 0 字。
+    render(<StatusBar novel={novel} cursor={500} activeChapter={1} ratio={10} mode="ime" />)
+    expect(screen.getByTestId('status-chapter').textContent).toBe('2 / 2')
+    expect(screen.getByTestId('status-percent').textContent).toBe('50%')
   })
 })
 
@@ -10596,7 +10747,7 @@ describe('StatusBar 老板模式', () => {
     // 这三样真 Word 的状态栏都没有——「比例 1:10」「编码 UTF-8」「输入模式 输入法」
     // 每一个都在说「这不是 Word，是个读小说的东西」。
     render(
-      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
+      <StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
     )
     expect(screen.queryByTestId('status-ratio')).toBeNull()
     expect(screen.queryByTestId('status-encoding')).toBeNull()
@@ -10607,7 +10758,7 @@ describe('StatusBar 老板模式', () => {
   })
 
   it('不传 hideReadingCells 时三格照旧（向后兼容）', () => {
-    render(<StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" />)
+    render(<StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" />)
     expect(screen.getByTestId('status-ratio')).toBeTruthy()
     expect(screen.getByTestId('status-encoding')).toBeTruthy()
     expect(screen.getByTestId('status-mode')).toBeTruthy()
@@ -10618,7 +10769,7 @@ describe('StatusBar 老板模式', () => {
     // 之后、右侧组之前。把整块包进 `!hideReadingCells && (…)` 会破坏这个次序——而那是本组件里
     // 唯一一处「靠位置表达布局」的地方，出错了也不会有别的东西报错。
     render(
-      <StatusBar novel={novel} revealedChars={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
+      <StatusBar novel={novel} cursor={250} activeChapter={1} ratio={25} mode="key" hideReadingCells />
     )
     const spacer = document.querySelector('.wt-statusbar__spacer')
     expect(spacer).toBeTruthy()
@@ -11233,7 +11384,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
 import { defaultSettings } from '../src/core/types'
-import type { WtApi } from '../src/renderer/src/types/global'
+import type { WtApi } from '../src/core/api'
 
 /**
  * 渲染层的**良性** `window.api` 替身：什么都不做，但每个方法都在，且都是 async。
@@ -11251,34 +11402,13 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * 与 `openNovel`，`loadSettings` / `initialNovelPath` 在它之外）——而这个良性桩的
  * `initialNovelPath` 恒返回 null，所以 `target` 为空、那个 try 根本进不去，异常不会冒出去。
  *
- * 【这个 `WtApi` 是手写接口，不是 preload 的 `typeof api`】它来自
- * `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
- * `export type WtApi = typeof api` **零引用者**（全仓库搜 `WtApi` 只有它自己的定义处）。
- *
- * 【三份拷贝里有两份有闸，别记反】【这一句原来写的是「只有一份有闸」，那已经是假话】
- * 同一个 API 形状在仓库里躺着三处：本文件的 `benignApi`（`: WtApi`）、
- * `tests/unit/app.test.tsx` 的 `installApi`、以及 preload 里那个对象。
- * **前两处的对象字面量目标类型都是 `WtApi`，两个方向都会红**——多写一个成员报 TS2353
- * （对象字面量的多余属性检查），少写一个报 TS2741（缺属性）。本桩在 Task 4 两次实测过；
- * `tests/unit/app.test.tsx` 那份在 Task 9 实测过一次（TS2741），2026-10-14 又复验过一次：
- * 往 `WtApi` 里插一个方法，`tsc --noEmit -p tsconfig.json` 精确报出这两行——
- * `tests/setup.ts` 的 `const benignApi: WtApi = {`（当时在那份文件的 42 行）与
- * `tests/unit/app.test.tsx` 的 `;(window as … as { api: WtApi }).api = {`（当时 67 行），
- * 两条都是 `TS2741`。**所以加一个 API 方法时，这两处都要跟着改。**
- * （行号随这份注释增删就会漂——认上面那两行代码，别认数字。）
- *
- * **真正一条闸都没有的，是 preload 与那份手写接口之间**——同一次复验里 preload 一行都没报，
- * 往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是那一处，不是前两处。
- *
- * 所以补下面那两行不是「给多余属性找个地方放」——它们在这份桩里是**必填**属性；补上是为了
- * 让本桩继续满足接口，从而让「少写一个就 TS2741」这条闸对之后新增的方法照样有效。
+ * 类型来自 `src/core/api.ts`；preload 的对象字面量也以它为目标类型，所以漏写在两边都会报错。
  */
 const benignApi: WtApi = {
   platform: 'darwin',
-  importNovel: async () => null,
-  // 工作文档这两条：单测里一律「没配工作文档」。要测老板键的用例自己覆盖它们
-  // （见 tests/unit/app.test.tsx 的 installApi）。
-  importWorkDoc: async () => null,
+  importNovel: async () => ({ ok: false, reason: 'canceled' }),
+  // 单测里一律「没配工作文档」。要测老板键的用例自己覆盖它们（见 app.test.tsx 的 installApi）。
+  importWorkDoc: async () => ({ ok: false, reason: 'canceled' }),
   loadWorkDoc: async () => null,
   // 单测里一律「取不到图」，于是渲染层走占位框那条路
   loadWorkDocImage: async () => null,
@@ -11287,14 +11417,14 @@ const benignApi: WtApi = {
   },
   initialNovelPath: async () => null,
   loadSession: async () => null,
-  saveSession: async () => {},
-  clearSession: async () => {},
+  saveSession: async () => ({ ok: true, value: undefined }),
+  clearSession: async () => ({ ok: true, value: undefined }),
   loadSettings: async () => defaultSettings(),
-  saveSettings: async () => {},
+  saveSettings: async () => ({ ok: true, value: undefined }),
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,
-  setThemeSource: async () => {},
+  setThemeSource: async () => ({ ok: true, value: undefined }),
   onThemeChange: () => () => {}
 }
 
@@ -11339,42 +11469,7 @@ afterEach(() => {
 - [ ] **Step 1: 写 `src/renderer/src/types/global.d.ts`**
 
 ```ts
-import type { AppSettings, Novel, PersistedSession, ThemeSource } from '../../../core/types'
-
-// 外观偏好的定义只留 core 一处（`ThemeSource`）：渲染层再声明一份的话两处会各自漂移。
-export type { ThemeSource }
-
-/**
- * 渲染层眼里的 `window.api`。
- *
- * 【这是一份**手写**接口，与 preload 那句 `export type WtApi = typeof api` 没有编译期联系】
- * 实测：后者（`src/preload/index.ts` 末尾）**零引用者**——全仓库搜 `WtApi` 只有定义处，
- * 使用者（本文件的 `Window.api`、`App.tsx` 的 `getApi()`、`state/theme.ts`、
- * `tests/setup.ts` 的 `benignApi`）全部指向这一份。**所以往 preload 加方法不会让任何东西编译不过**，
- * 那份替身也不会因为「跟 preload 不同步」而报错——两边各自漂移都没有闸拦着。
- * 改动 API 面时【两边都要手动改】，别以为有一处会替你报错。
- */
-export interface WtApi {
-  /** 'darwin' | 'win32' | 'linux'。渲染层靠它决定要不要给红绿灯让位 */
-  platform: string
-  importNovel: () => Promise<Novel | null>
-  importWorkDoc: () => Promise<Novel | null>
-  loadWorkDoc: (path: string) => Promise<Novel | null>
-  /** 取一张工作文档里的图片，回来的是 `data:` URL；失败给 `null` */
-  loadWorkDocImage: (src: string) => Promise<string | null>
-  openNovelPath: (path: string) => Promise<Novel>
-  initialNovelPath: () => Promise<string | null>
-  /** 取【某一本书】自己的阅读进度。按书存之后，sourcePath 是必填的那把钥匙。 */
-  loadSession: (sourcePath: string) => Promise<PersistedSession | null>
-  saveSession: (session: PersistedSession) => Promise<void>
-  clearSession: () => Promise<void>
-  loadSettings: () => Promise<AppSettings>
-  saveSettings: (settings: AppSettings) => Promise<void>
-  onMenuCommand: (cb: (cmd: string) => void) => () => void
-  getTheme: () => Promise<boolean>
-  setThemeSource: (source: ThemeSource) => Promise<void>
-  onThemeChange: (cb: (dark: boolean) => void) => () => void
-}
+import type { WtApi } from '../../../core/api'
 
 declare global {
   interface Window {
@@ -11403,16 +11498,11 @@ export function useTypingEngine(engine: TypingEngine | null): EngineState | null
 
 ```tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
+import { clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
-import {
-  DEFAULT_DOC_TITLE,
-  DEFAULT_RATIO,
-  PAGE_FONT_SIZE_DEFAULT,
-  clampPageFontSize
-} from '../../core/types'
-import type { AppSettings, InputMode, Novel } from '../../core/types'
+import { clampPageFontSize } from '../../core/types'
+import type { InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
 import type { MarkdownSource } from './components/Page'
@@ -11420,33 +11510,20 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useAppSettings } from './state/settingsStore'
+import { useBossFill } from './state/useBossFill'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, usePageFontSize, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
+import { clearMarkdownImageCache } from './markdown/MarkdownImage'
 import { isMarkdownPath, parseMarkdown } from './markdown/parse'
-import { pickFillCut, type BlockHeight } from './markdown/fill'
-import { measureBlocks } from './markdown/measure'
 import { useTypingEngine } from './state/useTypingEngine'
-import type { ThemeSource, WtApi } from './types/global'
+import { getApi } from './api'
+import type { ThemeSource } from '../../core/types'
 
 const SAVE_DEBOUNCE_MS = 600
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
 const CARET_MARGIN = 24
-
-/**
- * 取 preload 注入的接口；**它可能不存在**。
- *
- * sandboxed preload 加载失败时（Task 6 实测的形态：`Error: module not found: node:fs`），
- * 页面照常渲染而 `window.api === undefined`——用户看到的就是一个「伪装成 Word 的空窗口」。
- * `global.d.ts` 把它声明成必填（`api: WtApi`），所以 `tsc` 认为它恒存在、**不会提醒你判空**，
- * 这里必须自己转一道。
- *
- * 每次用的时候现取，【不要在模块顶层缓存成常量】：那等于把「preload 一定在模块加载前注入」
- * 写死进加载顺序，一旦不成立，拿到的就是永久为 null 的缓存。
- */
-function getApi(): WtApi | null {
-  return (window as unknown as { api?: WtApi }).api ?? null
-}
 
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
@@ -11473,187 +11550,54 @@ export default function App() {
    * 与 `settingsOpen` 是同一条路：状态归 `App`，组件收成受控的。
    */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  /**
-   * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
-   * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
-   * 默认取一个中性的 `文档1`。
-   */
-  const [docTitle, setDocTitle] = useState(DEFAULT_DOC_TITLE)
-  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
-  const [darkPaper, setDarkPaper] = useState(false)
-  /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
-  const [themeSource, setThemeSource] = useState<ThemeSource>('system')
-  /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
-  const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
-  /**
-   * 设置对话框开不开。**从 Ribbon 里提上来的**：Ribbon 不再自己监听 ⌘/Ctrl + ,（那条归
-   * 全局分发器，而分发器长在这一层），所以这个状态得由本组件持有再传下去。
-   */
+  /** 设置对话框开不开。状态归本层，因为分发器也长在本层。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
-  /**
-   * **全局**阅读替换比例：新导入的书拿它当起点。
-   *
-   * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
-   * 一本书第一次打开时取它，之后各管各的——改这个**不影响已经打开过的书**，只影响之后导入的。
-   * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
-   */
-  const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
-  /**
-   * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
-   * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
-   *
-   * 它由 `SettingsDialog` 经 `Ribbon` 上报。那两根线（`onRecordingChange` 与
-   * `onShortcutsChange`）都是「可选带默认值」的，所以漏接一根**类型上不会报错、界面上也看不
-   * 出来**——而两条线**各有一条用例专门钉着**（`tests/unit/app.test.tsx` 的「录制期间分发器
-   * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
-   */
+  /** 设置对话框正在录制键位；期间分发器必须静音，否则录 ⌘O 会当场触发真导入。 */
   const [recording, setRecording] = useState(false)
-  /** toast 的当前内容。**归 App 所有**——老板键的提示从这一层的分发器里弹，见设计文档 6.2 节。 */
+  /** toast 的当前内容。老板键的提示从本层的分发器里弹。 */
   const [toast, setToast] = useState<string | null>(null)
-  /**
-   * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
-   *
-   * 【为什么原样收着，不在这里 `resolveShortcuts` 补齐】它读回来的是磁盘上那个字段、写回去
-   * 的也是它。补齐是按平台做的，而「当前是哪个平台」只有渲染这一层知道——补过的表落盘就
-   * 等于把 macOS 的默认值写进了 Windows 的配置，换台机器打开就全是错的键。
-   * 补齐只发生在**消费点**（下面前缀成 `shortcutTable`，以及设置里按平台格式化那几处）。
-   */
-  const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
-  /**
-   * 工作文档路径与老板键的铺满量。
-   *
-   * 【这里不是「让界面跟随」，只是**把磁盘上那份原样带回去**】下面那个 memo 就是防抖落盘的
-   * 载荷，少一个字段就等于「启动一次之后把它冲成默认值」。`shortcuts` 曾经恒为写死的 `{}`
-   * 时正是这个症状：手改过 settings.json 的人启动一次就被无声冲成空表（见下面那段说明）。
-   * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
-   *
-   * 【两个 setter 现在都有调用方了】`setBossFillPercent` 在 `adjustBossFill` 与启动读盘两处；
-   * `setWorkDocPath` 在 `handleImportWorkDoc` / `handleRemoveWorkDoc` 与启动读盘三处
-   * ——「设置里的工作文档」那一步已经接上了。
-   */
-  const [workDocPath, setWorkDocPath] = useState<string | null>(null)
-  const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
-  /**
-   * 阅读区正文字号。**只作用于小说与 `.txt` 工作文档**（md 那条路的字号是写死的，见
-   * `page.css` 里 `.wt-page__novel` 那段）。
-   *
-   * 【为什么全局一份、不像比例那样分「全局 / 当前书」】字号是显示偏好，与「在读哪一本」
-   * 无关，跟 `themeSource` / `darkPaper` 同类。
-   */
-  const [pageFontSize, setPageFontSize] = useState(PAGE_FONT_SIZE_DEFAULT)
-  /**
-   * 设置是否已经读回来了。
-   *
-   * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
-   * 防抖 effect），而首帧渲染时这几个状态还都是默认值——读盘是异步的。于是那个 effect
-   * 会先拿着「文档1 / 跟随系统 / 不暗 / null」写一遍，把磁盘上真正的设置冲掉，然后才读到
-   * 已经被自己冲掉的默认值。
-   */
+  /** 设置是否已经从磁盘读回。少了这道闸，首帧会拿默认值把磁盘上的设置冲掉。 */
   const [settingsLoaded, setSettingsLoaded] = useState(false)
+
+  /**
+   * 设置的唯一来源：全部字段在同一个对象里，改动一律走 `patchSettings`。
+   * 拆成九个 useState 时，boot、写盘载荷、依赖数组各要同步一遍，漏一处只静默失效。
+   */
+  const { settings, patchSettings, replaceSettings } = useAppSettings()
+  const {
+    docTitle,
+    darkPaper,
+    themeSource,
+    workDocPath,
+    bossFillPercent,
+    pageFontSize,
+    shortcuts
+  } = settings
+
+  // 图片缓存按原始相对地址做键；换工作文档后解析基准变了，不清会串图。
+  useEffect(() => {
+    clearMarkdownImageCache()
+  }, [workNovel])
 
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。与上面三个同处一层：
-  // 全是「把用户的外观偏好写到 documentElement 上」。
+  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。
   usePageFontSize(pageFontSize)
-  /**
-   * **持久化专用**的引擎引用：永远指向小说那一本。
-   *
-   * 【为什么必须与「当前显示的那份」拆开】进老板模式之后屏幕上是工作文档，而工作文档
-   * **不落盘**。若 `flushSession` 读的是「当前显示的那一份」，关窗那一下就会把工作文档的
-   * 进度写进 `sessions/<工作文档的 hash>.json`——恰好是设计里说好不做的那件事，而且是在
-   * 关窗那一下**静默**发生的。
-   */
+  /** **持久化专用**的引擎引用：永远指向小说那一本，与「当前显示的那份」拆开。 */
   const novelEngineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   novelEngineRef.current = engine
-  /**
-   * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
-   *
-   * 【为什么不能用闭包里的那个值】`openNovel` 的依赖是 `[flushSession]`，而那是个稳定引用
-   * ——于是它永远保留**首次渲染**那一刻闭包里的 `globalRatio`（默认 10），启动读回真正的
-   * 全局值之后也不会更新。实测过：全局设成 3、导入一本新书，引擎拿到的仍是 10。
-   *
-   * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
-   * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
-   * 渲染期写 ref 是本文件既有的写法（见上面的 `novelEngineRef.current = engine`）。
-   */
-  const globalRatioRef = useRef(DEFAULT_RATIO)
-  globalRatioRef.current = globalRatio
-  /**
-   * 最新的铺满量，挂在 ref 上给下面两个动作读。
-   *
-   * 【为什么不用闭包里的 `bossFillPercent`】那两个动作每次渲染都是新函数（它们要进分发器的
-   * actions 对象），直接把 `bossFillPercent` 放进依赖也行——但 `toggleBoss` 同时依赖
-   * `workNovel` / `workEngine` / `bossMode`，每改一次铺满量就换一次身份。挂 ref 与
-   * `globalRatioRef` 是同一套写法，也同一套理由。
-   */
-  const bossFillPercentRef = useRef(BOSS_FILL_MAX)
-  bossFillPercentRef.current = bossFillPercent
-  /**
-   * 最新的正文字号，挂在 ref 上给 `applyFill` 与那条 toast 读。
-   *
-   * 【为什么与 `bossFillPercentRef` 同一套写法】那两处一个是 `useCallback`、一个在依赖数组
-   * 里已经很长；字号只是喂给 `fillCharsFor` 的一个乘数，没有理由让它改变这两者的身份。
-   */
-  const pageFontSizeRef = useRef(PAGE_FONT_SIZE_DEFAULT)
-  pageFontSizeRef.current = pageFontSize
 
-  const settingsRef = useRef<AppSettings | null>(null)
   /**
-   * 设置的当前值：**一处构造，两处消费**（防抖写盘的载荷、关窗前的快照）。
-   *
-   * 【为什么要合并】这些字段此前在三个地方各写了一遍：防抖 effect 的载荷、那个 effect 的
-   * 依赖数组、以及 ref 的字面量。加设置项时漏改依赖数组＝「只在关窗时落盘」，漏改 ref
-   * 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
-   *
-   * 【合并之后上面那句要重读】两条路现在读的是**同一个对象**：漏改下面那个依赖数组，
-   * memo 不重算，于是防抖的载荷与关窗的快照一起停在旧值上——那个字段的改动在别的依赖也
-   * 变化之前，哪条路都带不上去（既不报错、也不落盘，只是悄悄不变）。所以依赖数组必须与
-   * 返回对象里的字段一一对应；字段也只在这一处增删。
-   *
-   * 【`shortcuts` 这一项是这条规矩的活例】它曾经恒为写死的 `{}`、因此**不在依赖数组里**
-   * ——那时没有后果（那个值永远不会变）。接上状态之后两处必须同时改，两种漏法都只静默：
-   * 留着写死的 `{}`，手改过 `settings.json` 的人启动一次就会被 600ms 那次防抖**无声冲成
-   * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
-   *
-   * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
-   * 「在设置里录一条新快捷键并保存」管后者。
-   *
-   * 【后者的载荷断言为什么必须排在按新键导入之前】那一步会动 `lastSourcePath`（memo 的另一个
-   * 依赖），memo 被带着重算——而**重算本身不给漏依赖这件事解围**：此刻落盘的仍是重算前那一次
-   * 排的防抖写。真正让它隐形的是**紧接着又落一次盘**：重算改了 `settings` 的身份，防抖再排一发，
-   * 600ms 后写下的那一份就是带上了新表的。所以断言一旦排到那两次写之后、读的又是最后一次调用，
-   * 它就永远看到正确的那一份。实测（变异＝值留住、只把 `shortcuts` 从依赖数组里删掉）：
-   * 断言排在导入之后且**不补推进**时这条仍红；**再补一次 `advanceTimersByTimeAsync(2000)`**
-   * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
+   * 最新设置的同步镜像，给 `useCallback` 与事件回调读。
+   * 直接闭包 `settings` 会永久停在首次渲染那份；每个字段各挂一个 ref 则是同一事实的多份副本。
    */
-  const settings: AppSettings = useMemo(
-    () => ({
-      docTitle,
-      themeSource,
-      darkPaper,
-      lastSourcePath,
-      ratio: globalRatio,
-      workDocPath,
-      bossFillPercent,
-      pageFontSize,
-      shortcuts
-    }),
-    [
-      docTitle,
-      themeSource,
-      darkPaper,
-      lastSourcePath,
-      globalRatio,
-      workDocPath,
-      bossFillPercent,
-      pageFontSize,
-      shortcuts
-    ]
-  )
-  settingsRef.current = settingsLoaded ? settings : null
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+  const settingsLoadedRef = useRef(false)
+  settingsLoadedRef.current = settingsLoaded
+
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
 
@@ -11700,113 +11644,15 @@ export default function App() {
     return parseMarkdown(shownNovel.flatText)
   }, [shownNovel])
 
-  /**
-   * 量高度用的隐藏副本开关。默认关：那份副本是**整篇**文档的 DOM，
-   * 每次按键都渲染它不可接受。只有「要算铺满切点」时才开一下（Task 11）。
-   */
-  const [measuring, setMeasuring] = useState(false)
-  /** 隐藏副本的根元素。`MarkdownView` 挂载时交过来，量高度时读它的直接子元素 */
-  const measureElRef = useRef<HTMLElement | null>(null)
-  const onMeasureNode = useCallback((el: HTMLElement | null): void => {
-    measureElRef.current = el
-  }, [])
-
-  /**
-   * 量好的块高表。
-   *
-   * 【为什么缓存】算铺满切点要用它，而它只跟「文档 + 样式」有关，与铺满百分比无关。
-   * 于是按 ⌘⇧↑/↓ 时只重算切点，不重量。挂 `doc` 一起存，换文档自然失效。
-   */
-  const heightsRef = useRef<{ doc: unknown; heights: BlockHeight[] } | null>(null)
-  /** 有一次「开量高度」在等结果：量完要拿它接着算切点 */
-  const pendingFillRef = useRef<number | null>(null)
-
-  /** 纸张正文区的高度。**量出来的，不是写死的 912**。 */
-  const pageTextHeight = useCallback((): number => {
-    const el = document.querySelector('.wt-page')
-    if (!(el instanceof HTMLElement)) return 0
-    const cs = getComputedStyle(el)
-    const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
-    return Number.isFinite(inner) && inner > 0 ? inner : 0
-  }, [])
-
-  /**
-   * 铺满铺的是**工作文档**，所以「要不要量高度」判的也是它，**不是当前显示的那一份**。
-   *
-   * 【为什么不能用 `mdDoc`】`mdDoc` 跟着 `shownNovel = bossActive ? workNovel : novel` 走，
-   * 而按下老板键那一刻 `bossActive` 还是 false——那一下 `mdDoc` 还是**小说**那一份的
-   * （小说是 txt 时为 null）。照 `mdDoc` 分岔，进老板模式就永远进不了量高度那一支，
-   * 铺出来的是按字数估的切点、屏幕底部切在半句话上；只有「已经在老板模式里」再按
-   * ⌘⇧↑/↓ 才会量。实测（Task 11 收尾）：把分岔改回 `mdDoc`，那条「按 ⌘⇧B 会调
-   * `measureBlocks`」的用例当场红。
-   */
+  /** 铺满铺的是工作文档，所以判的是它、不是当前显示的那份。 */
   const workIsMarkdown = workNovel !== null && isMarkdownPath(workNovel.sourcePath)
 
-  /**
-   * 铺满：能算就直接算，算不了就先开量高度、等量完再算。
-   *
-   * 【三条路，顺序不能换】
-   * 1. 有缓存（同一份文档量过）→ 直接算切点；
-   * 2. 没有缓存 → 开 `measuring` 渲染隐藏副本，把百分比记在 `pendingFillRef` 里，
-   *    量完的那个 effect 接着算；
-   * 3. 量不出来（jsdom、或者量出来是 0）→ **退回按字符数**（`fillCharsFor`）。
-   *    这条兜底是设计第 7 节写明的，也是这条路径唯一能在单测里跑到的那一半。
-   */
-  const applyFill = useCallback(
-    (percent: number): void => {
-      const eng = workEngine
-      if (!eng) return
-      const cached = heightsRef.current
-      if (workIsMarkdown && cached && cached.doc === workNovel) {
-        eng.revealTo(pickFillCut(cached.heights, (pageTextHeight() * percent) / 100))
-        return
-      }
-      if (!workIsMarkdown) {
-        // 不是 md：没有结构可量，本来就是按字符数铺
-        eng.revealTo(fillCharsFor(percent, pageFontSizeRef.current))
-        return
-      }
-      pendingFillRef.current = percent
-      setMeasuring(true)
-    },
-    [workEngine, workNovel, workIsMarkdown, pageTextHeight]
-  )
-
-  /**
-   * 隐藏副本渲染完之后：量高度、算切点、把开关关掉。
-   *
-   * 【为什么必须在 effect 里】量的是 DOM 的布局，而布局要等 commit 之后才有。
-   */
-  useEffect(() => {
-    if (!measuring) return
-    const el = measureElRef.current
-    /**
-     * 【为什么整个包在 try 里】设计第 7 节那条兜底写的是「量不出高度（jsdom 里
-     * `offsetHeight` 恒为 0，**或测量抛错**）→ 退回按字符数」。`offsetHeight` 本身
-     * 不抛，但读布局在渲染异常、DOM 已被卸载之类的情况下会抛，而这条 effect 里抛出去
-     * 就是一次未捕获异常。包住它，兜底路径才真的是兜底。
-     *
-     * 【为什么不再传 ends】`measureBlocks` 现在从 DOM 自己的 `data-block-end` 读偏移，
-     * 不再吃一个外部数组。原因是那样是「两处各自决定有几个块」，永远能对不上；
-     * 而对不上的后果是整篇静默退回按字符数铺（见 `MarkdownView` 里那段说明）。
-     */
-    let heights: BlockHeight[] | null = null
-    try {
-      heights = measureBlocks(el)
-    } catch (err) {
-      console.warn('[wt] 量 markdown 块高失败，退回按字符数铺：', err)
-    }
-    const percent = pendingFillRef.current
-    pendingFillRef.current = null
-    if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
-    // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
-    workEngine?.revealTo(
-      heights
-        ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100)
-        : fillCharsFor(percent ?? 0, pageFontSizeRef.current)
-    )
-    setMeasuring(false)
-  }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
+  const { measuring, onMeasureNode, applyFill, invalidateHeights } = useBossFill({
+    workNovel,
+    workEngine,
+    workIsMarkdown,
+    pageFontSize
+  })
 
   const mdSource: MarkdownSource | null =
     mdDoc && state
@@ -11823,7 +11669,11 @@ export default function App() {
   const flushSession = useCallback((): void => {
     const api = getApi()
     const current = novelEngineRef.current
-    if (api && current) void api.saveSession(current.toSession())
+    if (!api || !current) return
+    // 这里没有界面可提示（关窗路径），至少让失败留下痕迹而不是被 void 吞掉。
+    void api.saveSession(current.toSession()).then((r) => {
+      if (!r.ok) console.warn('[wt] 保存阅读进度失败：', r.reason)
+    })
   }, [])
 
   /**
@@ -11858,21 +11708,24 @@ export default function App() {
       setEngine(
         session
           ? TypingEngine.fromSession(next, session)
-          : new TypingEngine(next, { ratio: globalRatioRef.current })
+          : new TypingEngine(next, { ratio: settingsRef.current.ratio })
       )
       setExpanded(false)
-      setLastSourcePath(next.sourcePath)
+      patchSettings({ lastSourcePath: next.sourcePath })
     },
-    [flushSession]
+    [flushSession, patchSettings]
   )
 
   const handleImport = useCallback(async () => {
     const api = getApi()
     if (!api) return
-    const next = await api.importNovel()
-    if (!next) return
-    await openNovel(next)
-  }, [openNovel])
+    const result = await api.importNovel()
+    if (!result.ok) {
+      if (result.reason !== 'canceled') notify(`导入失败：${result.reason}`)
+      return
+    }
+    await openNovel(result.value)
+  }, [openNovel, notify])
 
   const handleClearSession = useCallback(async () => {
     const api = getApi()
@@ -11887,9 +11740,10 @@ export default function App() {
     setEngine(null)
     // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
     // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
-    setLastSourcePath(null)
-    await api.clearSession()
-  }, [])
+    patchSettings({ lastSourcePath: null })
+    const result = await api.clearSession()
+    if (!result.ok) notify(`清除阅读记录失败：${result.reason}`)
+  }, [notify, patchSettings])
 
   /**
    * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
@@ -11904,9 +11758,13 @@ export default function App() {
   const handleImportWorkDoc = useCallback(async (): Promise<void> => {
     const api = getApi()
     if (!api) return
-    const doc = await api.importWorkDoc()
-    // null ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
-    if (!doc) return
+    const result = await api.importWorkDoc()
+    // 'canceled' ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
+    if (!result.ok) {
+      if (result.reason !== 'canceled') notify(result.reason)
+      return
+    }
+    const doc = result.value
     /**
      * **空文件在这里出声并拒绝**（设计 §9：「当场拒绝 + toast，设置不变」）。
      *
@@ -11921,30 +11779,26 @@ export default function App() {
       notify('这个文件是空的，换一个')
       return
     }
-    // 【表达意图的冗余，不是承重的那道闸】块高表真正的失效判据是**身份**
-    // （`cached.doc === workNovel`），而这里必然换上一个新的 `workNovel`、陈旧表本来就命中
-    // 不了。留着它是「别捏着上一份文档的高度数组不放」。同款一处见 `handleRemoveWorkDoc`。
-    heightsRef.current = null
+    // 块高表真正的失效判据是身份（换文档就命中不了），这里只是别捏着上一份数组不放。
+    invalidateHeights()
     setWorkNovel(doc)
-    setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+    setWorkEngine(new TypingEngine(doc, { ratio: settingsRef.current.ratio }))
     // 路径就在 Novel 里，不必让 IPC 多返回一个值
-    setWorkDocPath(doc.sourcePath)
+    patchSettings({ workDocPath: doc.sourcePath })
     setWorkDocBroken(false)
     setBossMode(false)
     notify('已导入工作文档')
-  }, [notify])
+  }, [notify, patchSettings, invalidateHeights])
 
   const handleRemoveWorkDoc = useCallback((): void => {
-    // 同 `handleImportWorkDoc`：身份（`workNovel` 变成 null）已经足以判失效，这一行是
-    // 「顺手丢掉那份引用」，不是任何用例的判据。
-    heightsRef.current = null
+    invalidateHeights()
     setWorkNovel(null)
     setWorkEngine(null)
-    setWorkDocPath(null)
+    patchSettings({ workDocPath: null })
     setWorkDocBroken(false)
     setBossMode(false)
     notify('已移除工作文档')
-  }, [notify])
+  }, [notify, patchSettings, invalidateHeights])
 
   /**
    * 老板键：切到工作文档 / 切回小说。
@@ -11963,7 +11817,7 @@ export default function App() {
       return
     }
     const next = !bossMode
-    if (next) applyFill(bossFillPercentRef.current)
+    if (next) applyFill(settingsRef.current.bossFillPercent)
     /**
      * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
      *
@@ -11984,12 +11838,12 @@ export default function App() {
   /** 老板键铺满 +/-：改设置；正在老板模式时**立刻重铺**，让用户当场看到效果。 */
   const adjustBossFill = useCallback(
     (dir: 1 | -1): void => {
-      const next = stepBossFill(bossFillPercentRef.current, dir)
-      if (next === bossFillPercentRef.current) {
+      const next = stepBossFill(settingsRef.current.bossFillPercent, dir)
+      if (next === settingsRef.current.bossFillPercent) {
         notify(`铺满已是 ${next}%`)
         return
       }
-      setBossFillPercent(next)
+      patchSettings({ bossFillPercent: next })
       // 这一处会**刻意**往回退（按 − 就是要少显示一点）。
       //
       // 【但「会往回退」不是这一处独有的】`toggleBoss` 那条路也会：在**非**老板模式下把铺满量
@@ -12016,10 +11870,10 @@ export default function App() {
       notify(
         workIsMarkdown
           ? `铺满 ${next}%`
-          : `铺满 ${next}% ≈ ${fillCharsFor(next, pageFontSizeRef.current)} 字`
+          : `铺满 ${next}% ≈ ${fillCharsFor(next, settingsRef.current.pageFontSize)} 字`
       )
     },
-    [bossActive, applyFill, notify, workIsMarkdown]
+    [bossActive, applyFill, notify, workIsMarkdown, patchSettings]
   )
 
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
@@ -12034,45 +11888,28 @@ export default function App() {
 
     const boot = async (): Promise<void> => {
       // 设置先读：它同时给出「上次打开的是哪本」。命令行参数优先于它。
-      const settings = await api.loadSettings()
+      const loaded = await api.loadSettings()
       if (cancelled) return
-      setDocTitle(settings.docTitle)
-      setDarkPaper(settings.darkPaper)
-      setThemeSource(settings.themeSource)
-      setLastSourcePath(settings.lastSourcePath)
-      setGlobalRatio(settings.ratio)
-      setShortcuts(settings.shortcuts)
-      // 【这一夹是必须的，不是防御】settingsProblem 只判「是不是有限数字」，值域夹紧归 core
-      // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
-      // 而第一次按「铺满 −」会从 500 一步跳到 100。
-      setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
-      // 同一姿态：settingsProblem 只判「是不是有限数字」，12–24 这个值域在这里夹。
-      setPageFontSize(clampPageFontSize(settings.pageFontSize))
-      setWorkDocPath(settings.workDocPath)
+      // 值域夹紧归 core：settingsProblem 只判「是不是有限数字」，500 这种值会原样进状态、
+      // 再照原样写回磁盘，而第一次按「铺满 −」会从 500 一步跳到 100。
+      replaceSettings({
+        ...loaded,
+        bossFillPercent: clampBossFillPercent(loaded.bossFillPercent),
+        pageFontSize: clampPageFontSize(loaded.pageFontSize)
+      })
       setSettingsLoaded(true)
 
       // 工作文档：**启动时就读进来常驻内存**。老板键要的是零延迟——等按下去了才读盘，
       // 老板已经站在旁边了。读不出来时不弹打扰提示（那会在你早忘了这回事的时候吓你一下），
       // 只在设置里标红，以及按老板键时给一句说明。
-      if (settings.workDocPath) {
-        const doc = await api.loadWorkDoc(settings.workDocPath)
+      if (loaded.workDocPath) {
+        const doc = await api.loadWorkDoc(loaded.workDocPath)
         if (cancelled) return
         if (doc) {
           setWorkNovel(doc)
-          // 与「新导入一本书」同一条路：拿全局比例当初值。
-          //
-          // 【这里读的是刚读回来的 `settings.ratio`，不是 `globalRatioRef.current`】两者本该
-          // 同值，但**那个 ref 在这一次 await 之后还是旧的**：写 ref 发生在渲染期，而上面那几行
-          // `setGlobalRatio(settings.ratio)` 排的那次渲染还没提交，`await api.loadWorkDoc(...)`
-          // 就已经返回了。实测（探针＝把 loadWorkDoc 的桩拖成一个 50ms 的宏任务）：延迟之后比值
-          // 就对上了——所以这不是「值算错了」而是**竞态**，真实 IPC 的耗时碰巧总让 React 先渲染完，
-          // 于是它只在单测里显形。刚读回来的这个值没有这个问题，语义与「拿全局比例当初值」一致。
-          //
-          // 【别为了「两处看起来一致」把这里换回 ref】`openNovel` 必须读 ref，是因为它闭包里
-          // 那个 `globalRatio` 是**首次渲染**时的旧值（它的依赖只有 `flushSession`，见
-          // `globalRatioRef` 那段说明）；而 boot 里 `settings` 就在手边，压根不存在那个问题。
-          // 同一个写法在两个不同前提下会变成教条——这里要的是「当前值」，那里要的是「绕开闭包」。
-          setWorkEngine(new TypingEngine(doc, { ratio: settings.ratio }))
+          // 与「新导入一本书」同一条路：拿全局比例当初值。读刚读回来的那份而不是
+          // `settingsRef`：后者要等这次 setSettings 的渲染提交，而这里隔着一次 await。
+          setWorkEngine(new TypingEngine(doc, { ratio: loaded.ratio }))
         } else {
           // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
           setWorkDocBroken(true)
@@ -12084,7 +11921,7 @@ export default function App() {
       // 合并成一次之后必须显式写出来——否则「命令行指了一个打不开的文件」会直接落到空状态，
       // 而磁盘上明明有一本上次读的书。去重是为了两处指向同一个路径时不要试两遍。
       const initialPath = await api.initialNovelPath()
-      const targets = [initialPath, settings.lastSourcePath].filter(
+      const targets = [initialPath, loaded.lastSourcePath].filter(
         (p, i, arr): p is string => typeof p === 'string' && p !== '' && arr.indexOf(p) === i
       )
 
@@ -12102,8 +11939,10 @@ export default function App() {
         try {
           const loaded = await api.openNovelPath(target)
           if (cancelled) return
-          // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
-          await openNovel(loaded)
+          // 这个目标打不开：试下一个
+          if (!loaded.ok) continue
+          // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 sourcePath 名下那本书的进度
+          await openNovel(loaded.value)
           return
         } catch {
           // 这个目标不可用，试下一个；都不可用就停在空状态，等用户重新导入
@@ -12115,7 +11954,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [openNovel])
+  }, [openNovel, replaceSettings])
 
   // 菜单命令 → 渲染进程动作
   useEffect(() => {
@@ -12175,7 +12014,8 @@ export default function App() {
   useShortcutDispatcher({
     platform,
     table: shortcutTable,
-    enabled: !recording,
+    // 对话框开着时也静音：否则 ⌘⇧B 会在对话框后面切书，对话框里的比例还是旧值。
+    enabled: !recording && !settingsOpen,
     actions: {
       import: () => void handleImport(),
       // 【老板模式下不写】收起在那边是**强制覆盖**的（见下面 ChapterList 的 `collapsed`），
@@ -12200,10 +12040,12 @@ export default function App() {
     const api = getApi()
     if (!engine || !api) return
     const timer = window.setTimeout(() => {
-      void api.saveSession(engine.toSession())
+      void api.saveSession(engine.toSession()).then((r) => {
+        if (!r.ok) notify(`保存阅读进度失败：${r.reason}`)
+      })
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [engine, state])
+  }, [engine, state, notify])
 
   // 设置持久化（防抖）。与会话同一套节奏：600ms 内的连续改动只落盘一次。
   useEffect(() => {
@@ -12211,10 +12053,12 @@ export default function App() {
     // 读回来之前不写，见 settingsLoaded 的说明
     if (!api || !settingsLoaded) return
     const timer = window.setTimeout(() => {
-      void api.saveSettings(settings)
+      void api.saveSettings(settings).then((r) => {
+        if (!r.ok) notify(`保存设置失败：${r.reason}`)
+      })
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [settings, settingsLoaded])
+  }, [settings, settingsLoaded, notify])
 
   // 关闭前强制落盘
   useEffect(() => {
@@ -12223,15 +12067,16 @@ export default function App() {
     const flush = (): void => {
       flushSession()
       // 设置也有防抖窗口：改完文档名立刻关窗（或退出）会落在窗口里，关窗前的最后一次补上。
-      const settings = settingsRef.current
-      if (settings) void api.saveSettings(settings)
+      if (!settingsLoadedRef.current) return
+      void api.saveSettings(settingsRef.current).then((r) => {
+        if (!r.ok) console.warn('[wt] 关窗前保存设置失败：', r.reason)
+      })
     }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
   }, [flushSession])
 
   const visibleText = shownEngine?.visibleText ?? ''
-  const revealedChars = state ? state.cursor - state.revealStart : 0
 
   /**
    * 让阅读区跟着光标滚。
@@ -12291,9 +12136,9 @@ export default function App() {
     () => ({
       ratio: state?.ratio,
       mode: state?.mode,
-      globalRatio,
+      globalRatio: settings.ratio,
       onRatioChange: (n: number) => shownEngine?.setRatio(n),
-      onGlobalRatioChange: setGlobalRatio,
+      onGlobalRatioChange: (n: number) => patchSettings({ ratio: n }),
       onModeChange: (m: InputMode) => shownEngine?.setMode(m),
       onImport: () => void handleImport(),
       onClearSession: () => void handleClearSession(),
@@ -12310,13 +12155,25 @@ export default function App() {
     [
       state?.ratio,
       state?.mode,
-      globalRatio,
+      settings.ratio,
       shownEngine,
+      patchSettings,
       handleImport,
       handleClearSession,
       toast,
       notify
     ]
+  )
+
+  /**
+   * 快捷键的提交必须走函数式更新：一次「保存」会在同一个事件里连续提交多条，
+   * 每条都基于同一份旧表就会后写覆盖先写，只有最后一条生效（D1）。
+   */
+  const handleShortcutsChange = useCallback(
+    (update: (prev: (typeof shortcuts)) => typeof shortcuts): void => {
+      patchSettings((prev) => ({ shortcuts: update(prev.shortcuts) }))
+    },
+    [patchSettings]
   )
 
   return (
@@ -12325,19 +12182,19 @@ export default function App() {
         <Ribbon
           docTitle={docTitle}
           displayTitle={bossActive && workNovel ? workNovel.title : docTitle}
-          onDocTitleChange={setDocTitle}
+          onDocTitleChange={(v) => patchSettings({ docTitle: v })}
           darkPaper={darkPaper}
-          onDarkPaperChange={setDarkPaper}
+          onDarkPaperChange={(v) => patchSettings({ darkPaper: v })}
           themeSource={themeSource}
-          onThemeSourceChange={setThemeSource}
+          onThemeSourceChange={(v) => patchSettings({ themeSource: v })}
           pageFontSize={pageFontSize}
-          onPageFontSizeChange={setPageFontSize}
+          onPageFontSizeChange={(v) => patchSettings({ pageFontSize: v })}
           novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
-          onShortcutsChange={setShortcuts}
+          onShortcutsChange={handleShortcutsChange}
           onRecordingChange={setRecording}
           workDocTitle={workNovel?.title ?? null}
           workDocPath={workDocPath}
@@ -12382,7 +12239,7 @@ export default function App() {
 
         <StatusBar
           novel={shownNovel}
-          revealedChars={revealedChars}
+          cursor={state?.cursor ?? 0}
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}
@@ -12415,7 +12272,7 @@ import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import type { WtApi } from '../../src/core/api'
 
 /** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
 const FILL_CHARS = fillCharsFor(100)
@@ -12478,8 +12335,10 @@ function installApi(
     // importWorkDoc / loadWorkDoc）。**只补它**——那两个已经在下头，再写一遍就是对象字面量
     // 重复键（TS1117）。
     platform: 'darwin',
-    importNovel: vi.fn(async () => novel),
-    openNovelPath: vi.fn(async () => novel as Novel),
+    importNovel: vi.fn(async () =>
+      novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
+    ),
+    openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
     initialNovelPath: vi.fn(async () => null),
     loadSession: vi.fn(async (sourcePath: string) => {
       sessionAskedFor = sourcePath
@@ -12487,8 +12346,9 @@ function installApi(
     }),
     saveSession: vi.fn(async (s: PersistedSession) => {
       saved = s
+      return { ok: true as const, value: undefined }
     }),
-    clearSession: vi.fn(async () => {}),
+    clearSession: vi.fn(async () => ({ ok: true as const, value: undefined })),
     /**
      * 【默认桩刻意不指任何书】`lastSourcePath` 是启动恢复的唯一线索，给成 null 就等于
      * 「用户上次什么都没打开」——启动什么都不开。于是凡是要有书的用例**都必须自己走导入路径**
@@ -12499,14 +12359,16 @@ function installApi(
      * 需要「设置指路 → 启动恢复」那一条路径的用例（目前只有一条）在自己的体内显式覆盖它。
      */
     loadSettings: vi.fn(async () => settings),
-    saveSettings: vi.fn(async () => {}),
+    saveSettings: vi.fn(async () => ({ ok: true as const, value: undefined })),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
-    setThemeSource: vi.fn(async () => {}),
+    setThemeSource: vi.fn(async () => ({ ok: true as const, value: undefined })),
     onThemeChange: vi.fn(() => () => {}),
     // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
     // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
-    importWorkDoc: vi.fn(async () => workDoc),
+    importWorkDoc: vi.fn(async () =>
+      workDoc ? { ok: true as const, value: workDoc } : { ok: false as const, reason: 'canceled' }
+    ),
     loadWorkDoc: loadWorkDocMock,
     // 【Task 9 补的第三个有闸的替身】本文件这个对象字面量的目标类型是 `WtApi`（见上面那段
     // 说明），所以少写一个成员同样报 TS2741——计划 Task 9 Step 6 只点了 `tests/setup.ts`
@@ -12692,8 +12554,10 @@ describe('App 端到端（单测层）', () => {
     }))
     ;(window.api as unknown as { openNovelPath: unknown }).openNovelPath = vi.fn(
       async (p: string) => {
-        if (p === '/tmp/打不开.txt') throw new Error('模拟：命令行指的文件打不开')
-        return novel
+        if (p === '/tmp/打不开.txt') {
+          return { ok: false as const, reason: '模拟：命令行指的文件打不开' }
+        }
+        return { ok: true as const, value: novel }
       }
     )
 
@@ -12835,7 +12699,10 @@ describe('设置的持久化', () => {
   // 少了它，一个「防抖根本没接上」的实现也能让第一段绿。
   it('读回设置之前不写盘（否则会用自己的默认值覆盖磁盘）', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     let release: (s: AppSettings) => void = () => {}
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(
       () =>
@@ -12884,7 +12751,10 @@ describe('设置的持久化', () => {
   // 在补上本条之前全套 372 条**照样全绿**，补上之后这一条单独变红。
   it('磁盘上的 workDocPath / bossFillPercent 原样写回，不被默认值冲掉', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
       ...defaultSettings(),
       workDocPath: '/tmp/周报.txt',
@@ -12907,7 +12777,10 @@ describe('设置的持久化', () => {
   // 实测（变异＝把那一夹去掉）：在补上本条之前全套 373 条**照样全绿**。
   it('磁盘上超出值域的 bossFillPercent 进状态时就夹紧，写回的也是夹紧后的值', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
       ...defaultSettings(),
       bossFillPercent: 500
@@ -12922,7 +12795,10 @@ describe('设置的持久化', () => {
 
   it('改了文档名之后会把设置写回去', async () => {
     installApi(makeNovel())
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
     render(<App />)
     // 【先让启动那一次设置读盘落地】它是异步的，而下面几步是同步点击。少了这一句，
@@ -13141,12 +13017,16 @@ describe('快捷键接线', () => {
     render(<App />)
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
-    openSettings()
 
     // 【前提自检：没在录制时这条键是好使的】少了它，一个「分发器压根没接上」的实现
     // （按什么都没反应）也能让下面那两段绿。
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
     expect(screen.queryByTestId('chapter-list')).toBeNull()
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    openSettings()
+    // 对话框开着时分发器整体静音：⌘⇧B / Ctrl+Shift+H 这类动作不能绕过模态改后面的状态。
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
 
@@ -13203,6 +13083,41 @@ describe('快捷键接线', () => {
     // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
     fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  it('一次保存改两条快捷键：两条都生效（字段级 commit 不能基于同一份旧表）', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    openSettings()
+
+    const importBox = screen.getByTestId('shortcut-import-input')
+    fireEvent.click(importBox)
+    fireEvent.keyDown(importBox, { code: 'KeyJ', ctrlKey: true })
+    const sidebarBox = screen.getByTestId('shortcut-toggle-sidebar-input')
+    fireEvent.click(sidebarBox)
+    fireEvent.keyDown(sidebarBox, { code: 'KeyK', ctrlKey: true, altKey: true })
+    expect(sidebarBox.textContent).toBe('Ctrl+Alt+K')
+
+    // 同一个事件里连续提交两条，然后只点一次保存
+    fireEvent.click(screen.getByTestId('settings-save'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as { mock: { calls: AppSettings[][] } }
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.shortcuts).toEqual({ import: 'Ctrl+KeyJ', 'toggle-sidebar': 'Ctrl+Alt+KeyK' })
+
+    // 两条都真的生效：一条触发导入、一条收起章节栏
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
+    fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
+    await waitFor(() => expect(importNovel.mock.calls.length).toBe(before + 1))
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    fireEvent.keyDown(window, { code: 'KeyK', ctrlKey: true, altKey: true })
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
   })
 })
 
@@ -14262,6 +14177,38 @@ test('重启后恢复到上次阅读位置，无需重新输入', async () => {
 
   await expect.poll(revealed).toBe(40)
 })
+
+test('preload 暴露的接口与渲染层契约一致（进程边界的运行期闸）', async () => {
+  // 类型闸（preload 的对象字面量 : WtApi）只在编译期；这里钉住真机上确实挂出了同一组方法。
+  const surface = await win.evaluate(() => {
+    const raw = (window as unknown as { api?: Record<string, unknown> }).api
+    if (!raw) return null
+    return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, typeof v]))
+  })
+  expect(surface).not.toBeNull()
+  const expected: Record<string, string> = {
+    platform: 'string',
+    importNovel: 'function',
+    importWorkDoc: 'function',
+    loadWorkDoc: 'function',
+    loadWorkDocImage: 'function',
+    openNovelPath: 'function',
+    initialNovelPath: 'function',
+    loadSession: 'function',
+    saveSession: 'function',
+    clearSession: 'function',
+    loadSettings: 'function',
+    saveSettings: 'function',
+    onMenuCommand: 'function',
+    getTheme: 'function',
+    setThemeSource: 'function',
+    onThemeChange: 'function'
+  }
+  expect(Object.keys(surface!).sort()).toEqual(Object.keys(expected).sort())
+  for (const [key, kind] of Object.entries(expected)) {
+    expect(surface![key]).toBe(kind)
+  }
+})
 ```
 
 - [ ] **Step 3: 运行 E2E**
@@ -14545,7 +14492,7 @@ import {
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
-import type { ThemeSource } from '../types/global'
+import type { ThemeSource } from '../../../core/types'
 import {
   IconBook,
   IconClear,
@@ -14605,7 +14552,10 @@ export interface SettingsDialogProps {
   /** 平台原值（`window.api.platform`），用来决定 ↺ 恢复成哪一套默认值。 */
   platform: string
   /** 快捷键改完的提交。与文档名一样，点了保存才生效。 */
-  onShortcutsChange: (next: Record<string, string | undefined>) => void
+  /** 函数式更新：一次保存会连续提交多条，基于旧表各自覆盖会只剩最后一条。 */
+  onShortcutsChange: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   /**
    * 录制态变化时通知外面。
    * 【为什么必须通知】录制期间分发器必须静音——不然录 `⌘O` 会当场触发一次真导入，
@@ -14856,13 +14806,13 @@ export function SettingsDialog({
         // 草稿可能是「录制中」这个状态，此时不留任何东西；真出草稿时它一定已经是合法规范串
         normalize: (raw, committed) => (raw === '' ? committed : raw),
         commit: (value) => {
-          // 【与默认值相同时把这一条抹掉】稀疏表里「显式写回默认值」与「从未改过」对读取方
-          // 完全没有区别（`resolveShortcuts` 两者都落到同一个默认值），那就没有理由把表撑大。
-          // 点 ↺ 之后这一条消失，正是这个意思。
-          const next = { ...shortcuts }
-          if (value === defaultShortcut(def.id, kind)) delete next[def.id]
-          else next[def.id] = value
-          onShortcutsChange(next)
+          // 与默认值相同时把这一条抹掉：稀疏表里「显式写回默认值」与「从未改过」等价。
+          onShortcutsChange((prev) => {
+            const next = { ...prev }
+            if (value === defaultShortcut(def.id, kind)) delete next[def.id]
+            else next[def.id] = value
+            return next
+          })
         }
       }))
     ],
@@ -14991,7 +14941,8 @@ export function SettingsDialog({
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
+      // 合成中的 Esc 是输入法自己的（取消候选），不是关对话框
+      if (e.key !== 'Escape' || e.isComposing) return
       onClose()
     }
     window.addEventListener('keydown', onKeyDown)
@@ -15127,7 +15078,8 @@ export function SettingsDialog({
                   onBlur={() => blur('doc-title')}
                   // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
+                    // 合成中的 Enter 是选词，不是保存
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                   }}
                 />
               </div>
@@ -15155,7 +15107,7 @@ export function SettingsDialog({
                       onChange={(e) => setDraft('global-ratio', e.target.value)}
                       onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSave()
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                       }}
                     />
                     <span className="wt-ratio__label">字</span>
@@ -15175,7 +15127,7 @@ export function SettingsDialog({
                       onChange={(e) => setDraft('ratio', e.target.value)}
                       onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSave()
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                       }}
                     />
                     <span className="wt-ratio__label">字</span>
@@ -15230,7 +15182,8 @@ export function SettingsDialog({
                     '字号'
                   )}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
+                    // 合成中的 Enter 是选词，不是保存
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                   }}
                 />
                 <span className="wt-ratio__label">px</span>
@@ -15474,7 +15427,7 @@ import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
-import type { ThemeSource } from '../../src/renderer/src/types/global'
+import type { ThemeSource } from '../../src/core/types'
 
 interface SetupOptions {
   ratio?: number
@@ -15500,7 +15453,9 @@ interface SetupOptions {
    */
   shortcuts?: Record<string, string>
   platform?: string
-  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  onShortcutsChange?: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
   /** 阅读区正文字号。不传＝默认值（`PAGE_FONT_SIZE_DEFAULT`） */
@@ -16391,9 +16346,10 @@ describe('设置里的快捷键录制', () => {
     fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), { code: 'KeyI', ctrlKey: true })
     expect(onShortcutsChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('settings-save'))
-    expect(onShortcutsChange).toHaveBeenCalledWith(
-      expect.objectContaining({ import: 'Ctrl+KeyI' })
-    )
+    const update = onShortcutsChange.mock.calls.at(-1)![0] as (
+      prev: Record<string, string | undefined>
+    ) => Record<string, string | undefined>
+    expect(update({})).toEqual(expect.objectContaining({ import: 'Ctrl+KeyI' }))
   })
 
   it('↺ 恢复该平台默认值，并且这一条从稀疏表里消失', () => {
@@ -16407,9 +16363,11 @@ describe('设置里的快捷键录制', () => {
     expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
 
     fireEvent.click(screen.getByTestId('settings-save'))
-    // ……而且「和默认一样」时不该写进稀疏表：`{}` ＝ 全默认。稀疏表里「显式写回默认值」
-    // 与「从未改过」对读取方完全没区别，没有理由把表撑大。
-    expect(onShortcutsChange).toHaveBeenCalledWith({})
+    // ……而且「和默认一样」时不该写进稀疏表：`{}` ＝ 全默认。
+    const update = onShortcutsChange.mock.calls.at(-1)![0] as (
+      prev: Record<string, string | undefined>
+    ) => Record<string, string | undefined>
+    expect(update({ import: 'Ctrl+KeyI' })).toEqual({})
   })
 
   it('录制期间分发器必须静音——否则录 ⌘O 会当场触发一次真导入', () => {
@@ -17445,7 +17403,8 @@ export const IconMoon = bundleIcon(WeatherMoonFilled, WeatherMoonRegular)
 
 ```ts
 import { useEffect } from 'react'
-import type { ThemeSource, WtApi } from '../types/global'
+import { getApi } from '../api'
+import type { ThemeSource } from '../../../core/types'
 
 /**
  * 平台在**模块加载时**就写进 `<html data-platform>`。
@@ -17454,7 +17413,7 @@ import type { ThemeSource, WtApi } from '../types/global'
  * 标题条的文字会先跳到红绿灯底下、再弹回来。模块级副作用的代价是这一个文件不再"纯"，
  * 但 `App` 会 import 它，所以它的求值仍早于首次渲染。
  */
-const hostApi = (window as unknown as { api?: WtApi }).api
+const hostApi = getApi()
 if (hostApi?.platform) document.documentElement.dataset.platform = hostApi.platform
 
 /**
@@ -17471,7 +17430,7 @@ export function useSystemTheme(): void {
     const apply = (dark: boolean): void => {
       el.dataset.theme = dark ? 'dark' : 'light'
     }
-    const api = (window as unknown as { api?: WtApi }).api
+    const api = getApi()
     if (!api) return
 
     void api.getTheme().then(apply)
@@ -17528,7 +17487,7 @@ export function usePageFontSize(px: number): void {
  */
 export function useThemePreference(source: ThemeSource): void {
   useEffect(() => {
-    const api = (window as unknown as { api?: WtApi }).api
+    const api = getApi()
     if (!api) return
     void api.setThemeSource(source)
   }, [source])

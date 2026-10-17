@@ -1,7 +1,7 @@
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
 import { defaultSettings } from '../src/core/types'
-import type { WtApi } from '../src/renderer/src/types/global'
+import type { WtApi } from '../src/core/api'
 
 /**
  * 渲染层的**良性** `window.api` 替身：什么都不做，但每个方法都在，且都是 async。
@@ -19,34 +19,13 @@ import type { WtApi } from '../src/renderer/src/types/global'
  * 与 `openNovel`，`loadSettings` / `initialNovelPath` 在它之外）——而这个良性桩的
  * `initialNovelPath` 恒返回 null，所以 `target` 为空、那个 try 根本进不去，异常不会冒出去。
  *
- * 【这个 `WtApi` 是手写接口，不是 preload 的 `typeof api`】它来自
- * `src/renderer/src/types/global.d.ts`；而 `src/preload/index.ts` 末尾那句
- * `export type WtApi = typeof api` **零引用者**（全仓库搜 `WtApi` 只有它自己的定义处）。
- *
- * 【三份拷贝里有两份有闸，别记反】【这一句原来写的是「只有一份有闸」，那已经是假话】
- * 同一个 API 形状在仓库里躺着三处：本文件的 `benignApi`（`: WtApi`）、
- * `tests/unit/app.test.tsx` 的 `installApi`、以及 preload 里那个对象。
- * **前两处的对象字面量目标类型都是 `WtApi`，两个方向都会红**——多写一个成员报 TS2353
- * （对象字面量的多余属性检查），少写一个报 TS2741（缺属性）。本桩在 Task 4 两次实测过；
- * `tests/unit/app.test.tsx` 那份在 Task 9 实测过一次（TS2741），2026-10-14 又复验过一次：
- * 往 `WtApi` 里插一个方法，`tsc --noEmit -p tsconfig.json` 精确报出这两行——
- * `tests/setup.ts` 的 `const benignApi: WtApi = {`（当时在那份文件的 42 行）与
- * `tests/unit/app.test.tsx` 的 `;(window as … as { api: WtApi }).api = {`（当时 67 行），
- * 两条都是 `TS2741`。**所以加一个 API 方法时，这两处都要跟着改。**
- * （行号随这份注释增删就会漂——认上面那两行代码，别认数字。）
- *
- * **真正一条闸都没有的，是 preload 与那份手写接口之间**——同一次复验里 preload 一行都没报，
- * 往 preload 加方法，`pnpm typecheck` 照旧 exit 0。要手工同步的正是那一处，不是前两处。
- *
- * 所以补下面那两行不是「给多余属性找个地方放」——它们在这份桩里是**必填**属性；补上是为了
- * 让本桩继续满足接口，从而让「少写一个就 TS2741」这条闸对之后新增的方法照样有效。
+ * 类型来自 `src/core/api.ts`；preload 的对象字面量也以它为目标类型，所以漏写在两边都会报错。
  */
 const benignApi: WtApi = {
   platform: 'darwin',
-  importNovel: async () => null,
-  // 工作文档这两条：单测里一律「没配工作文档」。要测老板键的用例自己覆盖它们
-  // （见 tests/unit/app.test.tsx 的 installApi）。
-  importWorkDoc: async () => null,
+  importNovel: async () => ({ ok: false, reason: 'canceled' }),
+  // 单测里一律「没配工作文档」。要测老板键的用例自己覆盖它们（见 app.test.tsx 的 installApi）。
+  importWorkDoc: async () => ({ ok: false, reason: 'canceled' }),
   loadWorkDoc: async () => null,
   // 单测里一律「取不到图」，于是渲染层走占位框那条路
   loadWorkDocImage: async () => null,
@@ -55,14 +34,14 @@ const benignApi: WtApi = {
   },
   initialNovelPath: async () => null,
   loadSession: async () => null,
-  saveSession: async () => {},
-  clearSession: async () => {},
+  saveSession: async () => ({ ok: true, value: undefined }),
+  clearSession: async () => ({ ok: true, value: undefined }),
   loadSettings: async () => defaultSettings(),
-  saveSettings: async () => {},
+  saveSettings: async () => ({ ok: true, value: undefined }),
   onMenuCommand: () => () => {},
   // 单测里一律当作浅色系统外观——深色主题的判据是真机截图，不是 jsdom
   getTheme: async () => false,
-  setThemeSource: async () => {},
+  setThemeSource: async () => ({ ok: true, value: undefined }),
   onThemeChange: () => () => {}
 }
 

@@ -12,7 +12,7 @@
     "postinstall": "install-electron",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "node scripts/check-imports.mjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "electron-vite build && playwright test",
@@ -21,16 +21,11 @@
     "dist:win": "electron-vite build && electron-builder --win --publish never"
   },
   "dependencies": {
-    "@fluentui/react-icons": "^2.0.344",
     "iconv-lite": "0.7.3",
-    "jschardet": "4.0.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "remark-gfm": "^4.0.1",
-    "remark-parse": "^11.0.0",
-    "unified": "^11.0.5"
+    "jschardet": "4.0.0"
   },
   "devDependencies": {
+    "@fluentui/react-icons": "^2.0.344",
     "@playwright/test": "1.63.0",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
@@ -43,7 +38,12 @@
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "jsdom": "30.1.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "typescript": "5.9.3",
+    "unified": "^11.0.5",
     "vite": "7.3.7",
     "vitest": "5.0.3"
   },

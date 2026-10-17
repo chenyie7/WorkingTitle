@@ -145,51 +145,75 @@ function isRegularFile(p: string): boolean {
   }
 }
 
-app.whenReady().then(() => {
-  initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
+/** 第二个实例启动时把已有窗口叫回前台。最小化时先 restore 再 focus（推断：只 focus 会停在任务栏）。 */
+function focusExistingWindow(): void {
+  const existing = BrowserWindow.getAllWindows()[0]
+  if (!existing) return
+  if (existing.isMinimized()) existing.restore()
+  existing.show()
+  existing.focus()
+}
 
-  /**
-   * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
-   * 「用户按下去真正生效的键」不会分岔的唯一保证。
-   *
-   * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
-   * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
-   */
-  const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
-    resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
-  registerIpc({
-    getWindow: () => win,
-    getInitialNovelPath: () => initialNovelPath,
-    rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
-  })
-  buildAppMenu(() => win, getShortcuts)
-  win = createWindow()
+// 拿不到锁的实例必须停在这里：两个进程会往同一份 settings / 会话文件写，互相覆盖。
+// 也**不能**再挂 whenReady——它照样会 resolve。
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  // 第二个实例自己会退出，把窗口恢复与聚焦交给主实例做。
+  app.on('second-instance', focusExistingWindow)
 
-  // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
-  // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
-  // 在这个应用里恒为浅色，主进程不推它就没人知道。
-  nativeTheme.on('updated', () => {
-    const dark = nativeTheme.shouldUseDarkColors
-    for (const w of BrowserWindow.getAllWindows()) {
-      w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
-      // Windows：右上角那三个按钮是【系统】画的，翻主题时它不会自己跟着变——不显式喂新底色，
-      // 深色下就会留一条蓝的。macOS 的红绿灯由系统按外观自理，不需要这一步。
-      if (process.platform === 'win32') {
-        w.setTitleBarOverlay({
-          ...(dark ? TITLEBAR_DARK : TITLEBAR_LIGHT),
-          height: TITLEBAR_HEIGHT
-        })
+  app.whenReady().then(() => {
+    // 必须在建窗之前把用户选的外观落到 nativeTheme：窗口底色与标题栏取自
+    // shouldUseDarkColors，晚一步就会按系统外观画一帧（推断：深色用户看到白闪）。
+    nativeTheme.themeSource = getStore().readSettings().themeSource
+
+    initialNovelPath = resolveInitialNovelPath(process.argv, isRegularFile)
+
+    /**
+     * 当前生效的快捷键表（已按平台补齐）。菜单与它同源——这是「菜单里显示的键」与
+     * 「用户按下去真正生效的键」不会分岔的唯一保证。
+     *
+     * 【为什么现取而不是缓存】设置随时会变（设置对话框里改完点保存，`ipc.ts` 就会重建菜单），
+     * 缓存一份就要维护失效，而读一次 `settings.json` 是这个量级的应用完全付得起的。
+     */
+    const getShortcuts = (): ReturnType<typeof resolveShortcuts> =>
+      resolveShortcuts(getStore().readSettings().shortcuts, platformKind(process.platform))
+
+    registerIpc({
+      getWindow: () => win,
+      getInitialNovelPath: () => initialNovelPath,
+      rebuildMenu: () => buildAppMenu(() => win, getShortcuts)
+    })
+    buildAppMenu(() => win, getShortcuts)
+    win = createWindow()
+
+    // 系统外观变了就同时改两处：窗口底色（防闪）与网页的 data-theme（上色）。
+    // 渲染层读不到系统外观——preload 里那段注释记了实测：`prefers-color-scheme`
+    // 在这个应用里恒为浅色，主进程不推它就没人知道。
+    nativeTheme.on('updated', () => {
+      const dark = nativeTheme.shouldUseDarkColors
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.setBackgroundColor(dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT)
+        // Windows：右上角那三个按钮是【系统】画的，翻主题时它不会自己跟着变——不显式喂新底色，
+        // 深色下就会留一条蓝的。macOS 的红绿灯由系统按外观自理，不需要这一步。
+        if (process.platform === 'win32') {
+          w.setTitleBarOverlay({
+            ...(dark ? TITLEBAR_DARK : TITLEBAR_LIGHT),
+            height: TITLEBAR_HEIGHT
+          })
+        }
+        w.webContents.send(CH.themeChanged, dark)
       }
-      w.webContents.send(CH.themeChanged, dark)
-    }
+    })
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
+    })
   })
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) win = createWindow()
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
   })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+}

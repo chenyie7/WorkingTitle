@@ -5,11 +5,37 @@ on:
   workflow_dispatch:
   # 推 v* 标签就构建并发布。在网页上「创建 release」也会生成标签，同样会触发这条。
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
 
 jobs:
+  check:
+    # PR 与 main 的每次提交都过一遍，坏代码不会等到发版才暴露。
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # 版本由 package.json 的 `packageManager` 决定，这里不能再写 `with: version:`
+      # （两边都写 pnpm/action-setup@v4 会直接拒绝运行）。
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: node scripts/check-plan-fences.mjs
+
   build:
+    # 构建与发版只在手动触发和推标签时跑；main 的普通提交只走上面的 check。
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +91,8 @@ jobs:
         with:
           name: ${{ matrix.os }}-build
           path: ${{ matrix.artifact }}
+          # 没产出就失败：否则会发布一个没有任何安装包的 Release。
+          if-no-files-found: error
 
   release:
     # 只有推标签才发；手动触发的运行到上面那个作业为止。

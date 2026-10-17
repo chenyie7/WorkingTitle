@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import type { ThemeSource, WtApi } from '../types/global'
+import { getApi } from '../api'
+import type { ThemeSource } from '../../../core/types'
 
 /**
  * 平台在**模块加载时**就写进 `<html data-platform>`。
@@ -8,7 +9,7 @@ import type { ThemeSource, WtApi } from '../types/global'
  * 标题条的文字会先跳到红绿灯底下、再弹回来。模块级副作用的代价是这一个文件不再"纯"，
  * 但 `App` 会 import 它，所以它的求值仍早于首次渲染。
  */
-const hostApi = (window as unknown as { api?: WtApi }).api
+const hostApi = getApi()
 if (hostApi?.platform) document.documentElement.dataset.platform = hostApi.platform
 
 /**
@@ -25,7 +26,7 @@ export function useSystemTheme(): void {
     const apply = (dark: boolean): void => {
       el.dataset.theme = dark ? 'dark' : 'light'
     }
-    const api = (window as unknown as { api?: WtApi }).api
+    const api = getApi()
     if (!api) return
 
     void api.getTheme().then(apply)
@@ -82,7 +83,7 @@ export function usePageFontSize(px: number): void {
  */
 export function useThemePreference(source: ThemeSource): void {
   useEffect(() => {
-    const api = (window as unknown as { api?: WtApi }).api
+    const api = getApi()
     if (!api) return
     void api.setThemeSource(source)
   }, [source])

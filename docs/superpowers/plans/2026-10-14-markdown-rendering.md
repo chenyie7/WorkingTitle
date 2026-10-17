@@ -126,13 +126,8 @@ console.log("切片:", JSON.stringify("# 标题\n\n| a | b |\n| - | - |\n| 1 | 2
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import {
-  parseMarkdown,
-  isMarkdownPath,
-  valueStartOf,
-  lineStartsOf,
-  WT_LINE_STARTS
-} from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath } from '../../src/renderer/src/markdown/parse'
+import { lineStartsOf, setLineStarts, valueStartOf } from '../../src/renderer/src/markdown/nodeMeta'
 import { clipTree } from '../../src/renderer/src/markdown/clip'
 
 /**
@@ -372,6 +367,15 @@ describe('parseMarkdown —— 逐行偏移表', () => {
     expect(src.indexOf('引用乙')).toBe(8)
   })
 
+  it('跨行的行内代码在容器里：挂逐行表，第二行起点不是「第一行加字符数」', () => {
+    // remark 保留行内代码的换行、不折空格；引用块的 `> ` 是逐行剥的，所以常量原点只对首行精确。
+    const src = '> 前 `甲\n> 乙` 后\n'
+    const inline = (parseMarkdown(src)!.children[0] as never as { children: { children: unknown[] }[] })
+      .children[0].children[1]
+    expect(valueStartOf(inline)).toBe(src.indexOf('甲'))
+    expect(lineStartsOf(inline)).toEqual([src.indexOf('甲'), src.indexOf('乙')])
+  })
+
   it('普通的单行文本：不挂表（用 `position` 就够，挂了也只是重复信息）', () => {
     const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
     expect(lineStartsOf(para.children[0])).toBeNull()
@@ -385,10 +389,18 @@ describe('parseMarkdown —— 逐行偏移表', () => {
    * ——`clip.ts` 那个「空表按没有表算」的守卫（`r.starts.length > 0`）防的正是这一格。
    */
   it('表里混进 NaN / Infinity 一律当没挂表；空数组仍然原样返回', () => {
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, 7] })).toEqual([2, 7])
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, Number.NaN] })).toBeNull()
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [Number.POSITIVE_INFINITY] })).toBeNull()
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [] })).toEqual([])
+    const plain = {}
+    setLineStarts(plain, [2, 7])
+    expect(lineStartsOf(plain)).toEqual([2, 7])
+    const nan = {}
+    setLineStarts(nan, [2, Number.NaN])
+    expect(lineStartsOf(nan)).toBeNull()
+    const inf = {}
+    setLineStarts(inf, [Number.POSITIVE_INFINITY])
+    expect(lineStartsOf(inf)).toBeNull()
+    const empty = {}
+    setLineStarts(empty, [])
+    expect(lineStartsOf(empty)).toEqual([])
   })
 
   /**
@@ -450,7 +462,7 @@ describe('parseMarkdown —— 逐行偏移表', () => {
    *
    * 【为什么】`contentStartOf` 对 `value === ''` 给的是**围栏之后**那个位置，而「行尾 − 行长」
    * 里的那个「行尾」是**收尾围栏那一行**的换行——于是同一个节点在同一棵树上有**两个原点**
-   * （实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value` 没有下标可言，
+   * （实测 `'```\n```\n'`：`valueStart` 是 4 而表是 `[7]`）。空 `value` 没有下标可言，
    * 表让位，`contentStartOf` 那个数成为唯一的原点。
    *
    * 【只断言解析期】`to=8` 那一格上的跳变是「解析期挂上了表」的后果，表不挂它就不存在。
@@ -535,7 +547,11 @@ describe('回验失败时的退路 —— 不许泄漏未揭示的字', () => {
     '> 甲 &nbsp; 乙\n> 丙\n',
     '> 甲\n> 甲\n',
     '> 甲 \\_ 乙\n> 丙\n',
-    '> 甲 &lt; 乙\n> 丙\n'
+    '> 甲 &lt; 乙\n> 丙\n',
+    '> 前 `甲\n> 乙` 后\n',
+    '- `甲\n  乙`\n',
+    '前 `甲\n乙` 后\n',
+    '> 甲 `` 乙\n> 丙 `` 丁\n'
   ]
 
   it('逐偏移：屏幕上的文字必须在已揭示范围内按序匹配得上', () => {
@@ -564,63 +580,23 @@ pnpm vitest run tests/unit/markdownParse.test.ts
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
-import type { Root } from 'mdast'
+import type { Nodes, Root } from 'mdast'
+import { isContiguous, linesOf } from './offsets'
+import { setLineStarts, setValueStart, valueStartOf } from './nodeMeta'
 
 /**
- * 工作文档的 md 解析。**全仓唯一 import remark 的地方。**
+ * 工作文档的 md 解析：**全仓唯一 import remark 的地方**，也是唯一手上有源码的地方。
  *
- * 【为什么只解析、不渲染】裁剪与映射成 React 都在别的模块里，这里只负责
- * 「文本 → 带 position.offset 的语法树」。分开的理由是解析**只做一次**
- * （调用方按文档缓存），而后面几步每次渲染都要重跑——200KB 的 md 解析是几十毫秒
- * 量级，每次按键重解析不可接受。
- *
- * 【为什么返回 `Root | null` 而不是抛】调用方拿到 null 就退回纯文本那条路
- * （设计第 12 节：解析失败不许白屏）。remark 对畸形 md 基本不抛，这是兜底。
- *
- * 【position.offset 是整条路的坐标系地基】mdast 每个节点自带 `position.start.offset`
- * / `end.offset`，是**相对 flatText 的字符下标**——和 `cursor`、`revealStart` 同一个
- * 坐标系，所以裁剪时不需要任何换算（设计 3.1）。**唯一的例外是 `code` / `inlineCode`**：
- * 它们的 `value` 不含定界符、也不含容器前缀，得先用 `valueStartOf` 换成真实起点（设计 3.6）。
- *
- * 【为什么 `unified` 实例提到模块级】`.use()` 会重建 processor，每次调用都建一遍
- * 是白扔的。processor 本身无可变状态，`.parse()` 也是纯的。
- *
- * 【ESM-only，别把它挪出渲染层】remark 全族是 `"type": "module"`。挪进 `src/core`
- * 会让 main 那份 tsconfig 也去解析它。Task 1 的用例守不住这条（类型检查才守得住），
- * 所以它是靠 `pnpm typecheck` 与这条注释一起守的。
+ * 【只解析】裁剪与映射在别的模块；解析只做一次（调用方按文档缓存），后面几步每次渲染重跑。
+ * 【`Root | null`】解析失败给 null，调用方退回纯文本（设计第 12 节：不许白屏）。
+ * 【ESM-only】别把它挪出渲染层，`src/core` 的 tsconfig 没有 DOM 且 main 不该解析 remark。
  */
 const processor = unified().use(remarkParse).use(remarkGfm)
-
-/**
- * 挂在节点上的字段：**当前** `value` 的第一个字符在源码里的偏移。
- *
- * 【谁盖它，别以为只有代码节点有】解析期只有 `code` / `inlineCode` 需要（`parse.ts`
- * 自己盖，见 `annotateValueStarts`）；而 `clip.ts` 切完片之后给**所有可裁类型**——含
- * `text`——重新盖一遍，因为切过的 `value` 起点不再是解析期那个数了。
- *
- * 【为什么出这个口】它有两个使用者：同文件的 `valueStartOf` 读它，`clip.ts` 裁剪时
- * **写**它（`value` 切掉一段，起点要跟着后移）。两个写者意味着字段名必须只在一处定义
- * ——下游各自拼字符串的话，两侧对不上是**静默**的。
- */
-export const WT_VALUE_START = 'wtValueStart'
-
-/**
- * 读 `value` 的真实源码起点。没标注、标注不是有限数一律给 `null`——调用方据此退回
- * `position.start.offset`（普通 `text` 节点就是那一类，它们的两套坐标本来就重合）。
- *
- * 【读它一律走这个口，别去读裸字段】导出上面那个常量只是给第二个**写者**（`clip.ts`）
- * 定位字段名用，**不等于读的口子也放开了**：裸读会绕过「不是有限数一律 `null`」这一步，
- * 拿到 `undefined` / `NaN` / 字符串全都不出声。
- */
-export function valueStartOf(node: unknown): number | null {
-  const raw = (node as Record<string, unknown> | null | undefined)?.[WT_VALUE_START]
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
-}
 
 export function parseMarkdown(text: string): Root | null {
   try {
     const tree = processor.parse(text)
-    annotateValueStarts(tree, text)
+    annotateOffsets(tree, text)
     return tree
   } catch (err) {
     console.warn('[wt] 解析 markdown 失败，退回纯文本：', err)
@@ -629,13 +605,8 @@ export function parseMarkdown(text: string): Root | null {
 }
 
 /**
- * 这份工作文档要不要渲染。
- *
- * 【为什么按扩展名而不是按内容嗅探】「内容长得像 md」判不准，而且判错的代价是
- * 双向的：把一份纯文本当 md 渲染会吃掉里面的 `*` 和 `#`，把一份 md 当纯文本
- * 又会露出记号。扩展名是用户的意图，也是他后来能自己改回来的东西。
- *
- * 【`.md.txt` 判 false 是有意的】`extname` 只看最后一段。用户的意图是 txt。
+ * 这份工作文档要不要渲染。`.md.txt` 判 false 是有意的：`extname` 只看最后一段，用户的意图是 txt。
+ * 按扩展名而不是内容嗅探——判错两个方向都是用户可见的坏结果，扩展名是他能自己改回来的。
  */
 const MARKDOWN_EXT = /\.(md|markdown)$/i
 
@@ -644,68 +615,33 @@ export function isMarkdownPath(filePath: string): boolean {
 }
 
 /**
- * 给 `code` / `inlineCode` 记下 `value` 的真实源码起点（设计 3.6）。
- *
- * 【为什么需要它】mdast 的 `position` 从**定界符**起算，而 `value` 里不含定界符——
- * 按 `position.start.offset` 当原点去切 `value`，内容会**恒定领先光标一个定界符的
- * 长度**（围栏块 4、带语言标注 6、行内代码是反引号的个数）。实测：光标走完 ` ``` `
- * 那一刻、正文一个字都没揭示，第一行已经整行上屏。
- *
- * 【为什么在这里算】本模块是全仓唯一手上有源码的地方，而这是**解析的产物**——
- * remark 怎么从源码得到 `value`，只有它知道。算一次挂在节点上，`clip.ts` 与
- * `toReact.tsx` 各自取用。
- *
- * 【常量原点只对首行精确，逐行那一半由逐行表兜】带前缀的块（引用块、列表项里）与超过
- * 四格的缩进块，remark 是**逐行**剥前缀/缩进的，不是常量偏移；这里给的是常量原点，
- * 所以**首行精确、第二行起差一个前缀宽度**（用例「已知偏差：……」钉的就是这一条）。
- * 这一层由本函数末尾挂的逐行表补齐（设计 3.6.1）——**读 `valueStartOf` 的下游要连同
- * `lineStartsOf` 一起读**，只读前者在多行容器里会错。
+ * 给代码类节点记下 `value` 的真实源码起点，并给多行节点挂逐行偏移表（设计 3.6 / 3.6.1）。
+ * `position` 从定界符起算而 `value` 不含定界符；容器里 remark 还会逐行剥前缀，所以常量原点只对首行精确。
  */
-function annotateValueStarts(node: unknown, source: string): void {
-  const n = node as {
-    type?: string
-    value?: string
-    children?: unknown[]
-    position?: { start: { offset?: number }; end: { offset?: number } }
-  }
-  const start = n.position?.start.offset
-  const end = n.position?.end.offset
-  if (typeof n.value === 'string' && start !== undefined && end !== undefined) {
-    if (n.type === 'code' || n.type === 'inlineCode') {
-      ;(n as Record<string, unknown>)[WT_VALUE_START] = contentStartOf(n.type, source, start, end, n.value)
+function annotateOffsets(node: Nodes, source: string): void {
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
+  if (start !== undefined && end !== undefined) {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      setValueStart(node, contentStartOf(node.type, source, start, end, node.value))
     }
-    if (n.type === 'text' || n.type === 'code') {
-      const starts = buildLineStarts(n.type, source, start, end, n.value)
-      const base = n.type === 'code' ? (valueStartOf(n) as number) : start
-      // 【`null` 只剩一个来源：空 `value`】回验对不上**不再**摘表——那一支现在退回表里那个
-      // 恒不提前的保守算式（第四轮）。所以「不挂表」的两种情形是：空 `value`（没有下标可言）
-      // 与「连续」（`起点 + 字符数` 与表逐字等价，挂了只是重复信息），两条都不丢坐标。
-      if (starts && !isContiguous(starts, base, n.value)) {
-        ;(n as Record<string, unknown>)[WT_LINE_STARTS] = starts
+    if (node.type === 'text' || node.type === 'code' || node.type === 'inlineCode') {
+      const base = node.type === 'text' ? start : (valueStartOf(node) ?? start)
+      const starts = buildLineStarts(node.type, source, start, end, node.value)
+      // 能由「起点 + 字符数」推出来的表是重复信息，不挂
+      if (starts !== null && !isContiguous(starts, base, node.value)) {
+        setLineStarts(node, starts)
       }
     }
   }
-  for (const child of n.children ?? []) annotateValueStarts(child, source)
+  if ('children' in node) {
+    for (const child of node.children) annotateOffsets(child, source)
+  }
 }
 
 /**
- * `value` 的第一个字符在源码里的偏移。
- *
- * 【原理：`value` 的首行必然收在「它那一源码行的行尾」】容器前缀（`> `、列表项缩进）、
- * 代码块自己的缩进、围栏全都在它前面。所以从那一行的行尾往回退首行长度，就是内容起点——
- * 不用去识别前缀长什么样，也就不用管它有几层。
- *
- * 【「那一行」是哪一行】围栏块是**围栏的下一行**（围栏那一行不是内容），缩进块是节点
- * 自己那行。这一处用错对**所有**块都错。
- *
- * 【缩进块剥的是固定四格，多出来的算内容】`     甲`（五格）的 `value` 是 ` 甲`——首字符
- * 是那个多出来的空格，不是「甲」。所以「跳过所有前导空白」是错的（八格会差 4）。
- *
- * 【怎么区分围栏与缩进】看首行：行首最多三个空格之后以三个及以上 `` ` `` 或 `~` 开头
- * 就是围栏——remark 只认这两种围栏，所以这个判据与它一致。
- *
- * 【空 `value` 为什么要单独兜】没有字符可切，但设计 3.5 的光标用的是同一个数——退回
- * `end` 会把空代码框里的光标推出框外。
+ * `value` 首字符在源码里的偏移。依据是「`value` 首行收在它那一源码行的行尾」：
+ * 从行尾往回退首行长度，不必识别前缀长什么样。围栏块的「那一行」是围栏的下一行。
  */
 function contentStartOf(
   kind: string,
@@ -714,7 +650,7 @@ function contentStartOf(
   end: number,
   value: string
 ): number {
-  if (kind === 'inlineCode') return inlineContentStart(source, start, end, value)
+  if (kind === 'inlineCode') return inlineBounds(source, start, end, value).from
   const nl = source.indexOf('\n', start)
   const firstLineEnd = nl >= 0 && nl < end ? nl : end
   const fenced = /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
@@ -727,21 +663,21 @@ function contentStartOf(
 }
 
 /**
- * 行内代码的 `value` 起点。
- *
- * 【为什么要拿 `value` 回验】CommonMark 在内容两侧各有一个空格时会各剥掉一个，于是
- * 「跳过起首反引号」不再精确：` `` 甲 `` ` 的 `value` 是 `甲`，而它在源码里从那个空格
- * **之后**才开始。所以算完拿 `value` 对一下：对得上就采用；对不上（跨行的行内代码
- * remark 会把换行折成空格）就退回「跳过起首反引号」——宁可差一点点，也不给一个错的、
- * 偏得更远的原点。
+ * 行内代码的内容边界。CommonMark 会在内容两侧各剥一个空格，所以用 `value` 回验；
+ * 对不上（跨行的行内代码）退回「跳过起首反引号」。
  */
-function inlineContentStart(source: string, start: number, end: number, value: string): number {
+function inlineBounds(
+  source: string,
+  start: number,
+  end: number,
+  value: string
+): { from: number; to: number } {
   let from = start
   while (from < end && source[from] === '`') from++
   let to = end
   while (to > from && source[to - 1] === '`') to--
   const raw = source.slice(from, to)
-  if (raw === value) return from
+  if (raw === value) return { from, to }
   if (
     raw.length >= 2 &&
     raw.startsWith(' ') &&
@@ -749,107 +685,42 @@ function inlineContentStart(source: string, start: number, end: number, value: s
     raw.trim() !== '' &&
     raw.slice(1, -1) === value
   ) {
-    return from + 1
+    return { from: from + 1, to }
   }
-  return from
-}
-
-/** 挂在节点上的逐行偏移表（设计 3.6.1）：每个 value **行**的首字符在源码里的偏移。 */
-export const WT_LINE_STARTS = 'wtLineStarts'
-
-/**
- * 读逐行偏移表：没有、不是数组一律给 `null`（调用方退回按字符数切）。
- *
- * 【与 `valueStartOf` 同一口径：不是有限数一律当没挂表】两个读口是一对兄弟，判据必须一样
- * ——只查 `typeof n === 'number'` 的话 `NaN` / `Infinity` 会被原样当成行起点，下游按它算
- * 出来的位置**不报错**、只是错到天边。今天上游产不出这种值（`parse.ts` 与 `clip.ts` 都只
- * 写整数），但读口松一格就是给下一个人留坑：他按 `valueStartOf` 的注释来理解这里就会踩。
- */
-export function lineStartsOf(node: unknown): number[] | null {
-  const raw = (node as Record<string, unknown> | null | undefined)?.[WT_LINE_STARTS]
-  return Array.isArray(raw) && raw.every((n) => typeof n === 'number' && Number.isFinite(n))
-    ? (raw as number[])
-    : null
+  return { from, to }
 }
 
 /**
- * 建逐行偏移表：每个 value 行的首字符在源码里的偏移。
+ * 逐行偏移表：每个 `value` 行的首字符在源码里的偏移。
  *
- * 【依据是**回验**，不是「行尾 − 行长」】最初写的是「该行源码的结束偏移 − 该行在 value 里的
- * 长度」，依据是「每一行的 `value` 都贴在该行源码的尾部」——**这条依据不成立**：remark 除了
- * 剥行首前缀，还会剥**行尾空白**，那个减法于是把被剥掉的字也算进去，整张表往后偏（实测
- * `'甲 \n乙\n'` 得 `[1,3]`、真值 `[0,3]`；`'> 甲 \t\n> 乙\n'` 偏 2）。方向是「晚」——
- * 那一行的首字晚一个按键上屏。
- *
- * 现在的做法是**在这一行源码里把那行文字找出来**：从行尾往前找最后一次出现（行尾空白是
- * 它后面唯一允许多出来的东西），并要求找到的位置之后到行尾**全是空白**。
- *
- * 【对不上时退回的是**保守算式**，不是「不挂表」】(设计 3.6.1 第四轮改) 原先写的是「找不到
- * 就不挂表，退回『起点 + 字符数』那条路——宁可少精确一处」。那把退路定性成**精度问题**，
- * 实测它是**方向问题**：摘表之后 `clip` 退回按字符数切，而裁剪原点是**首行**的内容起点，
- * 于是从第二行起每一行的前缀宽度都变成**提前量**，**未揭示的字上屏**——核心不变量被破。
- * 现在退的是 `行尾 − 行长`，它恒不早于真实内容起点（推导见循环里那段注释），方向是「晚」。
- * **晚是少显示，提前是多显示**，两害相权取前者。
- *
- * 【为什么要跳过围栏那一行】围栏块的第一行不是内容，与 `contentStartOf` 同一套判据。
+ * 用**回验**求值：在该行源码里找这行文字最后一次出现，并要求其后到行尾全是空白（remark 会剥行尾空白，
+ * 所以「行尾 − 行长」会把被剥掉的字符也算进去）。回验失败退回「行尾 − 行长」——它恒不提前，
+ * 代价是那一行首字晚若干按键；**晚是少显示，提前是多显示**。
  */
 function buildLineStarts(
-  kind: string,
+  kind: 'text' | 'code' | 'inlineCode',
   source: string,
   start: number,
   end: number,
   value: string
 ): number[] | null {
-  // 【解析期空 `value` 不挂表】`contentStartOf` 对空 `value` 给的是**围栏之后**那个位置，而
-  // 「行尾 − 行长」里的那个「行尾」是**收尾围栏那一行**的换行——同一个节点于是在同一棵树上
-  // 有**两个原点**（实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value`
-  // 没有下标可言，表让位，让 `contentStartOf` 定的那个数成为唯一的原点。
-  //
-  // **别把这条读成全局不变量**：它管的是**解析出来的**空 `value`。**裁剪之后** `value` 为空
-  // 是**空窗口**的结果（容器里的围栏块，`to` 落在围栏那一段），那几格归 `clip.ts` 的空窗口
-  // 守卫，与这里无关——把两者并成一条规则会两边都错。
   if (value === '') return null
-  const lines = value.split('\n')
+  const nodeEnd = kind === 'inlineCode' ? inlineBounds(source, start, end, value).to : end
   const nl = source.indexOf('\n', start)
-  const firstLineEnd = nl >= 0 && nl < end ? nl : end
+  const firstLineEnd = nl >= 0 && nl < nodeEnd ? nl : nodeEnd
   const fenced = kind === 'code' && /^ {0,3}(`{3,}|~{3,})/.test(source.slice(start, firstLineEnd))
-  let lineStart = fenced ? (firstLineEnd < end ? firstLineEnd + 1 : firstLineEnd) : start
+  let lineStart = fenced ? (firstLineEnd < nodeEnd ? firstLineEnd + 1 : firstLineEnd) : start
   const out: number[] = []
-  for (const line of lines) {
+  for (const line of linesOf(value, null, start)) {
+    const text = value.slice(line.base, line.base + line.len)
     const next = source.indexOf('\n', lineStart)
-    const lineEnd = next >= 0 && next < end ? next : end
-    const at = source.lastIndexOf(line, lineEnd)
-    // 【回验对不上时**不摘表**，退回恒不提前的保守算式】(设计 3.6.1 第四轮) 摘表之后
-    // `clip` 会退回按字符数切，而裁剪原点是**首行**的内容起点——从第二行起每一行的前缀
-    // 宽度都变成**提前量**，屏幕于是显示**还没揭示的字**（评审 10 个夹具 79 格；本仓这 6 个
-    // 夹具实测 43 格，判据见 `tests/unit/markdownParse.test.ts` 里那条逐偏移扫描）。
-    // `lineEnd - line.length` 恒 >= 真实内容起点：value 行是源码某连续片段的解码结果，
-    // 剥前缀把起点右移、剥行尾空白与解码只让它更短（评审用独立对齐器在 42808 行上验过，0 违例）。
-    // 代价是那一行的首字**晚**若干按键（晚的格数 = 该行记号的超出量）——**晚是少显示，提前是多显示**。
-    if (at >= lineStart && /^[ \t]*$/.test(source.slice(at + line.length, lineEnd))) out.push(at)
-    else out.push(lineEnd - line.length)
+    const lineEnd = next >= 0 && next < nodeEnd ? next : nodeEnd
+    const at = source.lastIndexOf(text, lineEnd)
+    if (at >= lineStart && /^[ \t]*$/.test(source.slice(at + text.length, lineEnd))) out.push(at)
+    else out.push(lineEnd - text.length)
     lineStart = lineEnd + 1
   }
   return out
-}
-
-/**
- * 这张表能不能由「起点 + 字符数」直接推出来。能的话不挂——挂了也只是重复信息。
- *
- * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
- * 循环在这里、`clip.ts` 的 `sliceByLineStarts`、`toReact.tsx` 的 `rowsOf` 各写了一份——用途
- * 不同（判连续性 / 求窗口 / 摊成行），所以**不合并**，但**行尾口径三份不一样**：这里把换行
- * **算给上一行**（`v` 一步跳过它），`sliceByLineStarts` 用 `+ 1` 把换行**括进窗口**，
- * `rowsOf` 的行长**不含**换行。动任何一处之前先把三处对一遍。
- */
-function isContiguous(starts: readonly number[], base: number, value: string): boolean {
-  let v = 0
-  for (const s of starts) {
-    if (s !== base + v) return false
-    const nl = value.indexOf('\n', v)
-    v = nl < 0 ? value.length : nl + 1
-  }
-  return true
 }
 ```
 
@@ -954,8 +825,9 @@ git commit -F /tmp/msg.txt
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { clipTree, readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
-import { parseMarkdown, valueStartOf, lineStartsOf } from '../../src/renderer/src/markdown/parse'
+import { clipTree } from '../../src/renderer/src/markdown/clip'
+import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import { blankCountOf, lineStartsOf, valueStartOf } from '../../src/renderer/src/markdown/nodeMeta'
 import type { Root } from 'mdast'
 
 const DOC = [
@@ -1228,7 +1100,7 @@ describe('clipTree —— 块内的重复单元', () => {
     const table = out.children[0] as unknown as { children: unknown[] }
     // 表头 + Q1 + Q2 三行在（Q2 已开始、整行画出来），Q3 不在
     expect(table.children).toHaveLength(3)
-    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(1)
+    expect(blankCountOf(table, 'rows')).toBe(1)
   })
 
   it('全部揭示完之后：一行都不少，占位计数是 0', () => {
@@ -1236,7 +1108,7 @@ describe('clipTree —— 块内的重复单元', () => {
     const out = clipTree(parseMarkdown(src)!, 0, src.length)
     const table = out.children[0] as unknown as { children: unknown[] }
     expect(table.children).toHaveLength(2)
-    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(0)
+    expect(blankCountOf(table, 'rows')).toBe(0)
   })
 
   it('折点切进表格中间：已经翻上去的行不算占位（它们在上方，不在表格底下）', () => {
@@ -1248,7 +1120,7 @@ describe('clipTree —— 块内的重复单元', () => {
     const from = src.indexOf('| 3 |')
     const out = clipTree(parseMarkdown(src)!, from, src.length)
     const table = out.children[0] as unknown as { children: unknown[] }
-    expect(readBlankCount(table, WT_BLANK_ROWS)).toBe(0)
+    expect(blankCountOf(table, 'rows')).toBe(0)
   })
 })
 
@@ -1266,26 +1138,26 @@ describe('clipTree —— 代码块的占位行数', () => {
     const out = clipTree(parseMarkdown(CODE)!, 0, CODE.indexOf('第一行') + 2)
     const code = out.children[0]
     expect((code as unknown as { value: string }).value).toBe('第一')
-    expect(readBlankCount(code, WT_BLANK_LINES)).toBe(2)
+    expect(blankCountOf(code, 'lines')).toBe(2)
   })
 
   it('光标正好压在第一行行尾：占位 2 行（那个换行还没揭示，它属于后一行）', () => {
     const out = clipTree(parseMarkdown(CODE)!, 0, CODE.indexOf('第一行') + 3)
     const code = out.children[0]
     expect((code as unknown as { value: string }).value).toBe('第一行')
-    expect(readBlankCount(code, WT_BLANK_LINES)).toBe(2)
+    expect(blankCountOf(code, 'lines')).toBe(2)
   })
 
   it('整个抽完：占位 0 行', () => {
     const out = clipTree(parseMarkdown(CODE)!, 0, CODE.length)
-    expect(readBlankCount(out.children[0], WT_BLANK_LINES)).toBe(0)
+    expect(blankCountOf(out.children[0], 'lines')).toBe(0)
   })
 })
 
 /**
  * 裁剪之后起点要跟着挪（Task 2 的质量评审量出来的）。
  *
- * `wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个字符在源码里的偏移」。
+ * `valueStart` 的语义是「**这个节点当前的** `value` 的第一个字符在源码里的偏移」。
  * 切片换了 `value` 却不挪它，这棵树上的节点就带着一个**失真**的起点——而下游
  * （设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）拿到它**不报错**，只是光标
  * 差几个字符。修之前这条会红：它报的是原来那一段的起点。
@@ -1352,6 +1224,28 @@ describe('clipTree —— 容器里的文字按行切', () => {
   })
 })
 
+/**
+ * 跨行行内代码：容器里逐行剥前缀，没有逐行表时按「起点 + 字符数」切会**提前**显示第二行。
+ */
+describe('clipTree —— 跨行 inlineCode 的行内代码', () => {
+  const SRC = '> 前 `甲\n> 乙` 后\n'
+
+  it('第二行的字还没揭示时不上屏', () => {
+    // 第二行「乙」的源码偏移是整段开头的 9；to 停在这里时它一个字都不该显示
+    const out = clipTree(parseMarkdown(SRC)!, 0, SRC.indexOf('乙'))
+    expect(textOf(out)).toBe('前 甲\n')
+  })
+
+  it('逐偏移：已揭示范围内按序取字，不出现未揭示的字符', () => {
+    for (let to = 0; to <= SRC.length; to++) {
+      const shown = textOf(clipTree(parseMarkdown(SRC)!, 0, to))
+      for (const ch of shown) {
+        expect(SRC.slice(0, to).includes(ch), `to=${to} 显示了未揭示的 ${ch}`).toBe(true)
+      }
+    }
+  })
+})
+
 /** 树里第一个 `code` 节点（深度优先）。 */
 function findCode(node: unknown): { value: string } | null {
   const n = node as { type?: string; children?: unknown[] } | null
@@ -1404,166 +1298,56 @@ pnpm vitest run tests/unit/markdownClip.test.ts
 
 ```ts
 import type { Content, Root } from 'mdast'
-import { lineStartsOf, valueStartOf, WT_LINE_STARTS, WT_VALUE_START } from './parse'
+import { sliceValueByLines } from './offsets'
+import {
+  copyMeta,
+  lineStartsOf,
+  setBlankCount,
+  setLineStarts,
+  setValueStart,
+  valueStartOf
+} from './nodeMeta'
 
 /**
- * 按字符偏移裁剪语法树：树进、树出。**纯函数，没有副作用，不碰 DOM。**
+ * 按字符偏移裁剪语法树：树进、树出，**纯函数**。
  *
- * 【四条规则，合起来就是「结构预知」】
+ * 【谁该显示只有本模块决定】上层只负责把拿到的树画出来。规则（设计 3.2）：
+ * 1. 顶层块起始偏移 ≥ `to` 的整个丢掉；
+ * 2. 块内的重复单元（表格行、列表项）各自按自己的区间判，没走到的整个丢掉；
+ * 3. 跨越 `to` 的可裁文本截断；
+ * 4. 块内其余叶子按自己的区间判，内嵌 HTML 是例外——要等整个抽完（`end <= to`），
+ *    否则 `value` 里连文字一起被切成 `<di` 这种碎片。
  *
- * 1. **顶层块的起始偏移 ≥ to 的整个丢掉**。光标还没走到的块，屏幕上一点都不该有
- *    ——这是「还没开始的块不存在」。
- * 2. **块内的「重复单元」（表格的行、列表的项）也按它自己的区间判**。光标走到第几行 /
- *    第几项，那一行 / 那一项才画出来；没走到的整个丢掉。丢掉的**表格行 / 代码行**由渲染层
- *    按「默认一行高」留白，**不留任何结构**；**列表项不留白**（不画符号、也不占高度），
- *    理由见设计 3.2 那张表（2026-10-15 修订）。
- * 3. **跨越 to 的文本被截断**。剩下的部分照常显示。
- * 4. **块内的叶子（没 `value` 可裁、也没 `children`）按它自己的区间判**：没开始就丢。
- *    它们截不出「半个」，留着就等于提前把没揭示的东西弄上屏——图片会提前发 IPC 去抓
- *    （设计 8.2：只抓已经抽出来的那张）。**内嵌 HTML 是其中的特例，要等抽完**，理由见下。
- *
- * 【粒度只下到「重复单元」，这一条是刻意的】顶层块、表格的行、列表的项各自按自己的起始
- * 偏移判；**其余容器（引用块、段落、表格的单元格、行内的粗体…）一律无条件保留**。
- * 两个理由：
- * - 表格若按单元格判，一行里前面几个格子揭示、后面几个没揭示时，屏幕上是**缺列的残行**
- *   ——比空格子难看得多。所以表格这一层只下到行。
- * - 行内若也下沉，`**季度**` 抽到第二个 `*` 时会画出一个空 `strong`：屏幕上什么都没有，
- *   下一个字符却突然变粗。设计 3.4 那条「屏幕上永不出现裸记号」靠的正是「结构先于文字」，
- *   行内下沉会把那个破绽露出来。
- *
- * 【规则 2 的后果：布局会跳】占位只有「默认一行高」，光标走到它时变成真实高度，它下面的
- * 内容就往下推一次。这是设计 3.2 里写明并接受的取舍，不是缺陷——**别把这个当成 bug 去修**。
- *
- * 【为什么 from 也要判】它是折点（折叠前文）或 revealStart。折点是按块边界算的，
- * 但 `revealStart` 不是——`jumpToChapter` 抬起来的那个值可能落在块中间，所以两边
- * 都要能切。`from` 落在块中间时，块本身留着，块内 `from` 之前的那部分文字被截成空。
- *
- * 【三类节点】只有 `text` / `code` / `inlineCode` 三个带**可裁**的 `value`（截断）；
- * 有 `children` 的（段落、列表、表格…）递归下去裁；剩下的叶子（图片、分隔线、脚注引用、
- * 硬换行、内嵌 HTML）整块留或整个丢。
- *
- * 【代码与表格的占位计数】规则 2 丢掉的行 / 项要由渲染层留出高度，而「留多少」是个
- * 算出来的数——**只有本文件知道它**，所以在这里算出来挂在节点上（`wtBlankLines` /
- * `wtBlankRows`，读它们只有 `readBlankCount` 一个口）。这不是把判断漏到视图层：判断仍然
- * 只在本文件做，视图层拿到的是已经定好的数字。
- *
- * 【代码类节点的原点不是 `position.start.offset`】`value` 里不含定界符（围栏、反引号），
- * 而 `position` 从定界符起算。真实起点由 `parse.ts` 算好挂着，这里用 `valueStartOf` 取
- * （设计 3.6）。用错原点的后果是**内容恒定领先光标一个定界符的长度**。
- *
- * 【叶子里的两档时机，别合并】图片、脚注引用、硬换行**没有文字**，从中间「切」没有
- * 意义，所以「一开始揭示（`start < to`）就整体出现」是自洽的（设计 8.3）。**内嵌 HTML
- * 不同：它的 `value` 里连文字一起**（块级 HTML 是一个整节点，`<div>后面的话</div>` 的
- * value 就是那一整串）。切开 → `<di` 这种碎片会被 `tokenizeHtml` 当普通文字吐上屏；
- * 不切 → 未揭示的字跟着上屏。两条都不可接受，所以它**等整个抽完（`end <= to`）才出现**。
- * 这一档差别有实测撑着（本文件的用例里有卡在 `end == to` 上的边界）。
- *
- * 【一处近似，要连同条件一起读】文本节点里的转义与 HTML 实体在解码后**比源码短**
- * （`a\*b` 的 value 是 `a*b`）。这里按「解码后第几个字符」近似切，偏差不超过该节点里
- * 转义/实体的个数，且**永远不会越过这个节点自己的边界**（slice 会自然夹住）。
- * 没有转义与实体时是精确的。工作文档里这两样都罕见，所以不走「按源码切再解码」
- * 那条更重也更脆的路。
+ * 【粒度只下到重复单元】表格按格判会出缺列的残行，行内按区间判会提前露出空 `<strong>`；
+ * 行内记号必须比文字更早被结构预知（设计 3.4）。
+ * 【保留还是丢掉只在本文件判】占位计数（`blankCountOf`）是这里算好挂上的，视图层只读数字。
  */
-type ClipNode = Content | Root
+type ClipNode = Content
 
-/** 带可裁文本的节点类型。加新类型之前先想清楚它算文本还是算结构。 */
-const VALUE_TYPES = new Set(['text', 'code', 'inlineCode'])
+/** 带可裁文本的节点。加新类型之前先想清楚它算文本还是算结构。 */
+type ValueNode = Extract<ClipNode, { type: 'text' | 'code' | 'inlineCode' }>
 
-/**
- * 「重复单元」：块内**按自己的区间判**的那两类节点（设计 3.2 修订）。
- * 加新类型之前先想清楚：它是不是「同一个块里会重复出现、且逐个揭示读起来才自然」的东西。
- * 段落、单元格、行内元素都**不是**——理由见文件头那条「粒度只下到重复单元」。
- */
-const REPEAT_UNITS = new Set(['listItem', 'tableRow'])
-
-/** 挂在节点上的占位计数字段名。只有本文件与 `readBlankCount` 用它，别处别自己拼字符串。 */
-export const WT_BLANK_LINES = 'wtBlankLines'
-export const WT_BLANK_ROWS = 'wtBlankRows'
-
-/**
- * 读占位计数：没有这个字段、不是有限正数，一律当 0。
- *
- * 【为什么让 clip 出这个读口】字段名与「什么样的值算有效」只该有一处定义——
- * 由 `toReact.tsx` 自己拼字符串去读的话，两侧对不上时是**静默**的（占位少一截，不报错）。
- *
- * 【`field` 为什么收成这两个常量】它是**联合字面量类型**，不是裸 `string`：传
- * `WT_VALUE_START` 这类别的字段名会**当场编译不过**。裸 `string` 的话那两个字段名长得
- * 差不多、值也都是小整数，读错了没人出声。
- */
-export function readBlankCount(
-  node: unknown,
-  field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
-): number {
-  const raw = (node as Record<string, unknown> | null | undefined)?.[field]
-  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
-}
+/** 「重复单元」：块内按自己的区间判的那两类节点（设计 3.2 修订）。 */
+const REPEAT_UNITS = new Set<string>(['listItem', 'tableRow'])
 
 export function clipTree(root: Root, from: number, to: number): Root {
-  return { ...root, children: clipBlocks(root.children, from, to) as Root['children'] }
+  return { ...root, children: clipBlocks(root.children, from, to) }
 }
 
 /**
- * 逐行切片（设计 3.6.1）：`value` 的下标与源码偏移**逐行**是 +1 线性的（每行差一个
- * 前缀宽度），所以窗口两侧都要**按行求交**，不能按字符数硬减。
- *
- * 【换行符算谁的】行 k 与行 k+1 之间那个 `\n` 在源码里位于「行 k 的源码结束偏移」处，
- * 所以它挂在**行 k 名下**：`to` 越过它才显示。
- *
- * 【返回值里的 `starts`】已揭示那几行的行起点（第一行按窗口起点裁过的那个算）。
- * 光标的「偏移 → 下标」换算要用它，否则多行容器里的光标会差一个前缀宽度。
- *
- * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
- * 循环在这里、`parse.ts` 的 `isContiguous`、`toReact.tsx` 的 `rowsOf` 各写了一份——用途不同
- * （求窗口 / 判连续性 / 摊成行），所以**不合并**，但**行尾口径三份不一样**：这里用 `+ 1` 把
- * 换行**括进窗口**（所以窗口正好收在某行行尾时会连那个 `\n` 一起显示），`isContiguous` 把换行
- * **算给上一行**，`rowsOf` 的行长**不含**换行。动任何一处之前先把三处对一遍。
+ * 顶层块：保留还是丢掉只在这一层判。`from` 侧也要判：折点可能落在块中间。
+ * 没有偏移的节点原样保留，交给下游按「无文本」处理。
  */
-function sliceByLineStarts(
-  value: string,
-  starts: readonly number[],
-  from: number,
-  to: number
-): { head: number; tail: number; starts: number[] } {
-  let head = -1
-  let tail = -1
-  const revealed: number[] = []
-  let base = 0
-  for (let k = 0; k < starts.length; k++) {
-    const nl = value.indexOf('\n', base)
-    const lineLen = (nl < 0 ? value.length : nl) - base
-    const srcStart = starts[k]
-    const lo = Math.max(from, srcStart)
-    const hi = Math.min(to, srcStart + lineLen + 1)
-    if (lo < hi) {
-      const i0 = base + (lo - srcStart)
-      const i1 = base + (hi - srcStart)
-      if (head < 0) head = i0
-      tail = i1
-      revealed.push(lo)
-    }
-    base += lineLen + 1
-  }
-  if (head < 0) return { head: 0, tail: 0, starts: [] }
-  return { head, tail, starts: revealed }
-}
-
-/**
- * 顶层块：**保留还是丢掉只在这一层判**（设计 3.2）。
- * 留下来的块交给 `clipInside`，那里只截断、不丢整块。
- */
-function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): ClipNode[] {
-  const out: ClipNode[] = []
+function clipBlocks(nodes: readonly ClipNode[], from: number, to: number): Content[] {
+  const out: Content[] = []
   for (const node of nodes) {
     const position = positionOf(node)
-    // 没有偏移的节点（本仓库用到的 md 语法里不该有）原样保留，交给下游按「无文本」处理
     if (position === null) {
       out.push(node)
       continue
     }
-    if (position.start >= to) continue // 还没开始揭示
-    if (position.end <= from) continue // 已经翻过去了
-    // 上面两条已经判过这个块的窗口，所以 `clipInside` 在这里实际不会返回 null
-    // （叶子那一支重判的是同一对边界）。这一下过滤只为把类型收干净。
+    if (position.start >= to) continue
+    if (position.end <= from) continue
     const kept = clipInside(node, from, to)
     if (kept) out.push(kept)
   }
@@ -1577,145 +1361,83 @@ function inWindow(node: ClipNode, from: number, to: number): boolean {
   return position.start < to && position.end > from
 }
 
-/**
- * 已经开始揭示的块**内部**：重复单元（表格行、列表项）各按各的区间判，
- * 其余容器结构一个不丢，块内三类可裁文本各按各的窗口截。
- *
- * 【为什么返回值可以是 null】块内的**叶子**（图片、内嵌 HTML、脚注引用、硬换行）
- * 截不出「半个」，只能在「留整块」与「丢」之间二选一，二选一的判据是它**自己的**
- * 字符区间。于是这里也会丢节点，调用方必须过滤。
- *
- * 【为什么叶子也要按窗口判，而不是「所在块已经开始就留着」】留着没抽到的图片 = 提前
- * 发 IPC 去抓图（设计 8.2：只抓已经抽出来的那张）；留着没抽到的 HTML = 把还没有揭示的
- * 字画到屏幕上（内嵌 HTML 的 `value` 里连文字一起，见下面第三支）。两条都破契约。
- *
- * 四支的分派依据是「有没有可裁的 `value` / 有没有 `children`」，不是节点类型：
- * 类型逐个窄化在这里会变成几十行只做类型收窄、不做任何事的代码。按类型分岔的只有
- * `code`（要数占位行）与 `table`（要数占位行数）两处，都带注释。
- */
-function clipInside(node: ClipNode, from: number, to: number): ClipNode | null {
-  const n = node as unknown as {
-    type: string
-    value?: string
-    children?: ClipNode[]
-    position?: { start: { offset?: number }; end: { offset?: number } }
-  }
-  const start = n.position?.start.offset
-  // 第一支：可裁文本（text / code / inlineCode）——截到 [from, to) 那个窗口
-  if (VALUE_TYPES.has(n.type) && typeof n.value === 'string') {
-    // 【原点不是 position.start.offset】`code` / `inlineCode` 的 `value` 里不含定界符
-    // （围栏、反引号），而 `position` 从定界符起算。真实起点由 `parse.ts` 在解析时算好
-    // 挂在节点上（设计 3.6），这里取用。
-    // **别把它读成「差一个定界符的长度」**：围栏块差的是「定界符 + 换行」（4 或 6），
-    // 缩进块根本没有定界符（差一段缩进），容器里的还会逐行变。它只保证**首行**的那个数，
-    // 逐行那一半由下面的逐行表补（设计 3.6.1）。
-    const origin = valueStartOf(n) ?? start
-    // 位置都没有就没法按偏移切，原样保留（宁可多显示，也不丢字）
-    if (origin === undefined) return node
-    // 【挂逐行表的节点要按行求交，不能按字符数硬减】容器里逐行剥前缀的文字（引用块的
-    // `> `、列表项的续行缩进）与带前缀的代码块，`value` 的下标与源码偏移**逐行**才是
-    // +1 线性的，每行差一个前缀宽度。按 `to − origin` 硬减会**提前**把未揭示的字上屏
-    // （设计 3.6.1）。没有表的节点（本来就是线性的）走下面那条老路，两个结果一致。
-    const lines = lineStartsOf(n)
-    let head: number
-    let tail: number
-    // 【表要跟着切片走】它描述的是**这个节点当前的** `value` 的行；不切的话下游
-    // （`toReact.tsx` 的光标换算）会拿一张错位的表算，多行容器里的光标差一个前缀宽度。
-    let revealed: number[] | null = null
-    if (lines) {
-      const r = sliceByLineStarts(n.value, lines, from, to)
-      head = r.head
-      tail = r.tail
-      // 【窗口与这个节点一行都不相交时给的是空数组，而空数组是真值】照直用会写出
-      // `wtValueStart: undefined` 与一张空表——起点那条是**静默**失真，下游
-      // （设计 3.5 的光标）拿着它算位置不报错、只是差几个字符。这一格可达：容器里的
-      // 围栏块 `'> ```\n> 甲\n…'` 的 `position.start` 是围栏起点（2），而表的第一行
-      // 起点在围栏之后（8），`to` 落在 2–7 那一段里就是这个情形。**空表按「没有表」算**，
-      // 那一步退回 `origin + head`（此时 `head` 为 0，指的是首行起点，仍然是对的）。
-      revealed = r.starts.length > 0 ? r.starts : null
-    } else {
-      head = Math.max(0, from - origin)
-      tail = Math.max(head, to - origin)
-    }
-    const value = n.value.slice(head, tail)
-    // 【切完之后起点要跟着挪】`wtValueStart` 的语义是「**这个节点当前的** `value` 的第一个
-    // 字符在源码里的偏移」。切掉了前 `head` 个字符，起点就后移 `head`——不挪的话这棵树上的
-    // 节点会带着一个**失真**的起点，而下游（设计 3.5 的光标按「揭示偏移 − 内容起点」算位置）
-    // 拿到它就是静默差几个字符，**不报错**。有表时同理，报的是**已揭示那几行的首行起点**。
-    const shiftedStart = revealed ? revealed[0] : origin + head
-    // 【表要么跟着切成这一份，要么整个摘掉，不能留原样】`...n` 会把解析期那张原表带过去，
-    // 而它描述的是**整条** `value` 的行——与切后的 `value` 对不上时下游（光标换算）会静默
-    // 算错。`revealed` 为 `null` 有两种来源（本来没有表 / 空窗口），两种都不该留字段。
-    const kept: Record<string, unknown> = {
-      ...(n as unknown as Record<string, unknown>),
-      value,
-      [WT_VALUE_START]: shiftedStart
-    }
-    if (revealed) kept[WT_LINE_STARTS] = revealed
-    else delete kept[WT_LINE_STARTS]
-    // 【代码块多挂一个占位行数】它的框只包住已揭示的行，没揭示的行由渲染层按「默认一行高」
-    // 留白。`rest` 是没揭示的那一段，里面的**换行符个数**就是还没出现的新行数。
-    //
-    // 【前提：框里已经占着一行】这个数**不含**光标当前所在的那一行，理由是「当前这一行的
-    // 余下部分已经由框里那半行占着了」。**框里一个字都没有时这个前提不成立**——空 `<pre>`
-    // 没有 line box，没有谁在替那一行占位。实测：3 行的代码块在「光标还在围栏里」那一刻
-    // 报 2，比真实行数少 1。
-    //
-    // 【为什么不在这里补那 1 行】判据要保持单一：这个数就是「未揭示那一段里的换行符个数」，
-    // 不带「框里有没有内容」这个附加条件。补偿交给渲染层——CSS 给代码框一个最小高度
-    // （Task 6），空框自己撑住那一行。代价是这一窗内每次按键都少一行，是接受的。
-    if (n.type === 'code') {
-      const rest = n.value.slice(tail)
-      kept[WT_BLANK_LINES] = rest === '' ? 0 : rest.split('\n').length - 1
-    }
-    return kept as unknown as ClipNode
-  }
-  // 第二支：容器——递归下去裁。重复单元按自己的区间判（规则 2），其余结构不丢
-  if (Array.isArray(n.children)) {
-    const children: ClipNode[] = []
-    for (const child of n.children) {
-      // 重复单元：光标还没走到就整个丢掉。它本来该占的高度由下面那个计数交给渲染层
+function clipInside(node: ClipNode, from: number, to: number): Content | null {
+  const valueNode = valueNodeOf(node)
+  if (valueNode) return clipValue(valueNode, from, to)
+  if ('children' in node) {
+    const children: Content[] = []
+    for (const child of node.children) {
       if (REPEAT_UNITS.has(child.type) && !inWindow(child, from, to)) continue
       const kept = clipInside(child, from, to)
       if (kept) children.push(kept)
     }
-    // 【表格：还有几行没走到，要报出去】渲染层拿它在表格底下留白。
-    // 【为什么不用 children.length 的差】`children` 变少有**两个**来源：`to` 侧（还没走到，
-    // 该留白）与 `from` 侧（已经翻过去了，**不该**留白——那些行在光标上方）。用差会把两者
-    // 混在一起，`from` 切进表格时凭空多留白，而且**不报错**。所以这里只数「起始偏移 ≥ to」。
-    // 【`from` 切进表格的另一个后果，当前不可达但要写下来】那时 `children[0]` 是正文行，
-    // 而 `toReact.tsx` 把 `children[0]` 无条件当表头，那一行会被渲染成 `<th>`。今天靠
-    // `foldStart` 恒为块边界（0、块起点或 revealStart，而工作文档那一路 revealStart 恒为 0）
-    // 才不发作——而本文件开头那条注释宣称「revealStart 可能落在块中间」，接线一改就放开。
-    if (n.type === 'table') {
+    const kept = withChildren(node, children)
+    copyMeta(node, kept)
+    // 【表格的占位只数「起始偏移 ≥ to」】`children` 变少还有 `from` 侧（已经翻上去的行），
+    // 那些行在光标上方、不在表格底下，用长度差会把它们算成空白。
+    if (kept.type === 'table') {
       let notYet = 0
-      for (const row of n.children) {
+      for (const row of node.children) {
         const rowPos = positionOf(row)
         if (rowPos !== null && rowPos.start >= to) notYet++
       }
-      return { ...n, children, [WT_BLANK_ROWS]: notYet } as unknown as ClipNode
+      setBlankCount(kept, 'rows', notYet)
     }
-    return { ...n, children } as unknown as ClipNode
+    return kept
   }
-  // 第三支：叶子——没有可裁的文本，整块留或整个丢，按它自己的区间判
   const position = positionOf(node)
   if (position === null) return node
-  if (position.start >= to) return null // 还没开始揭示
-  if (position.end <= from) return null // 已经翻过去了
-  // 内嵌 HTML 是叶子里的**特例**：它的 `value` 里连文字一起（块级 HTML 是一个整节点，
-  // `<div>后面的话</div>` 的 value 就是那一整串），所以不能像图片那样「一揭示就整体
-  // 出现」——从中间切开只会得到 `<di` 这种碎片，`tokenizeHtml` 会把它当普通文字吐上屏。
-  // 两条路都堵着，只剩第三条：**等它整个抽完才出现**（边界取等：end == to 就算抽完）。
-  if (n.type === 'html') return position.end <= to ? node : null
+  if (position.start >= to) return null
+  if (position.end <= from) return null
+  // 【内嵌 HTML 等整个抽完】它没有可裁的 value，从中间切只会得到会被当普通文字上屏的碎片。
+  if (node.type === 'html') return position.end <= to ? node : null
   return node
+}
+
+function clipValue(node: ValueNode, from: number, to: number): Content {
+  // 【原点不是 position.start】`code` / `inlineCode` 的 value 不含定界符（设计 3.6）。
+  const origin = valueStartOf(node) ?? node.position?.start.offset
+  if (origin === undefined) return node
+  const starts = lineStartsOf(node)
+  let head: number
+  let tail: number
+  let revealed: number[] | null = null
+  if (starts) {
+    const window = sliceValueByLines(node.value, starts, from, to)
+    head = window.head
+    tail = window.tail
+    revealed = window.starts.length > 0 ? window.starts : null
+  } else {
+    head = Math.max(0, from - origin)
+    tail = Math.max(head, to - origin)
+  }
+  const value = node.value.slice(head, tail)
+  // 【切完起点与表都要跟着挪】它们描述的是**当前**这个 value；不挪的话下游光标换算静默差几个字符。
+  const kept = { ...node, value }
+  copyMeta(node, kept)
+  setValueStart(kept, revealed ? revealed[0] : origin + head)
+  setLineStarts(kept, revealed)
+  // 【代码块的占位行数】未揭示那一段里的换行个数。框里那半行已经占着当前行，不另算。
+  if (node.type === 'code') {
+    const rest = node.value.slice(tail)
+    setBlankCount(kept, 'lines', rest === '' ? 0 : rest.split('\n').length - 1)
+  }
+  return kept
+}
+
+function valueNodeOf(node: ClipNode): ValueNode | null {
+  if (node.type === 'text' || node.type === 'code' || node.type === 'inlineCode') return node
+  return null
+}
+
+function withChildren<T extends ClipNode>(node: T, children: Content[]): T {
+  return { ...node, children } as T
 }
 
 /** 取节点的字符区间；两端偏移缺一不可，缺了就当「没有偏移」。 */
 function positionOf(node: ClipNode): { start: number; end: number } | null {
-  const p = (node as unknown as { position?: { start: { offset?: number }; end: { offset?: number } } })
-    .position
-  const start = p?.start.offset
-  const end = p?.end.offset
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
   return start === undefined || end === undefined ? null : { start, end }
 }
 ```
@@ -1782,24 +1504,19 @@ const THREE = [
 
 describe('pickFillCut', () => {
   it('装得下几个就铺几个，切点落在块边界上', () => {
-    // 700 这一条就是「恰好等于时算装得下」那条边界：400 + 300 正好 700，
-    // 改成 `>=` 会在这里断掉（返回 100 而不是 200）
+    // 700 这一条是「恰好等于时算装得下」那条边界：400 + 300 正好 700
     expect(pickFillCut(THREE, 700)).toBe(200)
     expect(pickFillCut(THREE, 699)).toBe(100)
     expect(pickFillCut(THREE, 1000)).toBe(300)
   })
 
   it('目标高度为 0 或负数：一个字都不铺', () => {
-    // 铺满 0% 是一个合法设置（老板键那个旋钮能调到 0），此时就该是空白——
-    // 绝不能因为「一个块都没装下」而触发下面那条兜底
+    // 铺满 0% 是合法设置，此时就该空白，不能因「一个块都没装下」触发兜底
     expect(pickFillCut(THREE, 0)).toBe(0)
     expect(pickFillCut(THREE, -10)).toBe(0)
   })
 
   it('第一个块就超过一页：铺满那一个块', () => {
-    // 宁可溢出一页，也不能铺出一张白纸。
-    // 目标高度是 0.5 这种「大于 0 却一个块都装不下」的也算这一条——
-    // 只有 <= 0 才走「一个字都不铺」那条。
     expect(pickFillCut(THREE, 100)).toBe(100)
     expect(pickFillCut(THREE, 0.5)).toBe(100)
     expect(pickFillCut([{ end: 999, height: 5000 }], 912)).toBe(999)
@@ -1812,6 +1529,26 @@ describe('pickFillCut', () => {
   it('高度为 0 的块照常算装得下（分隔线这类）', () => {
     expect(pickFillCut([{ end: 10, height: 0 }, { end: 20, height: 900 }], 912)).toBe(20)
   })
+
+  it('前导 0 高块不占名额：切点铺满第一个**有高度**的块，而不是铺出一张白纸', () => {
+    // 文档以 `[a]: url`（量出来 0 高）开头时，0 + 0 不大于目标，旧判据会认为「装下了」，
+    // 切点落在那个渲染成空的块上——页面上一个字都没有。
+    const blocks = [
+      { end: 20, height: 0 },
+      { end: 120, height: 500 }
+    ]
+    expect(pickFillCut(blocks, 300)).toBe(120)
+  })
+
+  it('前导 0 高块之后的第一个可见块装得下时：切点照常往前走', () => {
+    const blocks = [
+      { end: 20, height: 0 },
+      { end: 120, height: 100 },
+      { end: 220, height: 100 }
+    ]
+    expect(pickFillCut(blocks, 150)).toBe(120)
+    expect(pickFillCut(blocks, 250)).toBe(220)
+  })
 })
 
 describe('pickFoldStart', () => {
@@ -1822,17 +1559,37 @@ describe('pickFoldStart', () => {
   ]
 
   it('从末尾往前累加字符数，返回最早那个要保留的块的起始偏移', () => {
-    expect(pickFoldStart(SPANS, 200)).toBe(200) // 最后一块正好 200 字
-    expect(pickFoldStart(SPANS, 201)).toBe(100) // 再加一块
-    expect(pickFoldStart(SPANS, 100)).toBe(200) // 最后一块就超了，只留它
+    expect(pickFoldStart(SPANS, 200, 400)).toBe(200) // 最后一块正好 200 字
+    expect(pickFoldStart(SPANS, 201, 400)).toBe(100) // 再加一块
+    expect(pickFoldStart(SPANS, 100, 400)).toBe(200) // 最后一块就超了，只留它
   })
 
   it('全篇都不够上限：一个字都不折', () => {
-    expect(pickFoldStart(SPANS, 99999)).toBe(0)
+    expect(pickFoldStart(SPANS, 99999, 400)).toBe(0)
   })
 
   it('空文档返回 0', () => {
-    expect(pickFoldStart([], 30000)).toBe(0)
+    expect(pickFoldStart([], 30000, 400)).toBe(0)
+  })
+
+  it('光标在中段、后面还有长尾：折点不得超过光标，也不许把光标之前的块全折掉', () => {
+    // 光标在 40005（第一段里），后面一整段 40010..80010 还没揭示。从**文档末尾**累加时
+    // 长尾自己就超过 30000，折点落到 40010——比光标还靠后，窗口 [40010, 40005) 是空的。
+    const spans = [
+      { start: 0, end: 8 },
+      { start: 8, end: 40010 },
+      { start: 40010, end: 80010 }
+    ]
+    const start = pickFoldStart(spans, 30000, 40005)
+    expect(start).toBe(8)
+    expect(start).toBeLessThanOrEqual(40005)
+  })
+
+  it('光标之前的已揭示内容不够上限：夹到光标，绝不越过', () => {
+    // 只揭示了 100 字（但调用方判定要折叠——这里只钉纯函数的上界）
+    expect(pickFoldStart(SPANS, 99999, 150)).toBe(0)
+    // 折点算出来比光标大时夹回光标
+    expect(pickFoldStart([{ start: 300, end: 400 }], 1, 150)).toBe(150)
   })
 })
 ```
@@ -1851,13 +1608,8 @@ pnpm vitest run tests/unit/markdownFill.test.ts
 /**
  * 铺满切点与折叠切点。**两个纯函数，没有 DOM、没有副作用。**
  *
- * 【为什么切点要停在块边界】铺满一页时如果切在半句话、半张表、半个引用块上，
- * 屏幕底部就是残缺的东西——而这正是老板键要避免的「看起来不对」。切在块边界上，
- * 屏幕上永远是一整块一整块的（设计第 7 节）。
- *
- * 【为什么不在这里量高度】量高度要真实布局，只有 DOM 里有。这里吃的是**已经量好的
- * 高度表**，所以它是纯的、能单测；量不出来时调用方退回按字符数（见 Task 11）。
- * 这条分界是本功能唯一一处「jsdom 判不了」的地方，拆开就是为了让它别变成零覆盖。
+ * 量高度只有 DOM 里有：这里吃的是已经量好的高度表 / 语法树上现成的字符跨度，
+ * 所以能单测；量不出来时调用方退回按字符数铺（`bossKey.ts` 那套）。
  */
 
 /** 一个顶层块的结束偏移与它的渲染高度。 */
@@ -1875,46 +1627,54 @@ export interface BlockSpan {
 }
 
 /**
- * 选铺满切点：从前往后累加块高，装得下就继续，装不下就停，返回**最后一个装得下的块的
- * 结束偏移**。调用方把它喂给 `engine.revealTo()`。
+ * 选铺满切点：从前往后累加块高，装得下就继续，返回**最后一个装得下的块的结束偏移**。
  *
- * 两条边界都是有意的：
- * - `targetHeight <= 0` 返回 0。铺满 0% 是合法设置，那时就该是空白。
- * - **一个块都装不下时铺满第一个块**。第一个块就超过一页（比如开头就是一张大表），
- *   返回 0 会让画面全白——宁可溢出一页。
+ * 【0 高的块不算装下】`definition` / 空段落这类块量出来是 0 高，装得下也画不出东西；
+ * 前导全是 0 高块时按「第一个块超高」兜底，铺满第一个**有高度**的块，否则是一张白纸。
+ * 【`targetHeight <= 0` 返回 0】铺满 0% 是合法设置，那时就该空白。
  */
 export function pickFillCut(blocks: readonly BlockHeight[], targetHeight: number): number {
   if (targetHeight <= 0 || blocks.length === 0) return 0
   let acc = 0
   let cut = 0
   let fitted = false
-  for (const b of blocks) {
-    if (acc + b.height > targetHeight) break
-    acc += b.height
-    cut = b.end
-    fitted = true
+  let firstVisibleEnd = 0
+  let sawVisible = false
+  for (const block of blocks) {
+    if (block.height > 0) {
+      if (!sawVisible) {
+        sawVisible = true
+        firstVisibleEnd = block.end
+      }
+      if (acc + block.height > targetHeight) break
+      acc += block.height
+      fitted = true
+    }
+    cut = block.end
   }
-  return fitted ? cut : blocks[0].end
+  if (fitted) return cut
+  return sawVisible ? firstVisibleEnd : cut
 }
 
 /**
- * 选折叠切点：从末尾往前累加各块的**字符数**，到 `limit` 为止，返回那个块的起始偏移。
- * 这个偏移之下（含）的块都是「前文」，折叠起来。
+ * 选折叠切点：从**光标往前**累加各块的已揭示字符数，到 `limit` 为止，返回那个块的起始偏移。
  *
- * 【为什么按字符数而不是按高度】折叠发生在渲染之前，那时没有布局信息，也不该为了折叠
- * 去量一次高度。字符数是现成的。所以这里**不复用 `pickFillCut`**——两个函数吃的
- * 根本不是同一种输入。
+ * 【只数光标之前的块】光标之后的块还没上屏，把它们算进窗口会让折点越过光标、页面只剩折叠条。
+ * 返回前再夹到 `cursor`，是给「块起点算错」留的最后一道闸。
+ * 【为什么按字符数】折叠发生在渲染之前，那时没有布局信息，也不该为了折叠去量一次高度。
  */
-export function pickFoldStart(blocks: readonly BlockSpan[], limit: number): number {
+export function pickFoldStart(blocks: readonly BlockSpan[], limit: number, cursor: number): number {
   if (blocks.length === 0) return 0
   let acc = 0
-  let start = blocks[blocks.length - 1].start
+  let start = cursor
   for (let i = blocks.length - 1; i >= 0; i--) {
-    start = blocks[i].start
-    acc += blocks[i].end - blocks[i].start
+    const block = blocks[i]
+    if (block.start >= cursor) continue
+    start = block.start
+    acc += Math.min(block.end, cursor) - block.start
     if (acc >= limit) break
   }
-  return start
+  return Math.min(start, cursor)
 }
 ```
 
@@ -2353,12 +2113,14 @@ git commit -F /tmp/msg.txt
 - [ ] **Step 1: 写失败的测试**
 
 ```tsx
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import type { Root } from 'mdast'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
-import { clipTree, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { clipTree } from '../../src/renderer/src/markdown/clip'
+import { setBlankCount, setValueStart } from '../../src/renderer/src/markdown/nodeMeta'
 import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
+import type { WtApi } from '../../src/core/api'
 
 /** 把 md 渲染进一个容器，返回容器本身——断言一律用 querySelector / textContent。 */
 function dom(md: string): HTMLElement {
@@ -2554,11 +2316,14 @@ describe('renderMarkdown —— 行内 HTML（合并兄弟节点）', () => {
  * 比串起 clipTree 更小、也更能指名道姓。
  */
 describe('renderMarkdown —— 未揭示部分的占位', () => {
-  function withBlank(node: Record<string, unknown>, field: string, n: number): Root {
-    return {
-      type: 'root',
-      children: [{ position: { start: { offset: 0 }, end: { offset: 10 } }, ...node, [field]: n }]
-    } as unknown as Root
+  function withBlank(
+    node: Record<string, unknown>,
+    kind: 'lines' | 'rows',
+    n: number
+  ): Root {
+    const child = { position: { start: { offset: 0 }, end: { offset: 10 } }, ...node }
+    setBlankCount(child, kind, n)
+    return { type: 'root', children: [child] } as unknown as Root
   }
 
   it('表格有剩余行时：表格之后多出一块空白，且不带任何网格线', () => {
@@ -2572,7 +2337,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
           }
         ]
       },
-      WT_BLANK_ROWS,
+      'rows',
       2
     )
     const c = render(<>{renderMarkdown(doc)}</>).container
@@ -2596,7 +2361,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
           }
         ]
       },
-      WT_BLANK_ROWS,
+      'rows',
       0
     )
     const c = render(<>{renderMarkdown(doc)}</>).container
@@ -2604,7 +2369,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
   })
 
   it('代码块有未揭示的行时：代码框之后多出一块空白', () => {
-    const doc = withBlank({ type: 'code', value: '第一行' }, WT_BLANK_LINES, 2)
+    const doc = withBlank({ type: 'code', value: '第一行' }, 'lines', 2)
     const c = render(<>{renderMarkdown(doc)}</>).container
     const blank = c.querySelector('.wt-md-pre-blank')
     expect(blank).not.toBeNull()
@@ -2720,23 +2485,19 @@ describe('renderMarkdown —— 阅读光标', () => {
   })
 
   it('光标插进代码框里，而不是掉到框下面', () => {
-    const doc = {
-      type: 'root',
-      children: [
-        {
-          type: 'code',
-          value: '第一行',
-          position: { start: { offset: 0 }, end: { offset: 10 } },
-          wtValueStart: 4
-        }
-      ]
-    } as unknown as Root
+    const code = {
+      type: 'code',
+      value: '第一行',
+      position: { start: { offset: 0 }, end: { offset: 10 } }
+    }
+    setValueStart(code, 4)
+    const doc = { type: 'root', children: [code] } as unknown as Root
     const c = render(<>{renderMarkdown(doc, { caretAt: 6 })}</>).container
     const pre = c.querySelector('pre')!
     expect(pre.textContent).toBe('第一行')
     const caret = pre.querySelector('[data-testid="caret"]')
     expect(caret).not.toBeNull()
-    // `caretAt: 6`、`wtValueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
+    // `caretAt: 6`、`valueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
     // 【这两个字面量差一个字符就整条失效】原计划写的是 `'第'` / `'一行'`，
     // 那与实现自相矛盾——实施者量出来了。这条用例的真正作用是**守住 `origin`**。
     expect(caret!.previousSibling!.textContent).toBe('第一')
@@ -2752,7 +2513,7 @@ describe('renderMarkdown —— 阅读光标', () => {
  * 落到占位之后、下一行、或图的右边——而**隐形输入框与输入法候选框都按这个坐标摆**。
  *
  * 【为什么必须走真管线】缺陷正出在 `clip` 与 `toReact` 的**接缝**上：手工造树造不出
- * `clip` 写的 `wtValueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
+ * `clip` 写的 `valueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
  *
  * 【实现者注意】下面每个 `to` 都要**先确认它在旧代码上真的红**（Step 2 那一步），
  * 落点不对就自己找一个能复现的偏移并**在报告里写清实测数**——别为了让用例变绿去改断言。
@@ -3019,7 +2780,7 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
  * 【夹具为什么是这六份】前四份是计划 Step 1 给的，第六份是评审那张表里「表格尾部 32–35」
  * 对应的夹具（那份表的数字只有它对得上）；第五份（**单行**的那种容器里的围栏）是补的：
  * 计划那张表把「容器里的代码 3–7」列为坏格，而**多行**围栏（计划 Step 1 用的那份）实测
- * 一格都不坏——`wtBlankLines > 0`，占位自己接住了光标（那是 Step 5 要回归的口径）。
+ * 一格都不坏——`blankCountOf(node, 'lines') > 0`，占位自己接住了光标（那是 Step 5 要回归的口径）。
  * 坏格的机制是「`code` 的 `value` 为空、内容起点在揭示偏移之后、**围栏里没有第二行可留白**」，
  * 所以复现它要用单行的那种。
  */
@@ -3238,6 +2999,52 @@ describe('合并串上的链尾（真管线，逐偏移）', () => {
     }
   })
 })
+
+/**
+ * 量高度那一份走 layoutOnly：不挂真实图片（不触发取图 IPC，设计 8.2）、不插光标，
+ * 但仍要保留每个顶层块的包装与块结束偏移，`measureBlocks` 的 offsetTop 差分才成立。
+ */
+describe('renderMarkdown —— layoutOnly（量高度那一份）', () => {
+  function installImageApi(): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(async () => 'data:image/png;base64,AAA')
+    ;(window as unknown as { api: WtApi }).api = {
+      ...(window.api as WtApi),
+      loadWorkDocImage: spy
+    }
+    return spy
+  }
+
+  it('图片只画占位，不挂 MarkdownImage、不发取图 IPC', () => {
+    const spy = installImageApi()
+    const doc = parseMarkdown('甲 ![图](a.png) 乙\n')!
+    const c = render(
+      <div>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}</div>
+    ).container
+    expect(c.querySelectorAll('img')).toHaveLength(0)
+    expect(c.querySelector('.wt-md-img')!.getAttribute('data-src')).toBe('a.png')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('不插光标（即使调用方传了 caretAt）', () => {
+    const doc = parseMarkdown('甲乙丙\n')!
+    const c = render(
+      <>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true, caretAt: 2 })}</>
+    ).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(0)
+  })
+
+  it('每个顶层块仍有带块结束偏移的包装', () => {
+    const doc = parseMarkdown('# 标题\n\n[a]: https://example.com\n\n正文\n')!
+    const c = render(
+      <div>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}</div>
+    ).container
+    const wrappers = Array.from(c.firstElementChild!.children)
+    expect(wrappers).toHaveLength(doc.children.length)
+    wrappers.forEach((el, i) => {
+      expect(el.getAttribute('data-block-end')).toBe(String(doc.children[i].position?.end.offset))
+    })
+  })
+})
 ```
 
 - [ ] **Step 2: 跑测试，确认它红**
@@ -3285,39 +3092,29 @@ import { createElement, Fragment, type CSSProperties, type ReactNode } from 'rea
 import type { Root } from 'mdast'
 import { tokenizeHtml, type HtmlToken } from './html'
 import { MarkdownImage } from './MarkdownImage'
-import { readBlankCount, WT_BLANK_LINES, WT_BLANK_ROWS } from './clip'
-import { lineStartsOf, valueStartOf } from './parse'
+import { BLOCK_END_ATTR } from './measure'
+import { blankCountOf, lineStartsOf, valueStartOf, type BlankKind } from './nodeMeta'
+import { linesOf, type ValueLine } from './offsets'
 
 /** mdast 的节点联合。`Root['children'][number]` 就是 `Content`，写出来更直白。 */
 type MdNode = Root['children'][number]
 
-/** 表头单元格与普通单元格的唯一区别，外加阅读光标那一份状态。 */
+/** 表头单元格与普通单元格的唯一区别，外加光标与「量高度那一份」两份状态。 */
 interface Ctx {
   readonly header: boolean
-  /**
-   * 阅读光标。`null` 表示不插，有**两条**路走到这里：
-   * 1. **没传 `caretAt`**——`renderMarkdown(tree)` 不带 opts 的整篇渲染，量高度那份副本
-   *    与一切「只想要排版、不要光标」的调用都走这条；
-   * 2. `withBlockEnds` 那条支路**显式写死 `caret: null`**（见那里的注释），与调用方传没传
-   *    `caretAt` 无关——那是「机器保证」，不是「靠自觉」。
-   */
   readonly caret: Caret | null
+  /** 量高度那一份：不挂真实图片、不插光标（设计 8.2）。 */
+  readonly layoutOnly: boolean
 }
 
 /**
  * 阅读光标的状态。
  *
- * 【为什么 `placed` 是可变字段】它要在整棵树里只命中一次，而渲染是深度优先的递归——
- * 用一个共享的小对象带下去，比让每一层返回「插过了没」再往上并简单得多。
- * 它每次 `renderMarkdown` 都新造一个，所以两次渲染之间不会互相串。
- *
- * 【`tail` 是「末尾兜底」该落进哪个节点】由 `tailTarget` 在渲染前算一次，渲染中按节点身份
- * 比对——**不是**让每一层自己判「我在不在文档末尾」（渲染是自上而下的，一个容器看不到
- * 它后面还有没有兄弟）。
+ * 【`placed` 可变】整棵树只命中一次，用一个共享小对象带下去；每次 `renderMarkdown` 新造。
+ * 【`tail`】末尾兜底该落进哪个节点，由 `tailTarget` 渲染前算一次、按节点身份比对。
  */
 interface Caret {
   readonly at: number
-  /** 末尾兜底的目标节点；`null` 表示这一趟不做那条兜底（树是空的、或者树上还有占位） */
   readonly tail: MdNode | null
   placed: boolean
 }
@@ -3326,42 +3123,24 @@ interface Caret {
 const HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const
 
 /**
- * 裁剪后的树 → React 元素。
+ * 裁剪后的树 → React 元素。**这一层不做「该不该显示」的判断**（那是 `clip.ts` 的事）。
  *
- * 【这一层不做任何「该不该显示」的判断】那是 `clip.ts` 的事。这里只把拿到的树
- * 按类型画出来，所以它是纯粹的视图层。
+ * 【安全口径】全仓不出现 `dangerouslySetInnerHTML`；内嵌 HTML 走白名单 tokenizer，
+ * `renderTokens` 里的 `createElement` 一个属性都不传（设计第 11 节）。
+ * 【链接是 `span` 不是 `a`】点了不做事（设计 9.3）。
  *
- * 【全仓不出现 `dangerouslySetInnerHTML`】内嵌 HTML 那一行走 `tokenizeHtml` →
- * `createElement`，白名单之外的标签**连元素都建不出来**（设计第 11 节）。
- * `renderTokens` 那几处 `createElement` **一个属性都不传**，这是安全性的来源，
- * 不是省事——别顺手把 `class` 之类透传进去。
- *
- * 【链接为什么不是 `<a>`】点了不做事是明确的决定（设计 9.3）：点开会拉起系统浏览器，
- * 一个伪装成 Word 的应用突然开浏览器太显眼。画成 `<span>` 配链接的样子，
- * `title` 里留着真实地址，想复制的人拿得到。
- *
- * 【表格对齐不做】GFM 的 `align` 要逐列算，而真 Word 里数字右对齐是「单元格属性」
- * 而不是「表格属性」。这一段做到「细网格线 + 表头加粗」为止。
- *
- * 【`default` 分支落到哪里】`definition`（链接引用定义）走那里：它本身不该出现在正文里。
- * 其余 mdast 节点类型（yaml / toml / math 之类）本仓库的插件集产不出来。
- *
- * 【`withBlockEnds` 是给量高度那一份用的】它为真时每个顶层块**多套一层带
- * `data-block-end` 的包装**，让「有几个块」只由这一处决定：渲染成 `null` 的节点
- * （`definition`）也照样有一个包装、高度 0，于是 DOM 与偏移按构造一一对应，
- * `measureBlocks` 那条「对不上就退回兜底」永远不会因为节点类型被误触。
- * 包装本身没有内外边距与边框，子元素的外边距**照常折叠穿透**，所以量出来的高度
- * 与不套包装时一致；有可见那一份在，这一份的层级再多也不影响用户看到的东西。
- * 为假时走 `renderAll`，输出**一个字节都不变**。
- *
- * 【`caretAt` 是「揭示到哪个偏移」，见设计 3.5；量高度那一份永远不传它】
+ * 【`withBlockEnds`】每个顶层块多套一层带 `data-block-end` 的包装：渲染成 `null` 的节点
+ * （`definition`）也有包装、高度 0，于是「有几个块」与 DOM 一一对应。包装无内外边距，
+ * 外边距照常穿透，量出的高度不变。为假时走 `renderAll`，输出一个字节都不变。
+ * 【`caretAt`】「揭示到哪个偏移」（设计 3.5）；`layoutOnly` 为真时一律不插光标。
  */
 export function renderMarkdown(
   root: Root,
-  opts: { withBlockEnds?: boolean; caretAt?: number | null } = {}
+  opts: { withBlockEnds?: boolean; caretAt?: number | null; layoutOnly?: boolean } = {}
 ): ReactNode {
+  const layoutOnly = opts.layoutOnly === true
   const caret: Caret | null =
-    typeof opts.caretAt === 'number' && Number.isFinite(opts.caretAt)
+    !layoutOnly && typeof opts.caretAt === 'number' && Number.isFinite(opts.caretAt)
       ? {
           at: opts.caretAt,
           placed: false,
@@ -3373,39 +3152,14 @@ export function renderMarkdown(
       <div
         className="wt-md-measure-block"
         key={i}
-        data-block-end={node.position?.end.offset ?? ''}
+        {...{ [BLOCK_END_ATTR]: node.position?.end.offset ?? '' }}
       >
-        {/*
-          【这里显式传 `caret: null`，不是省事】量高度那一份是**整篇未裁剪**的树，
-          多一个光标不但没用，还会让 `[data-testid="caret"]` 在文档里出现两次——
-          而 `InputCapture` 取的是**第一个**。今天靠「调用方永不传 `caretAt`」这条
-          自觉，显式写 `null` 才有机器保证。
-        */}
-        {renderNode(node, { header: false, caret: null })}
+        {renderNode(node, { header: false, caret: null, layoutOnly })}
       </div>
     ))
   }
-  const out = renderAll(root.children, { header: false, caret })
-  // 【这一句只在「一个能放光标的节点都没有」时才走到】它是**最后一条**兜底，落点是容器的
-  // 末尾，也就是最后一个块**下方**——正是用户最初报的那条（隐形输入框与输入法候选框都按
-  // 这个坐标摆）。所以它现在只留给两类情形：
-  //  1. 整篇还没开始揭示（`to = 0`）：每个顶层块都满足「起始偏移 ≥ to」而被 `clip` 丢掉，
-  //     树是空的，一个节点都没有——本来也没有别的位置可放。
-  //  2. 链尾是**放不下光标**的节点：文档以分隔线 / 图片 / 内嵌 HTML 收尾，或者树上还有占位
-  //     （`tail` 为 `null`，见 `tailTarget`）。这时光标落在最后一个元素**之后**，与「放在
-  //     它后面」是同一个位置。
-  //
-  // 【前一版这里写的是「实测只有两类」，第二类不成立】它把「揭示偏移落在所有已揭示文字的
-  // 后面」也归进兜底、还说「内容本来也到头了，位置看不出差别」。**实测那正是缺陷**：
-  // 14 份夹具逐偏移 230 格里有 15 格落在文档**中间**（多行列表的每个列表项边界、容器里的
-  // 围栏、表格尾部、标题后面那个换行），内容都还剩很多——「下一个块还没到它的起点」时，
-  // 屏幕上明明还有一整块已渲染的内容，光标却在它下面一行。现在那些格子由 `tailTarget`
-  // 收进**最后一块已渲染的内容**里，只有上面两类才落到这里。
-  //
-  // 【这一句也**不该**在文档中间开火】占位那几格（表格 `to = 8–20` / `28–30`、代码块
-  // `to = 1–3`）曾经也走这里，被甩到占位**后面**；已经由「占位自己接光标」修掉
-  // （见 `BlankSpace`）。两条的优先级由 `tailTarget` 那句「树上有占位就返回 null」保证。
-  // 外面套一层 Fragment 只为挂 `key`——`CaretSpan` 没有 props，别给它传。
+  const out = renderAll(root.children, { header: false, caret, layoutOnly })
+  // 最后一条兜底：树是空的（`to = 0`）或链尾放不下光标时才用。
   if (caret && !caret.placed) out.push(<Fragment key="caret-fallback"><CaretSpan /></Fragment>)
   return out
 }
@@ -3415,20 +3169,14 @@ function childrenOf(node: Root | MdNode): readonly MdNode[] | null {
   return 'children' in node ? node.children : null
 }
 
-/** 带**可裁**文本、能自己接住光标的三个节点类型（`clip.ts` 的 `VALUE_TYPES` 是同一组）。 */
+/** 带**可裁**文本、能自己接住光标的三个节点类型（`clip.ts` 的 `ValueNode` 是同一组）。 */
 function isValueNode(node: MdNode): boolean {
   return node.type === 'text' || node.type === 'code' || node.type === 'inlineCode'
 }
 
-/**
- * 树上还有没有「未揭示的占位」（`wtBlankLines` / `wtBlankRows`，`clip.ts` 挂的）。
- *
- * 它决定 `tailTarget` 要不要整个让路——理由见那里的最后一段。
- */
+/** 树上还有没有「未揭示的占位」。它决定 `tailTarget` 要不要整个让路——理由见那里的最后一段。 */
 function hasPlaceholder(node: Root | MdNode): boolean {
-  if (readBlankCount(node, WT_BLANK_LINES) > 0 || readBlankCount(node, WT_BLANK_ROWS) > 0) {
-    return true
-  }
+  if (blankCountOf(node, 'lines') > 0 || blankCountOf(node, 'rows') > 0) return true
   const kids = childrenOf(node)
   return kids !== null && kids.some((child) => hasPlaceholder(child))
 }
@@ -3443,7 +3191,7 @@ function hasPlaceholder(node: Root | MdNode): boolean {
  * 评审逐格扫过（14 份夹具 × 逐偏移 = 230 格）：文档中间有 15 格落在这里，四种形态——
  * 多行列表的每个列表项边界、容器里的围栏、表格尾部、标题后面那个换行。本 Task 按同一条
  * 判据在六份夹具上逐偏移复核过：四种形态都在，而「容器里的围栏」那一组要用**单行**的夹具
- * 才复现（多行的那种 `wtBlankLines > 0`，占位自己接住了光标）——见测试里那段说明。
+ * 才复现（多行的那种 `blankCountOf(node, 'lines') > 0`，占位自己接住了光标）——见测试里那段说明。
  *
  * 【判据：沿「最后一个孩子」一路往下走】走到头的那个节点就是**最后一块已渲染的内容**
  * （`clip` 丢掉的节点不在树上，所以「最后一个孩子」恒是最后一个**已经开始揭示**的）：
@@ -3461,7 +3209,7 @@ function hasPlaceholder(node: Root | MdNode): boolean {
  * 但它们既然后面什么都没有，「追加在末尾」与「放在它后面」是同一个位置，不必区别对待。
  * （`definition` 渲染成 `null`，跳过它接着看前一个兄弟。）
  *
- * 【树上有占位（`wtBlankLines` / `wtBlankRows`）时一律返回 `null`——这条必须保住】
+ * 【树上有占位（`blankCountOf`）时一律返回 `null`——这条必须保住】
  * 占位代表「还没到的东西」，设计 3.5 让它**自己**接住光标（`BlankSpace`），而占位渲染在
  * 块的内部、比链尾更深也**更晚**：不让路的话，表格剩余行、代码块剩余行那几格会被本条抢回
  * 块里，「光标落在占位之前」这条既有口径（实测连续 13 个偏移位）当场就破。两者本来也
@@ -3722,7 +3470,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           */}
           {BlankSpace({
             node,
-            field: WT_BLANK_LINES,
+            kind: 'lines',
             className: 'wt-md-pre-blank',
             cssVar: '--wt-md-blank-lines',
             ctx
@@ -3789,10 +3537,19 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           {tailCaretIn(node, ctx)}
         </span>
       )
+    // 量高度那一份不挂真实图片：一挂就触发取图 IPC，违反设计 8.2「只抓已经抽出来的那张」。
     case 'image':
-      return <MarkdownImage url={node.url} alt={node.alt ?? ''} />
+      return ctx.layoutOnly ? (
+        <LayoutImage url={node.url} alt={node.alt ?? ''} />
+      ) : (
+        <MarkdownImage url={node.url} alt={node.alt ?? ''} />
+      )
     case 'imageReference':
-      return <MarkdownImage url="" alt={node.alt ?? ''} />
+      return ctx.layoutOnly ? (
+        <LayoutImage url="" alt={node.alt ?? ''} />
+      ) : (
+        <MarkdownImage url="" alt={node.alt ?? ''} />
+      )
     case 'table': {
       const [head, ...body] = node.children
       return (
@@ -3810,7 +3567,7 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
           {/* 同 `case 'code'`：**直接调用**，理由（渲染时序）见那里 */}
           {BlankSpace({
             node,
-            field: WT_BLANK_ROWS,
+            kind: 'rows',
             className: 'wt-md-table-blank',
             cssVar: '--wt-md-blank-rows',
             ctx
@@ -3848,6 +3605,18 @@ function renderNode(node: MdNode, ctx: Ctx): ReactNode {
   }
 }
 
+/**
+ * 量高度那一份的图片占位：高度按「图片还没加载」那一档算（可见那份此刻也是它）。
+ * 真实高度要取图才知道，而量高度不能为此提前发 IPC（设计 8.2）。
+ */
+function LayoutImage({ url, alt }: { url: string; alt: string }): ReactNode {
+  return (
+    <span className="wt-md-img" data-src={url}>
+      {alt}
+    </span>
+  )
+}
+
 /** 一段内嵌 HTML 走完白名单之后剩下的东西。 */
 function HtmlFragment({ raw }: { raw: string }): ReactNode {
   return <>{renderTokens(tokenizeHtml(raw))}</>
@@ -3867,59 +3636,22 @@ function CaretSpan(): ReactNode {
  * 才算得对。**在裁剪后的树上读到失真的起点是静默的**（光标差几个字符、不报错），
  * 所以这条链路两侧的注释都点名了它。
  *
- * 普通 `text` 节点原本没有这个标注、用 `position.start.offset` 兜；切片之后 `clip.ts`
- * 也给它们写上了。两者都没有（手工造的单测树）时给 0——那时不会传 `caretAt`。
+ * 没有标注（手工造的单测树）时退回 `position.start.offset`，再没有给 0——那时不会传 `caretAt`。
  */
 function originOf(node: MdNode): number {
   return valueStartOf(node) ?? node.position?.start.offset ?? 0
 }
 
-/** 摊平后的一行：它在 `value` 里的下标、长度（不含行尾换行），以及它在源码里的起点。 */
-interface Row {
-  /** 这一行首字符在 `value` 里的下标 */
-  readonly base: number
-  /** 这一行在 `value` 里的长度（**不含**行尾换行） */
-  readonly len: number
-  /** 这一行首字符在源码里的偏移 */
-  readonly src: number
-}
-
 /**
- * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1）。
+ * 把一个带文本节点的 `value` 摊成「行」（设计 3.6.1，实现见 `offsets.ts`）。
  *
- * 【没有逐行表时摊成**一行**】那时候「起点 + 字符数」本来就是线性的，退化成一行正好等价于
- * 旧算法（下标 `= 揭示偏移 − 起点`、区间 `[起点, 起点 + 长度]`），所以下面两处调用都不必
- * 分岔——分岔两份判据就等于两份会各自走样的东西。
- *
- * 【行数由 `value` 定，**不是**由表长定】这两者会差一行：`clip` 把末行那个换行也算进
- * revealed，于是切出来的 `value` 会多出一个**空行**，而表里只有「起点 < 揭示偏移」的那几行
- * 的起点（实测 `'> 引用甲\n> 引用乙\n'` 在 `to=6` 上是 `value='引用甲\n'`、表 `[2]`）。
- * 差出来的那一行恒为空行，用「上一行起点 + 上一行长度 + 1」兜即可——它的**长度是 0**，
- * 所以这个兜法不会把任何字符划给它。
- *
- * 【空表当没有表】`parse.ts` 不会挂空表（空数组被判为「连续」），但手工造的树上可能出现；
- * 走空表会拿到不存在的 `rows[0]`。
- *
- * 【同一件事有三处实现，别只改一处】「沿 `value` 的 `\n` 走行、每行进 `lineLen + 1`」这个
- * 循环在这里、`parse.ts` 的 `isContiguous`、`clip.ts` 的 `sliceByLineStarts` 各写了一份——
- * 用途不同（摊成行 / 判连续性 / 求窗口），所以**不合并**，但**行尾口径三份不一样**：这里的
- * 行长**不含**换行（`base = nl + 1` 才进下一行），`isContiguous` 把换行**算给上一行**，
- * `sliceByLineStarts` 用 `+ 1` 把换行**括进窗口**。动任何一处之前先把三处对一遍。
+ * 【没有逐行表时摊成一行】「起点 + 字符数」那时本来就是线性的，退化成一行与旧算法等价。
+ * 【空表当没有表】手工造的树上可能出现空数组，走空表会拿到不存在的首行。
  */
-function rowsOf(node: MdNode, value: string, origin: number): Row[] {
+function rowsOf(node: MdNode, value: string, origin: number): ValueLine[] {
   const starts = lineStartsOf(node)
   if (starts === null || starts.length === 0) return [{ base: 0, len: value.length, src: origin }]
-  const rows: Row[] = []
-  let base = 0
-  for (let i = 0; ; i++) {
-    const nl = value.indexOf('\n', base)
-    const len = (nl < 0 ? value.length : nl) - base
-    const prev = rows[rows.length - 1]
-    rows.push({ base, len, src: starts[i] ?? (prev ? prev.src + prev.len + 1 : origin) })
-    if (nl < 0) break
-    base = nl + 1
-  }
-  return rows
+  return linesOf(value, starts, origin)
 }
 
 /**
@@ -4111,8 +3843,7 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
  * （13px × 1.6）与表格行的行高（14px × 1.9 + 单元格内边距）**不是同一个数**。
  * 这里只报「几行」，换算留给 `markdown.css`，两处各自可调。
  *
- * 【行数从哪来】`clip.ts` 挂在节点上的（见那里的 `readBlankCount`）。它返回 0 时
- * 整个元素都不渲染——已经全部揭示的块不该在 DOM 里多出一样东西。
+ * 【行数从哪来】`clip.ts` 算好挂在节点元数据上（`blankCountOf`）。为 0 时整个元素都不渲染。
  *
  * 【为什么值要转成字符串 —— 理由已按实测更正】原来那句「取决于 React 版本行为、可能补
  * 一个 `px`」**在本仓库不成立**：实测 React 19.3.0 对 `--*` 自定义属性走 `setProperty`，
@@ -4122,23 +3853,18 @@ function caretBefore(node: MdNode, ctx: Ctx): ReactNode {
  */
 function BlankSpace({
   node,
-  field,
+  kind,
   className,
   cssVar,
   ctx
 }: {
   node: MdNode
-  /**
-   * 【为什么不是裸 `string`】`clip.ts` 把 `readBlankCount` 的参数收成了那两个常量的联合，
-   * 传 `WT_VALUE_START` 之类会**编译不过**。这里必须跟它一致，否则本 Task 一落地就红。
-   * 用 `typeof` 取那两个常量的类型，不必让 `clip.ts` 再多导出一个类型别名。
-   */
-  field: typeof WT_BLANK_LINES | typeof WT_BLANK_ROWS
+  kind: BlankKind
   className: string
   cssVar: string
   ctx: Ctx
 }): ReactNode {
-  const count = readBlankCount(node, field)
+  const count = blankCountOf(node, kind)
   if (count <= 0) return null
   /*
     【占位自己接住光标】占位代表「还没走到的东西」，一个还没落地的光标本来就该落在它
@@ -4756,19 +4482,12 @@ pnpm vitest run tests/unit/markdownMeasure.test.ts
 import type { BlockHeight } from './fill'
 
 /**
- * 每个顶层块在「量高度用的那一份隐藏副本」里带的结束偏移属性。
+ * 每个顶层块在「量高度用的那一份隐藏副本」里带的结束偏移属性。**`toReact.tsx` 直接 import 它**。
  *
- * 【为什么偏移写在 DOM 上，而不是另外算一份数组传进来】「有几个块」如果由两处各自决定，
- * 就永远能对不上——而这里的判据是「对不上就整篇退回按字符数铺」，于是对不上是**静默**的。
- * 实测能触发它的两种节点：
- * - `definition`（`[a]: https://example.com`，真 md 里很常见）走 `renderMarkdown` 的
- *   `default` 分支渲染成 `null`，**零个 Element**；
- * - 只含注释 / `<script>` 的 HTML 块，`tokenizeHtml` 白名单过滤之后产物只剩文本子节点，
- *   而 `container.children` **只数 Element、不数文本**。
- *
- * 两种都让 DOM 的直接子元素比「块」少一个。现在每个顶层块由
- * `renderMarkdown(root, { withBlockEnds: true })` 套一层带偏移的包装，一一对应由构造保证。
- * **渲染与测量共用这一个常量，改名要同步 `toReact.tsx`。**
+ * 【偏移写在 DOM 上】「有几个块」若由两处各自决定，就永远能对不上，而对不上的判据是
+ * 「整篇静默退回按字符数铺」。渲染成 `null` 的 `definition`、白名单过滤后只剩文本的 HTML 块
+ * 都会让 DOM 子元素比块少，所以每个顶层块由 `renderMarkdown(..., { withBlockEnds: true })`
+ * 套一层带偏移的包装，一一对应由构造保证。
  */
 export const BLOCK_END_ATTR = 'data-block-end'
 
@@ -4857,10 +4576,12 @@ git commit -F /tmp/msg.txt
 - [ ] **Step 1: 写失败的测试**
 
 ```tsx
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { Page, type MarkdownSource } from '../../src/renderer/src/components/Page'
+import { MarkdownView } from '../../src/renderer/src/markdown/MarkdownView'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import type { WtApi } from '../../src/core/api'
 
 const DOC = ['# 季度汇报', '', '本季度共归档 3 项。', '', '- 归档流程上线', '- 复核环节压缩到 2 天'].join('\n')
 
@@ -4978,6 +4699,69 @@ describe('Page —— md 分支', () => {
 })
 
 /**
+ * D3：折点不得越过光标。
+ *
+ * 折叠切点从**文档末尾**累加时，若光标在中段、后面还有一整段长尾，长尾自己就超过
+ * `RENDER_WINDOW_LIMIT`，折点落到光标之后，窗口 `[折点, 光标)` 是空的——页面上只剩折叠条。
+ */
+describe('Page —— 折叠的上界（D3）', () => {
+  it('光标在中段、后面有长尾：折叠后仍显示光标前那一段，不是只剩折叠条', () => {
+    const src = '# 标题\n\n' + 'A'.repeat(40000) + '\n\n' + 'B'.repeat(40000) + '\n'
+    const doc = parseMarkdown(src)!
+    const cursor = src.indexOf('B') - 5 // 揭示超过上限，且光标停在长尾之前
+    expect(cursor).toBeGreaterThan(30000)
+    const c = page({ doc, revealStart: 0, cursor, measuring: false }, '', { expanded: false }).container
+
+    // 主判据：窗口里还有已揭示的内容。折点越过光标时这里一个字都没有。
+    const shown = c.querySelector('[data-testid="page-text"]')!.textContent ?? ''
+    expect(shown.length).toBeGreaterThan(0)
+    expect(shown).toContain('A')
+    expect(shown).not.toContain('B') // 长尾一个字都没揭示
+
+    const fold = c.querySelector('[data-testid="page-fold"]')
+    expect(fold).not.toBeNull()
+    const folded = Number(fold!.textContent!.replace(/\D+/g, ''))
+    expect(folded).toBeGreaterThan(0)
+    // 折点 = 第二个块的起始偏移（标题之后），且绝不超过光标
+    expect(folded).toBe(doc.children[1].position!.start.offset)
+    expect(folded).toBeLessThanOrEqual(cursor)
+  })
+
+  it('MarkdownView 自身也防御：折点更大时按光标夹', () => {
+    const doc = parseMarkdown('甲乙丙。\n\n丁戊己。\n')!
+    const cursor = 3
+    const clamped = render(
+      <MarkdownView doc={doc} foldStart={cursor} cursor={cursor} measuring={false} />
+    ).container.innerHTML
+    const over = render(
+      <MarkdownView doc={doc} foldStart={1000} cursor={cursor} measuring={false} />
+    ).container.innerHTML
+    expect(over).toBe(clamped)
+  })
+})
+
+/**
+ * 量高度那一份是 layoutOnly：不挂真实图片，所以未揭示的图不会被提前请求（设计 8.2）。
+ */
+describe('Page —— 量高度副本不请求图片', () => {
+  it('measuring 为真、可见树是空的时候，一个取图 IPC 都不发', () => {
+    const spy = vi.fn(async () => null)
+    ;(window as unknown as { api: WtApi }).api = {
+      ...(window.api as WtApi),
+      loadWorkDocImage: spy
+    }
+    const doc = parseMarkdown('甲 ![图](a.png)\n')!
+    const c = page({ doc, revealStart: 0, cursor: 0, measuring: true }).container
+    expect(c.querySelector('.wt-md-measure')).not.toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+    // 副本里只有占位，没有真图——但块包装仍在（量高度的配对靠它）
+    const measure = c.querySelector('.wt-md-measure')!
+    expect(measure.querySelector('img')).toBeNull()
+    expect(measure.querySelectorAll('.wt-md-measure-block')).toHaveLength(doc.children.length)
+  })
+})
+
+/**
  * 阅读光标（设计 3.5）。
  *
  * 【判据一：不是 `.wt-page__text` 的**最后一个**子元素】光标原来由 `Page` 追加在内容末尾，
@@ -5080,7 +4864,11 @@ export function MarkdownView({
   measuring,
   onMeasureNode
 }: MarkdownViewProps): ReactNode {
-  const visible = useMemo(() => clipTree(doc, foldStart, cursor), [doc, foldStart, cursor])
+  // 折点不得越过光标：越过时窗口是空的，页面只剩折叠条。
+  const visible = useMemo(
+    () => clipTree(doc, Math.min(foldStart, cursor), cursor),
+    [doc, foldStart, cursor]
+  )
   return (
     <>
       {/*
@@ -5093,14 +4881,11 @@ export function MarkdownView({
       {measuring && (
         <div className="wt-md-measure" ref={onMeasureNode} aria-hidden="true">
           {/*
-            【`withBlockEnds` 是这一份副本独有的】它给每个顶层块套一层带
-            `data-block-end` 的包装。这样「有几个块」就只由渲染这一处决定——
-            渲染出 null 的节点（`definition`，即 `[a]: url` 那种链接引用定义，
-            真 md 里很常见）照样有一个包装、高度 0。少了这一层，「DOM 子元素个数」
-            与「外部数组长度」是两处各自决定的，永远能对不上，而对不上的后果是
-            **整篇静默退回按字符数铺**：不报错、不白屏，只有真机上铺不满才看得出来。
+            【layoutOnly】量高度不挂真实图片：一挂就触发取图 IPC，未揭示的图也会被提前请求
+            （设计 8.2）。【withBlockEnds】每个顶层块一个带 `data-block-end` 的包装，
+            「有几个块」只由渲染这一处决定，`measureBlocks` 的 offsetTop 差分才成立。
           */}
-          {renderMarkdown(doc, { withBlockEnds: true })}
+          {renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}
         </div>
       )}
     </>
@@ -5186,10 +4971,8 @@ export function Page({
   const shownLength = md ? md.cursor - md.revealStart : visibleText.length
   const folded = !expanded && shownLength > RENDER_WINDOW_LIMIT
   /**
-   * 【md 的折叠为什么按块边界】按字符硬切会把一段话、一张表切成两半，屏幕上就是残缺的
-   * 东西（设计第 12 节最后一行）。块的字符跨度从语法树上直接读得到，不需要布局信息，
-   * 所以折叠这一步**不**去量高度——它吃的是 `BlockSpan`，与铺满吃的 `BlockHeight`
-   * 不是一回事。
+   * 【md 的折叠按块边界】按字符硬切会把一段话、一张表切成两半（设计第 12 节）。
+   * 块的字符跨度从语法树直接读得到，不需要布局信息，所以折叠不量高度。
    */
   const spans: BlockSpan[] = md
     ? md.doc.children.map((n) => ({
@@ -5197,7 +4980,11 @@ export function Page({
         end: n.position?.end.offset ?? 0
       }))
     : []
-  const foldStart = md ? (folded ? pickFoldStart(spans, RENDER_WINDOW_LIMIT) : md.revealStart) : 0
+  const foldStart = md
+    ? folded
+      ? pickFoldStart(spans, RENDER_WINDOW_LIMIT, md.cursor)
+      : md.revealStart
+    : 0
   const foldedChars = md ? foldStart - md.revealStart : visibleText.length - RENDER_WINDOW_LIMIT
   const shown = !md && folded ? visibleText.slice(visibleText.length - RENDER_WINDOW_LIMIT) : visibleText
 
@@ -5577,8 +5364,8 @@ import { loadWorkDocImage } from './workDocImage'
 ```tsx
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
-import { MarkdownImage } from '../../src/renderer/src/markdown/MarkdownImage'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import { MarkdownImage, clearMarkdownImageCache } from '../../src/renderer/src/markdown/MarkdownImage'
+import type { WtApi } from '../../src/core/api'
 
 function install(load: (src: string) => Promise<string | null>): ReturnType<typeof vi.fn> {
   const spy = vi.fn(load)
@@ -5588,6 +5375,7 @@ function install(load: (src: string) => Promise<string | null>): ReturnType<type
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  clearMarkdownImageCache()
 })
 
 // 【每个用例用自己的地址，别复用】缓存是**模块级、跨用例存活**的（设计 8.4 要求它
@@ -5638,6 +5426,7 @@ describe('MarkdownImage', () => {
 
 ```tsx
 import { useEffect, useState, type ReactNode } from 'react'
+import { getApi } from '../api'
 
 export interface MarkdownImageProps {
   url: string
@@ -5669,12 +5458,17 @@ const cache = new Map<string, Promise<string | null>>()
 function fetchOnce(url: string): Promise<string | null> {
   const hit = cache.get(url)
   if (hit) return hit
-  const api = (
-    window as unknown as { api?: { loadWorkDocImage?: (s: string) => Promise<string | null> } }
-  ).api
-  const p = (api?.loadWorkDocImage?.(url) ?? Promise.resolve(null)).catch(() => null)
+  const p = (getApi()?.loadWorkDocImage(url) ?? Promise.resolve(null)).catch(() => null)
   cache.set(url, p)
   return p
+}
+
+/**
+ * 换工作文档时清一次。缓存键只有原始地址，两份文档出现同一相对路径时会串图；
+ * 文档一换，旧地址的解析基准也不再成立。
+ */
+export function clearMarkdownImageCache(): void {
+  cache.clear()
 }
 
 /**
@@ -6232,7 +6026,7 @@ import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { Novel } from '../../src/core/types'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import type { WtApi } from '../../src/core/api'
 
 /**
  * 铺满那一路的**接线**判据：进老板模式那一下，到底有没有去量块高。
@@ -6298,7 +6092,7 @@ function installApi(workDoc: Novel | null): void {
   loadWorkDoc = vi.fn(async (_path: string) => workDoc)
   ;(window as unknown as { api: WtApi }).api = {
     ...(window.api as WtApi),
-    importNovel: async () => makeNovel(),
+    importNovel: async () => ({ ok: true, value: makeNovel() }),
     loadSettings: async () => ({ ...defaultSettings(), workDocPath: workDoc?.sourcePath ?? null }),
     loadWorkDoc
   }

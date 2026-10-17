@@ -1,27 +1,37 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '../main/channels'
+import type { IpcResult, WtApi } from '../core/api'
+import type { Novel } from '../core/types'
 
-const api = {
-  /**
-   * 宿主平台。渲染层要据此决定标题条左侧留多少空位——macOS 用了
-   * `titleBarStyle: 'hiddenInset'`，红绿灯浮在网页上，必须给它们让出位置；
-   * Windows/Linux 没有红绿灯，留空反而是个洞。
-   *
-   * 沙箱化的 preload 能拿到 `process.platform`（Electron 在沙箱里保留了这几个字段），
-   * 但**渲染层拿不到**——所以在这里读取、作为普通值交给它。
-   */
+type Channel = (typeof CH)[keyof typeof CH]
+
+/**
+ * 统一把「主进程抛错」折成 `IpcResult`：invoke 的 rejection 在渲染层只是一个没有字段的
+ * Error，而调用方需要区分「取消」与「出错」，不该各自再猜。
+ */
+async function call<T>(channel: Channel, ...args: unknown[]): Promise<IpcResult<T>> {
+  try {
+    return (await ipcRenderer.invoke(channel, ...args)) as IpcResult<T>
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+const api: WtApi = {
+  /** 沙箱 preload 能拿到 process.platform，渲染层拿不到——在这里读一次当普通值交出去。 */
   platform: process.platform,
-  importNovel: () => ipcRenderer.invoke(CH.importNovel),
-  importWorkDoc: () => ipcRenderer.invoke(CH.importWorkDoc),
+  importNovel: () => call<Novel>(CH.importNovel),
+  importWorkDoc: () => call<Novel>(CH.importWorkDoc),
   loadWorkDoc: (path: string) => ipcRenderer.invoke(CH.loadWorkDoc, path),
   loadWorkDocImage: (src: string) => ipcRenderer.invoke(CH.loadWorkDocImage, src),
-  openNovelPath: (path: string) => ipcRenderer.invoke(CH.openNovelPath, path),
+  openNovelPath: (path: string) => call<Novel>(CH.openNovelPath, path),
   initialNovelPath: () => ipcRenderer.invoke(CH.initialNovelPath),
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
-  saveSession: (session: unknown) => ipcRenderer.invoke(CH.saveSession, session),
-  clearSession: () => ipcRenderer.invoke(CH.clearSession),
+  // 写通道的参数在 main 侧会再校验一遍；这里不做任何「看起来安全」的裁剪。
+  saveSession: (session) => call<void>(CH.saveSession, session),
+  clearSession: () => call<void>(CH.clearSession),
   loadSettings: () => ipcRenderer.invoke(CH.loadSettings),
-  saveSettings: (settings: unknown) => ipcRenderer.invoke(CH.saveSettings, settings),
+  saveSettings: (settings) => call<void>(CH.saveSettings, settings),
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
     const listener = (_e: unknown, cmd: string): void => cb(cmd)
     ipcRenderer.on(CH.menuCommand, listener)
@@ -29,18 +39,10 @@ const api = {
       ipcRenderer.removeListener(CH.menuCommand, listener)
     }
   },
-  /**
-   * 系统是不是深色外观。
-   *
-   * 【为什么必须走 IPC，而不是在 CSS 里写 `@media (prefers-color-scheme: dark)`】
-   * 实测（Electron 44 / macOS 深色系统）：渲染层的 `matchMedia('(prefers-color-scheme: dark)')`
-   * **恒为 false**——主进程 `nativeTheme.shouldUseDarkColors` 是 true、`themeSource` 设成 'dark'
-   * 之后重载整窗也仍是 false。也就是说那条 media query 在本应用里**永远不会命中**，
-   * 只能由主进程把值显式递过来。别把它"简化"回 CSS 媒体查询。
-   */
-  getTheme: (): Promise<boolean> => ipcRenderer.invoke(CH.getTheme),
-  setThemeSource: (source: 'system' | 'light' | 'dark'): Promise<void> =>
-    ipcRenderer.invoke(CH.setThemeSource, source),
+  // 渲染层读不到系统外观（`@media (prefers-color-scheme: dark)` 在本应用恒不命中），
+  // 只能由主进程递过来。
+  getTheme: () => ipcRenderer.invoke(CH.getTheme),
+  setThemeSource: (source) => call<void>(CH.setThemeSource, source),
   onThemeChange: (cb: (dark: boolean) => void): (() => void) => {
     const listener = (_e: unknown, dark: boolean): void => cb(dark)
     ipcRenderer.on(CH.themeChanged, listener)
@@ -51,5 +53,3 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
-
-export type WtApi = typeof api

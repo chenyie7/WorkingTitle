@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import {
-  parseMarkdown,
-  isMarkdownPath,
-  valueStartOf,
-  lineStartsOf,
-  WT_LINE_STARTS
-} from '../../src/renderer/src/markdown/parse'
+import { parseMarkdown, isMarkdownPath } from '../../src/renderer/src/markdown/parse'
+import { lineStartsOf, setLineStarts, valueStartOf } from '../../src/renderer/src/markdown/nodeMeta'
 import { clipTree } from '../../src/renderer/src/markdown/clip'
 
 /**
@@ -245,6 +240,15 @@ describe('parseMarkdown —— 逐行偏移表', () => {
     expect(src.indexOf('引用乙')).toBe(8)
   })
 
+  it('跨行的行内代码在容器里：挂逐行表，第二行起点不是「第一行加字符数」', () => {
+    // remark 保留行内代码的换行、不折空格；引用块的 `> ` 是逐行剥的，所以常量原点只对首行精确。
+    const src = '> 前 `甲\n> 乙` 后\n'
+    const inline = (parseMarkdown(src)!.children[0] as never as { children: { children: unknown[] }[] })
+      .children[0].children[1]
+    expect(valueStartOf(inline)).toBe(src.indexOf('甲'))
+    expect(lineStartsOf(inline)).toEqual([src.indexOf('甲'), src.indexOf('乙')])
+  })
+
   it('普通的单行文本：不挂表（用 `position` 就够，挂了也只是重复信息）', () => {
     const para = parseMarkdown('甲\n')!.children[0] as unknown as { children: unknown[] }
     expect(lineStartsOf(para.children[0])).toBeNull()
@@ -258,10 +262,18 @@ describe('parseMarkdown —— 逐行偏移表', () => {
    * ——`clip.ts` 那个「空表按没有表算」的守卫（`r.starts.length > 0`）防的正是这一格。
    */
   it('表里混进 NaN / Infinity 一律当没挂表；空数组仍然原样返回', () => {
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, 7] })).toEqual([2, 7])
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [2, Number.NaN] })).toBeNull()
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [Number.POSITIVE_INFINITY] })).toBeNull()
-    expect(lineStartsOf({ [WT_LINE_STARTS]: [] })).toEqual([])
+    const plain = {}
+    setLineStarts(plain, [2, 7])
+    expect(lineStartsOf(plain)).toEqual([2, 7])
+    const nan = {}
+    setLineStarts(nan, [2, Number.NaN])
+    expect(lineStartsOf(nan)).toBeNull()
+    const inf = {}
+    setLineStarts(inf, [Number.POSITIVE_INFINITY])
+    expect(lineStartsOf(inf)).toBeNull()
+    const empty = {}
+    setLineStarts(empty, [])
+    expect(lineStartsOf(empty)).toEqual([])
   })
 
   /**
@@ -323,7 +335,7 @@ describe('parseMarkdown —— 逐行偏移表', () => {
    *
    * 【为什么】`contentStartOf` 对 `value === ''` 给的是**围栏之后**那个位置，而「行尾 − 行长」
    * 里的那个「行尾」是**收尾围栏那一行**的换行——于是同一个节点在同一棵树上有**两个原点**
-   * （实测 `'```\n```\n'`：`wtValueStart` 是 4 而表是 `[7]`）。空 `value` 没有下标可言，
+   * （实测 `'```\n```\n'`：`valueStart` 是 4 而表是 `[7]`）。空 `value` 没有下标可言，
    * 表让位，`contentStartOf` 那个数成为唯一的原点。
    *
    * 【只断言解析期】`to=8` 那一格上的跳变是「解析期挂上了表」的后果，表不挂它就不存在。
@@ -408,7 +420,11 @@ describe('回验失败时的退路 —— 不许泄漏未揭示的字', () => {
     '> 甲 &nbsp; 乙\n> 丙\n',
     '> 甲\n> 甲\n',
     '> 甲 \\_ 乙\n> 丙\n',
-    '> 甲 &lt; 乙\n> 丙\n'
+    '> 甲 &lt; 乙\n> 丙\n',
+    '> 前 `甲\n> 乙` 后\n',
+    '- `甲\n  乙`\n',
+    '前 `甲\n乙` 后\n',
+    '> 甲 `` 乙\n> 丙 `` 丁\n'
   ]
 
   it('逐偏移：屏幕上的文字必须在已揭示范围内按序匹配得上', () => {

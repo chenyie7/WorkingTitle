@@ -21,16 +21,9 @@ export function platformKind(raw: string): PlatformKind {
   return raw === 'darwin' ? 'darwin' : 'other'
 }
 
-export type ShortcutId =
-  | 'import'
-  | 'toggle-sidebar'
-  | 'open-settings'
-  | 'boss-key'
-  | 'boss-fill-up'
-  | 'boss-fill-down'
-
-export interface ShortcutDef {
-  id: ShortcutId
+/** 表里每一行的形状。`id` 的具体联合由表推导，不在这里手写。 */
+interface ShortcutRow {
+  id: string
   /** 设置界面里的行标题；冲突提示也用它 */
   label: string
   defaults: { darwin: string; other: string }
@@ -38,8 +31,11 @@ export interface ShortcutDef {
 
 /**
  * 全部快捷键。**加一条就是加一行**——设置界面、分发器、文案都是从这张表推出来的。
+ *
+ * 【为什么是 `as const`】`ShortcutId` 与 `ResolvedShortcuts` 都从表推导；手写的 id 联合是
+ * 第二份清单，加行忘改时 tsc 不报错，那条快捷键会整条静默失踪。
  */
-export const SHORTCUTS: readonly ShortcutDef[] = [
+export const SHORTCUTS = [
   {
     id: 'import',
     label: '导入小说',
@@ -74,7 +70,13 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     label: '老板键铺满 −',
     defaults: { darwin: 'Meta+Shift+ArrowDown', other: 'Ctrl+Shift+ArrowDown' }
   }
-]
+] as const satisfies readonly ShortcutRow[]
+
+/** 表里每一行的类型。 */
+export type ShortcutDef = (typeof SHORTCUTS)[number]
+
+/** 快捷键 id 就是表里 id 的联合：加一行自动多一个成员，没有第二份清单可忘。 */
+export type ShortcutId = ShortcutDef['id']
 
 /** 修饰键的**规范顺序**。规范串一律按这个顺序拼，比较时才不会「同一个键两种写法」。 */
 const MODIFIERS = ['Meta', 'Ctrl', 'Alt', 'Shift'] as const
@@ -256,7 +258,7 @@ export function defaultShortcut(id: ShortcutId, kind: PlatformKind): string {
   return def.defaults[kind]
 }
 
-/** 完整表：消费方（分发器、菜单、文案）要的那一份。 */
+/** 完整表：消费方（分发器、菜单、文案）要的那一份。键集同样从 `SHORTCUTS` 推导。 */
 export type ResolvedShortcuts = Record<ShortcutId, string>
 
 /**
@@ -269,18 +271,20 @@ export function resolveShortcuts(
   raw: Partial<Record<ShortcutId, string>>,
   kind: PlatformKind
 ): ResolvedShortcuts {
-  const out = {} as ResolvedShortcuts
-  for (const def of SHORTCUTS) {
+  const entries = SHORTCUTS.map((def) => {
     const stored = raw[def.id]
     // 归一化过的非 null 值不可能再是 unsupported-key / no-modifier（键位与修饰键都查过了），
     // 所以这里剩下的只可能是 reserved 一种问题——不必再拿字符串当哨兵。
     const normalized = typeof stored === 'string' ? normalizeSpec(stored) : null
-    out[def.id] =
+    const value =
       normalized !== null && shortcutProblem(normalized, kind) === null
         ? normalized
         : def.defaults[kind]
-  }
-  return out
+    return [def.id, value] as const
+  })
+  // Object.fromEntries 的返回类型丢掉了键的联合，而这张表的完整性由「遍历 SHORTCUTS」本身
+  // 保证（不是靠枚举），断言只把类型补回来。
+  return Object.fromEntries(entries) as ResolvedShortcuts
 }
 
 /**
