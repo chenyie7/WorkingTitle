@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isChapterTitle, splitChapters, PREAMBLE_TITLE } from '../../src/core/chapters'
+import {
+  CHAPTER_PRESETS,
+  chapterRuleEqual,
+  chapterRuleProblem,
+  isChapterTitle,
+  splitChapters,
+  PREAMBLE_TITLE
+} from '../../src/core/chapters'
+import { DEFAULT_CHAPTER_RULE } from '../../src/core/types'
 
 const fixture = (name: string): string =>
   readFileSync(join(__dirname, '..', 'fixtures', name), 'utf8')
@@ -222,6 +230,102 @@ describe('splitChapters', () => {
     // 一个内部自洽但内容被改错的 flatText 能让它全绿。300 章约 9 KB，比真实输入小三个
     // 数量级，所以它是【结构冒烟测试】而非规模测试——给它牙齿靠的是这条保真断言，
     // 而不是把样本加大。
+    expect(flatText).toBe(text)
+  })
+})
+
+describe('可配置的分章规则', () => {
+  it('cn-chapter 只认中文章节标题', () => {
+    const rule = { kind: 'preset', id: 'cn-chapter' } as const
+    expect(isChapterTitle('第一百零八回 聚义', rule)).toBe(true)
+    expect(isChapterTitle('第3节 起手', rule)).toBe(true)
+    expect(isChapterTitle('序章', rule)).toBe(false)
+    expect(isChapterTitle('Chapter 3 The Beginning', rule)).toBe(false)
+    expect(isChapterTitle('1、开端', rule)).toBe(false)
+  })
+
+  it('numbered 只认数字序号，句读闸门仍在', () => {
+    const rule = { kind: 'preset', id: 'numbered' } as const
+    expect(isChapterTitle('1、开端', rule)).toBe(true)
+    expect(isChapterTitle('12．转折', rule)).toBe(true)
+    expect(isChapterTitle('1、开端，转折', rule)).toBe(false)
+    expect(isChapterTitle('第一章 风起', rule)).toBe(false)
+  })
+
+  it('chapter-en 只认英文 Chapter N，不区分大小写', () => {
+    const rule = { kind: 'preset', id: 'chapter-en' } as const
+    expect(isChapterTitle('chapter 3 the beginning', rule)).toBe(true)
+    expect(isChapterTitle('Chapter 3 The Beginning', rule)).toBe(true)
+    expect(isChapterTitle('第一章 风起', rule)).toBe(false)
+  })
+
+  it('special 认特殊符号与单独一行的关键词', () => {
+    const rule = { kind: 'preset', id: 'special' } as const
+    expect(isChapterTitle('☆、晋江标题', rule)).toBe(true)
+    expect(isChapterTitle('【第一章】', rule)).toBe(true)
+    expect(isChapterTitle('简介', rule)).toBe(true)
+    expect(isChapterTitle('前言不搭后语', rule)).toBe(false)
+    expect(isChapterTitle('正文完', rule)).toBe(false)
+  })
+
+  it('自定义正则按 trim 后的整行匹配，且不区分大小写', () => {
+    const rule = { kind: 'custom', pattern: '^chapter\\s+\\d+.*$' } as const
+    expect(isChapterTitle('  CHAPTER 3 The Beginning  ', rule)).toBe(true)
+    expect(isChapterTitle('正文里提到 chapter 3 不算', rule)).toBe(false)
+  })
+
+  it('自定义正则不受 40 字上限约束', () => {
+    const rule = { kind: 'custom', pattern: '^.+$' } as const
+    const long = '字'.repeat(80)
+    expect(isChapterTitle(long, rule)).toBe(true)
+    expect(isChapterTitle(long, DEFAULT_CHAPTER_RULE)).toBe(false)
+  })
+
+  it('自定义正则也不把空行 / 纯空白行当标题', () => {
+    expect(isChapterTitle('', { kind: 'custom', pattern: '^$' })).toBe(false)
+    expect(isChapterTitle('   ', { kind: 'custom', pattern: '^.*$' })).toBe(false)
+  })
+
+  it('chapterRuleProblem 逐项校验', () => {
+    expect(chapterRuleProblem({ kind: 'auto' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'preset', id: 'numbered' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'preset', id: 'nope' })).toContain('id')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '^第.+章$' })).toBeNull()
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '(' })).toContain('正则')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '' })).toContain('pattern')
+    expect(chapterRuleProblem({ kind: 'nope' })).toContain('kind')
+    expect(chapterRuleProblem(null)).toContain('不是对象')
+    // 原型链上的名字不能当 preset id
+    expect(chapterRuleProblem({ kind: 'preset', id: 'toString' })).toContain('id')
+  })
+
+  it('chapterRuleEqual 只认完全相同的规则', () => {
+    expect(chapterRuleEqual({ kind: 'auto' }, { kind: 'auto' })).toBe(true)
+    expect(
+      chapterRuleEqual({ kind: 'preset', id: 'numbered' }, { kind: 'preset', id: 'numbered' })
+    ).toBe(true)
+    expect(
+      chapterRuleEqual({ kind: 'preset', id: 'numbered' }, { kind: 'preset', id: 'special' })
+    ).toBe(false)
+    expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^a' })).toBe(true)
+    expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^b' })).toBe(false)
+    expect(chapterRuleEqual({ kind: 'auto' }, { kind: 'custom', pattern: '^a' })).toBe(false)
+  })
+
+  it('CHAPTER_PRESETS 覆盖四个 id 且文案非空', () => {
+    expect(Object.keys(CHAPTER_PRESETS).sort()).toEqual([
+      'chapter-en',
+      'cn-chapter',
+      'numbered',
+      'special'
+    ])
+    for (const label of Object.values(CHAPTER_PRESETS)) expect(label.length).toBeGreaterThan(0)
+  })
+
+  it('splitChapters 接受规则参数', () => {
+    const text = 'Chapter 1 A\n正文\nChapter 2 B\n正文'
+    const { flatText, chapters } = splitChapters(text, 'x', { kind: 'preset', id: 'chapter-en' })
+    expect(chapters.map((c) => c.title)).toEqual(['Chapter 1 A', 'Chapter 2 B'])
     expect(flatText).toBe(text)
   })
 })

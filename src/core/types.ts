@@ -11,6 +11,16 @@ export interface Chapter {
   readonly charCount: number
 }
 
+export type ChapterPresetId = 'cn-chapter' | 'numbered' | 'chapter-en' | 'special'
+
+export type ChapterRule =
+  | { kind: 'auto' }
+  | { kind: 'preset'; id: ChapterPresetId }
+  | { kind: 'custom'; pattern: string }
+
+/** 默认规则＝现有那套多模式识别。冻结一份，避免被消费方就地改掉。 */
+export const DEFAULT_CHAPTER_RULE: ChapterRule = Object.freeze({ kind: 'auto' })
+
 /**
  * 只读：`flatText` 同时是游标坐标系与章节偏移的基准，运行期改它等于把两者一起弄错，
  * 而没有任何地方会因此抛错。所有字段都是 `readonly`，构造之后只读。

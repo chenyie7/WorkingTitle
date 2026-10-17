@@ -1,4 +1,9 @@
-import type { Chapter } from './types'
+import {
+  DEFAULT_CHAPTER_RULE,
+  type Chapter,
+  type ChapterPresetId,
+  type ChapterRule
+} from './types'
 
 export const PREAMBLE_TITLE = '前言'
 
@@ -16,6 +21,17 @@ const MAX_TITLE_LEN = 40
 
 /** 「数字 + 顿号」没有强前缀，只能靠句读与编号正文区分；单独取出，闸门只对它生效。 */
 const NUMBERED_TITLE = /^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
+
+const SPECIAL_TITLE =
+  /^(?:[☆★✦✧※].{0,30}|【[^】]{1,30}】|(?:内容|文章)?简介|文案|前言|序章|楔子|正文|终章|尾声|后记|番外)$/
+
+/** 预置表用 Record 声明：漏掉一个 id 编译期就报错。 */
+export const CHAPTER_PRESETS: Readonly<Record<ChapterPresetId, string>> = {
+  'cn-chapter': '第X章（中文）',
+  numbered: '数字序号',
+  'chapter-en': 'Chapter N',
+  special: '特殊符号'
+}
 
 /**
  * 【每个模式都不得带 /g 或 /y】——这条靠注释与评审守，类型系统守不住。
@@ -40,12 +56,78 @@ const TITLE_PATTERNS: readonly RegExp[] = [
   NUMBERED_TITLE
 ]
 
-export function isChapterTitle(line: string): boolean {
+function isAutoTitle(line: string): boolean {
   const t = line.trim()
   if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
   // 句读闸门只作用于数字 + 顿号那条：前三条的强前缀足够与正文区分，副标题允许带标点。
   if (SENTENCE_PUNCT.test(t) && NUMBERED_TITLE.test(t)) return false
   return TITLE_PATTERNS.some((re) => re.test(t))
+}
+
+function presetMatches(id: ChapterPresetId, line: string): boolean {
+  const t = line.trim()
+  if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
+  switch (id) {
+    case 'cn-chapter':
+      return TITLE_PATTERNS[0].test(t)
+    case 'numbered':
+      return !SENTENCE_PUNCT.test(t) && NUMBERED_TITLE.test(t)
+    case 'chapter-en':
+      return TITLE_PATTERNS[2].test(t)
+    case 'special':
+      return SPECIAL_TITLE.test(t)
+  }
+}
+
+/**
+ * 规则 → 行判定器。自定义正则只编译一次；非法正则直接抛，调用方先用
+ * chapterRuleProblem 校验。这里不带 /g 或 /y，避免 lastIndex 让判定变成有状态的。
+ */
+function makeMatcher(rule: ChapterRule): (line: string) => boolean {
+  if (rule.kind === 'auto') return isAutoTitle
+  if (rule.kind === 'preset') return (line) => presetMatches(rule.id, line)
+  const re = new RegExp(rule.pattern, 'i')
+  return (line) => {
+    const t = line.trim()
+    // 空行永远不是标题：文件末尾那个空行 + 用户写的 ^.*$ 会凭空造出一章。
+    return t !== '' && re.test(t)
+  }
+}
+
+export function isChapterTitle(line: string, rule: ChapterRule = DEFAULT_CHAPTER_RULE): boolean {
+  return makeMatcher(rule)(line)
+}
+
+/** 返回第一个不合格字段的描述；合格返回 null。 */
+export function chapterRuleProblem(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null) return 'chapterRule 不是对象'
+  const r = v as Record<string, unknown>
+  if (r.kind === 'auto') return null
+  if (r.kind === 'preset') {
+    if (typeof r.id !== 'string') return 'chapterRule.id 不是字符串'
+    // Object.hasOwn 而不是 in：手改过的 JSON 能把 toString 这类原型链名字塞进来。
+    if (!Object.hasOwn(CHAPTER_PRESETS, r.id)) return `chapterRule.id 不认识：${r.id}`
+    return null
+  }
+  if (r.kind === 'custom') {
+    if (typeof r.pattern !== 'string' || r.pattern === '') {
+      return 'chapterRule.pattern 不是非空字符串'
+    }
+    try {
+      new RegExp(r.pattern, 'i')
+    } catch {
+      return 'chapterRule.pattern 不是合法正则'
+    }
+    return null
+  }
+  return 'chapterRule.kind 不认识'
+}
+
+export function chapterRuleEqual(a: ChapterRule, b: ChapterRule): boolean {
+  if (a.kind === 'auto' || b.kind === 'auto') return a.kind === b.kind
+  if (a.kind === 'preset' && b.kind === 'preset') return a.id === b.id
+  if (a.kind === 'custom' && b.kind === 'custom') return a.pattern === b.pattern
+  return false
 }
 
 export interface SplitResult {
@@ -57,12 +139,17 @@ export interface SplitResult {
  * 在**已归一化换行**（只含 \n）的文本上切分章节。
  * 保证 chapters[0].start === 0 且各章节 [start, end) 首尾相接、无缝、无重叠。
  */
-export function splitChapters(text: string, fallbackTitle: string): SplitResult {
+export function splitChapters(
+  text: string,
+  fallbackTitle: string,
+  rule: ChapterRule = DEFAULT_CHAPTER_RULE
+): SplitResult {
   const lines = text.split('\n')
+  const matcher = makeMatcher(rule)
 
   const titleIdx: number[] = []
   for (let i = 0; i < lines.length; i++) {
-    if (isChapterTitle(lines[i])) titleIdx.push(i)
+    if (matcher(lines[i])) titleIdx.push(i)
   }
 
   // 一个标题都没有 → 单章节模式，flatText 严格等于原文
