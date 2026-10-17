@@ -46,15 +46,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm install      # 会跑 postinstall 把 Electron 二进制下下来，见下
 pnpm dev          # electron-vite dev（渲染层热更新）
 pnpm build        # 构建到 out/ —— 手动跑 _electron 之前必须先跑这个，见下
-pnpm typecheck    # 三个 tsconfig（渲染 / node / tests）+ 渲染层 import 边界门禁
+pnpm typecheck    # 三个 tsconfig（渲染 / node / tests）
 pnpm test         # vitest，全部单测
 pnpm vitest run tests/unit/engine.test.ts   # 跑单个文件
 pnpm vitest run -t '合成中的 input'          # 按用例名筛
 pnpm test:e2e     # 先 build 再 playwright（跑真 Electron 进程）
 pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
-
-node scripts/check-imports.mjs      # 渲染层 import 边界（`pnpm typecheck` 已经先跑它）
-node scripts/check-plan-fences.mjs  # 计划围栏逐字节校验；CI 的 check 作业会跑
 ```
 
 **产物名在 `electron-builder.yml` 里显式写死，别删那几行 `artifactName`。** 两个原因：
@@ -111,7 +108,7 @@ node scripts/check-plan-fences.mjs  # 计划围栏逐字节校验；CI 的 check
 
 `tsconfig.node.json` 的 `lib` 是 `["ES2023"]`（**没有 DOM**）且 `include` 了 `src/core`，而 `pnpm typecheck` 会跑它。所以在 `core` 里写 `document` / `window` 会直接编译失败。
 
-反方向那半由 `tsconfig.json`（渲染层，`types` 为空）与 `scripts/check-imports.mjs` 管：`src/core/decode.ts` 不在渲染层 project 的 `include` 里，所以渲染层 import `node:*`、`electron`、`src/main/*`、`src/preload/*`、`core/decode` 都会在 typecheck 阶段报错；同一批越界还会被那个脚本按「文件:行」列出来并 exit 1。三个 project 的分工是：`tsconfig.json` 渲染层、`tsconfig.node.json` main / preload / core、`tsconfig.test.json` tests + src。
+反方向那半由 `tsconfig.json`（渲染层，`types` 为空）管：`src/core/decode.ts` 不在渲染层 project 的 `include` 里，所以渲染层 import `node:*` 或 `core/decode` 会在 typecheck 阶段报错。`electron` / `src/main/*` 没有类型层的闸，靠构建与运行时兜底。三个 project 的分工是：`tsconfig.json` 渲染层、`tsconfig.node.json` main / preload / core、`tsconfig.test.json` tests + src。
 
 `core` 内部也不是同一类东西：
 
@@ -300,39 +297,13 @@ for (const k of process.argv.slice(1)) console.log(k, "→", all.filter(n => n.t
 
 ## 本仓库的硬约定
 
-### 1. 实现计划里的代码围栏 = 源码的逐字节副本
+### 1. 实现计划文档是历史记录，不要求与源码同步
 
-`docs/superpowers/plans/2026-10-06-word-disguised-typing-reader.md`（**上万行**，行数会随围栏同步继续涨，
-**别写死它**）里的 ` ```ts ` 围栏**不是示意，是源文件的副本**。口径：
+`docs/superpowers/plans/` 里的代码围栏是**写下计划那一刻**的源码快照。计划写完就不再回写；文档与 HEAD 不一致是正常的。
 
-```
-md5(围栏原始内容) == md5(文件)      # 原样相等，含末尾换行；不要 rstrip
-```
-
-**改了源码（包括只改注释）就要同步改围栏。** 用 python 抽/写块（块内行整体替换、保留围栏行；多块按块索引**倒序** splice），别手抄。交付前用脚本重抽比对。
-
-注意两个坑：
-
-- 同一份代码在计划里可能出现多次，且**有些块是历史版本**（注定与当前文件不符）。判据是**正向**的：遍历全部源/测试文件，报告「没有任何围栏与它逐字节相等」的集合——那个集合必须是空的。
-- 用锚点行定位围栏前**先确认它在计划里唯一命中**（`import type { Novel, PersistedSession }` 这类行会命中多次）。另外别把 `difflib.unified_diff` 喂给两个大字符串，会在**上万行**的计划上跑到超时——先落临时文件再 `diff`。
-
-**正本是 `2026-10-06-…`；「哪份计划覆盖了哪些文件」以脚本结果为准，别按文档里的计数认
-（计数会随功能改动漂）。** 落到操作上是一句话：**新建的文件写进它自己那份计划，改动已有文件的写进 06 那份**
-——别的计划里那些对不上的旧块是历史版本，别去追。
-
-交付前复核就一条命令（口径含末尾换行，**别 rstrip**）：
-
-```bash
-node scripts/check-plan-fences.mjs
-```
-
-它扫描 `docs/superpowers/plans/*.md` 的**全部**围栏，再逐个检查：`src/**`、`tests/**` 里的
-`.ts` / `.tsx` / `.css` / `.json`，加上根配置 `package.json`、`tsconfig*.json`、
-`electron.vite.config.ts`、`vitest.config.ts`、`playwright.config.ts`、`electron-builder.yml`、
-`.github/workflows/build.yml`。**缺一个就列出文件、exit 1**；全命中打印 OK。CI 的 `check` 作业会跑它，
-所以没同步围栏的 PR 过不去。
-
-`docs/superpowers/specs/` 是面向人的设计文档，改行为时一并更新它。
+- 读计划时不要把它当现行源码。以 `src/`、`tests/` 为准。
+- 改行为时更新 `docs/superpowers/specs/` 的设计文档；计划文档不改。
+- 不设自动校验。此前「围栏 = 逐字节副本」的约定与 CI 校验已移除：每次改动都要同步上万行文档，发版也要改文档，成本高于收益。
 
 ### 2. 发布
 
@@ -350,7 +321,7 @@ git tag v0.2.0 && git push origin v0.2.0
 Windows 上各自原生构建 → 用 `softprops/action-gh-release` 把文件挂到该标签的 Release 上。
 
 **PR 与 push 到 main 不走这条发布链路**，只跑只读的 `check` 作业：`pnpm install --frozen-lockfile` →
-`pnpm typecheck`（含 import 边界）→ `pnpm test` → `pnpm build` → `node scripts/check-plan-fences.mjs`。
+`pnpm typecheck` → `pnpm test` → `pnpm build`。
 构建 / 发版两个作业带 `if:`，普通提交不会启动 macOS / Windows 打包。
 
 几件必须知道的（**不写死条数**——这里加过条目）：
