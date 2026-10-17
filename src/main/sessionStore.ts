@@ -332,9 +332,15 @@ function readSessionFile(file: string, sourcePath: string): PersistedSession | n
     // 写盘仍然整份拒绝（sessionProblem），两处刻意不对称。
     if (typeof parsed === 'object' && parsed !== null) {
       const raw = parsed as Record<string, unknown>
-      if (raw.chapterRule !== undefined && chapterRuleProblem(raw.chapterRule) !== null) {
-        console.warn('[wt] 会话里的 chapterRule 不可用，按自动识别处理：', file)
-        delete raw.chapterRule
+      if (raw.chapterRule !== undefined) {
+        const problem = chapterRuleProblem(raw.chapterRule)
+        if (problem !== null) {
+          console.warn(
+            `[wt] 会话里的 chapterRule 不可用（${problem}），按自动识别处理：`,
+            file
+          )
+          delete raw.chapterRule
+        }
       }
     }
     if (!isPersistedSession(parsed)) {
@@ -526,6 +532,7 @@ export function createSessionStore(baseDir: string): SessionStore {
       try {
         if (!existsSync(legacySessionPath)) return
         const raw: unknown = JSON.parse(readFileSync(legacySessionPath, 'utf8'))
+        // 旧版单槽会话不可能带 chapterRule；手改出坏规则时整份保留、不迁移，更安全。
         if (!isPersistedSession(raw)) {
           // **刻意不删**：删除是不可逆的，而留着最多每次启动多一条警告。这份文件已经不是
           // 本应用能读懂的东西了（手改过、或来自更早的版本），交给看日志的人自行处置。
