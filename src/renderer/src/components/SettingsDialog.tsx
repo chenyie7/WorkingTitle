@@ -259,7 +259,7 @@ export function SettingsDialog({
   }
 
   /**
-   * 对话框不卸载：开着时清除阅读记录、或换书重新导入，prop 会变，
+   * 对话框不卸载：开着时换书重新导入，prop 会变，
    * 草稿要跟着走；不能只靠打开时那次重置。
    */
   const lastChapterRuleRef = useRef(chapterRule)

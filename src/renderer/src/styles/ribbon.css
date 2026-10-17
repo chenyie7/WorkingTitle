@@ -755,7 +755,7 @@
  * 【打开对话框时当前页也会淡入一次】这是想要的：它顺带成了「对话框出现了」的提示。
  *
  * 【关键帧里只能动 `opacity`，别加 `transform`】`getBoundingClientRect()` 会被
- * `transform: scale()` 影响，而 e2e 里那条「四页等高」正是在切页之后读高度的——加了缩放，
+ * `transform: scale()` 影响，而 e2e 里那条「五页等高」正是在切页之后读高度的——加了缩放，
  * 它会量到动画的中间态。（`translateY` 不影响高度，但本次连位移都不做。）
  *
  * 【`toBeVisible()` 不受这条动画影响，实测过】Playwright 1.63.0 的可见判据是
@@ -1078,6 +1078,11 @@
 }
 
 .wt-library__head .wt-btn--primary:hover {
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
+}
+
+.wt-library__head .wt-btn--primary:active {
   background: var(--wt-primary-hover);
   border-color: var(--wt-primary-hover);
 }
