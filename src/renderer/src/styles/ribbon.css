@@ -655,6 +655,18 @@
  *
  * 【border-left 常态也要占位】常态是 2px 透明、选中才上色。写成「常态不给 border」的话，
  * 选中时这一项会整体右移 2px，字与图标跳一下。
+ *
+ * 【过渡】底色 / 左缘竖条 / 文字颜色各 90ms，与 `.wt-btn` 是同一个词汇
+ * （`background-color 90ms ease`、`border-color 90ms ease`）。
+ *
+ * 【`font-weight` 刻意不进 transition】选中态从 400 跳到 600，而本应用用的是系统字体栈、
+ * 不是可变字体——浏览器对非可变字体的字重**不做插值**，写进 transition 只会让
+ * 「颜色在动、字重当场跳」，同一时刻一部分属性在跑、一部分在蹦，反而更乱。
+ * `.wt-seg` 那组选中态也是这么处理的（颜色过渡、`font-weight: 600` 硬跳）。
+ *
+ * 【`border-color` 必须进】选中/未选中之间 `border-left` 从 `transparent` 变到
+ * `--wt-accent`。不写它，那道 2px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
+ * 两者不同步非常明显。
  */
 .wt-nav__item {
   display: flex;
@@ -671,6 +683,10 @@
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease,
+    color 90ms ease;
 }
 
 .wt-nav__item:hover {
@@ -722,11 +738,41 @@
   flex: 0 0 auto;
 }
 
+/*
+ * 切页时内容淡入。
+ *
+ * 【为什么不需要 key、不需要强制 reflow】非当前页是 `display: none`（见下面那条
+ * `.wt-tabpanel[hidden]`）。按规范，元素从 `display: none` 变成有显示时，它的动画会
+ * **从头开始**——所以切回来时这条自然重跑。任何 JS 都是多余的。
+ *
+ * 【打开对话框时当前页也会淡入一次】这是想要的：它顺带成了「对话框出现了」的提示。
+ *
+ * 【关键帧里只能动 `opacity`，别加 `transform`】`getBoundingClientRect()` 会被
+ * `transform: scale()` 影响，而 e2e 里那条「三页等高」正是在切页之后读高度的——加了缩放，
+ * 它会量到动画的中间态。（`translateY` 不影响高度，但本次连位移都不做。）
+ *
+ * 【`toBeVisible()` 不受这条动画影响，实测过】Playwright 1.63.0 的可见判据是
+ * `element.checkVisibility()`（无参）+ `visibility !== 'hidden'` + 盒子非零，**整条链里
+ * 没有 opacity**；在真 Chromium（Electron 44.5.1 / Chrome 152）里量过：
+ * `opacity: 0` 的元素 `checkVisibility()` 返回 `true`，而显式的
+ * `checkVisibility({ opacityProperty: true })` 才返回 `false`。所以淡入的第一帧
+ * `toBeVisible()` 就返回，不会等动画、不会变慢。
+ */
+@keyframes wt-panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* 每个页自己管自己那组行：这三条是从 `.wt-modal__body` 挪过来的 */
 .wt-tabpanel {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  animation: wt-panel-in 120ms ease;
 }
 
 /*
@@ -741,6 +787,30 @@
  */
 .wt-tabpanel[hidden] {
   display: none;
+}
+
+/*
+ * 关掉上面那两条动效。
+ *
+ * 【注意：本应用里的媒体查询能不能命中，是**没验证过**的】本仓库已知
+ * `@media (prefers-color-scheme: dark)` 在渲染层**恒不命中**（Electron 那条坑，见 CLAUDE.md
+ * 的「外观与主题」一节）。`prefers-reduced-motion` 是否命中**没有量过**。这条不命中时
+ * 完全惰性（不影响任何用户），所以先按标准做法加上。
+ *
+ * 【若将来量出它恒不命中，别删掉这条】正解是走主进程 IPC 把它递过来——与主题
+ * （`wt:get-theme` / `wt:theme-changed`）同一条路。删掉只会让「尊重减动效」这件事静默消失。
+ *
+ * 【必须排在这两个规则之后】`.wt-nav__item` 与 `.wt-tabpanel` 的特异度与本条相同
+ * （都是 (0,1,0)），靠源码顺序胜出。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wt-nav__item {
+    transition: none;
+  }
+
+  .wt-tabpanel {
+    animation: none;
+  }
 }
 
 .wt-modal__row {
