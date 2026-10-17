@@ -99,7 +99,9 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 - `src/main/` — 文件 IO、编码检测、设置与会话与缓存落盘、原生菜单（**只有 macOS 建**，见「原生菜单」一节）、IPC handler。
   三个小文件各有分工：`channels.ts` 是**通道名与菜单命令名的唯一出口**（`CH` / `MENU_COMMANDS`），
-  `startup.ts` 是**不 import electron 的纯逻辑**（所以能直接单测），`sessionStore.ts` 是全部落盘逻辑
+  `startup.ts` 是**不 import electron 的纯逻辑**（所以能直接单测），`sessionStore.ts` 是全部落盘逻辑。
+  小说解码（读 → 解码 → 切章 → 缓存）跑在 `novelWorker.ts` 这个 utility process 里，主进程经
+  `novelLoader.ts` 转发——9MB 样本约 200ms，放在主进程会让其它 IPC 一起排队。
 - `src/preload/` — 唯一的桥；`contextIsolation: true` / `nodeIntegration: false` / `sandbox: true` 不可放宽
 - `src/renderer/` — React 19；持有一份**只读** `Novel` 并驱动引擎
 - `src/core/` — 被 main 与 renderer **共享**的纯逻辑

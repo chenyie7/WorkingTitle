@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { useToolbar } from '../state/ToolbarContext'
@@ -82,10 +82,14 @@ function Combo({
   // 没选过就退回第一项，而不是在 Provider 里预填一遍所有控件——那样得先知道有哪些控件。
   const value = choices[id] ?? options[0]
 
-  const openPanel = (): void => {
+  const place = useCallback((): void => {
     const r = btnRef.current?.getBoundingClientRect()
     // jsdom 没有布局，rect 全是 0；那不是错误路径，面板照样要挂出来（测试靠这个断言）。
     setPos({ left: r?.left ?? 0, top: (r?.bottom ?? 0) + 2, width: r?.width ?? 0 })
+  }, [])
+
+  const openPanel = (): void => {
+    place()
     setOpen(true)
   }
 
@@ -98,9 +102,18 @@ function Combo({
       if (t.closest('.wt-combo__panel')) return
       setOpen(false)
     }
+    // 面板是 fixed 定位、坐标只在打开时算一次；窗口缩放或功能区横向滚动都会让按钮离开它。
+    // scroll 不冒泡，所以监听捕获阶段。
+    const onMove = (): void => place()
     window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
-  }, [open])
+    window.addEventListener('resize', onMove)
+    window.addEventListener('scroll', onMove, true)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('resize', onMove)
+      window.removeEventListener('scroll', onMove, true)
+    }
+  }, [open, place])
 
   return (
     <>

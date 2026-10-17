@@ -1,6 +1,7 @@
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
 import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
+import { NovelWorkerUnavailableError, openNovelInBackground } from './novelLoader'
 import { getStore } from './session'
 import { loadWorkDocImage } from './workDocImage'
 // 必须【既 import 又 re-export】：`export … from` 只把名字交给外部，**不在本模块作用域里
@@ -12,8 +13,19 @@ import type { AppSettings, Novel, PersistedSession } from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 
-/** 打开小说：命中缓存则复用，避免重复解码与重新检测编码。 */
-export function openNovel(filePath: string): Novel {
+/**
+ * 打开小说：命中缓存则复用，避免重复解码与重新检测编码。
+ *
+ * 【走后台进程】解码与缓存读写都不该占住主进程的事件循环——9MB 的样本实测会让其它 IPC
+ * 排队约 220ms。只有后台进程自身起不来时才回退到同步路径（打包异常时仍能用，只是会卡）。
+ */
+export async function openNovel(filePath: string): Promise<Novel> {
+  try {
+    return await openNovelInBackground(filePath)
+  } catch (err) {
+    if (!(err instanceof NovelWorkerUnavailableError)) throw err
+    console.warn('[wt] 后台解码不可用，回退到主进程同步读取：', err)
+  }
   const store = getStore()
   const cached = store.readNovelCache(filePath)
   if (cached) return cached
@@ -77,7 +89,7 @@ export function registerIpc(deps: IpcDeps): void {
         ? await dialog.showOpenDialog(win, options)
         : await dialog.showOpenDialog(options)
       if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
-      return { ok: true, value: openNovel(result.filePaths[0]) }
+      return { ok: true, value: await openNovel(result.filePaths[0]) }
     } catch (err) {
       console.warn('[wt] 导入小说失败：', err)
       return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
@@ -135,9 +147,9 @@ export function registerIpc(deps: IpcDeps): void {
     return loadWorkDocImage(src, baseDir)
   })
 
-  ipcMain.handle(CH.openNovelPath, (_e, filePath: string): IpcResult<Novel> => {
+  ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<IpcResult<Novel>> => {
     try {
-      return { ok: true, value: openNovel(filePath) }
+      return { ok: true, value: await openNovel(filePath) }
     } catch (err) {
       console.warn('[wt] 打开小说失败：', filePath, err)
       return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }

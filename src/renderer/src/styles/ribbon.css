@@ -47,9 +47,8 @@
   height: 34px;
   /* 与标题条共用同一个 token：两条合成一整块蓝。这正是真 Word「彩色」主题的样子——
      标题栏与标签条同色，选中的页签是一块从白色功能区升上来的白形状，靠「与下方功能区
-     连成一片」表达选中，而不是靠描边。深色下这个 token 是近黑，但标签条另有覆盖，见
-     文件末尾那段深色外观。 */
-  background: var(--wt-titlebar);
+     连成一片」表达选中，而不是靠描边。深色下 --wt-tabstrip 会再暗一档，理由见那个 token。 */
+  background: var(--wt-tabstrip);
 }
 
 .wt-tab {
@@ -68,14 +67,14 @@
 
 /* 未选中的页签在蓝底上不能压暗——压暗出来是脏蓝，不是「次要」。用一层半透明白提亮。 */
 .wt-tab:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--wt-tab-hover);
   color: var(--wt-titlebar-text);
 }
 
 /* 选中态靠「与下方白色功能区连成一片」表达，而不是加一圈描边——
    这正是 Word 的做法，也是这一版和 2013 那版观感差别最大的地方。 */
 .wt-tab--active {
-  background: #ffffff;
+  background: var(--wt-surface);
   color: var(--wt-blue);
   font-weight: 600;
 }
@@ -86,7 +85,7 @@
    「一块淡蓝 + 白字看不见」。本条特异度与 `.wt-tab:hover` **相同**，靠**源码顺序**
    （排在它之后）胜出，所以不能往上挪。 */
 .wt-tab--active:hover {
-  background: #ffffff;
+  background: var(--wt-surface);
   color: var(--wt-blue);
 }
 
@@ -96,7 +95,7 @@
   gap: 0;
   padding: 6px 8px 4px;
   min-height: 92px;
-  background: #ffffff;
+  background: var(--wt-surface);
   border-bottom: 1px solid var(--wt-chrome-border);
   overflow-x: auto;
 }
@@ -171,23 +170,23 @@
 
 .wt-btn:hover {
   background: var(--wt-blue-light);
-  border-color: #c4d9f5;
+  border-color: var(--wt-control-hover-border);
 }
 
 .wt-btn:active {
-  background: #d3e3fa;
+  background: var(--wt-control-active);
 }
 
 /* 按下态（加粗/斜体/对齐这类切换按钮）。图标本身也会从线框换成实心，见 icons.tsx。 */
 .wt-btn--active {
-  background: #d3e3fa;
-  border-color: #a8c7ef;
+  background: var(--wt-control-active);
+  border-color: var(--wt-control-active-border);
 }
 
 /* `.wt-btn:hover` 的特异度 (0,2,0) 压过 `.wt-btn--active` (0,1,0)，不补这条，选中的按钮一悬停就变浅。 */
 .wt-btn--active:hover {
-  background: #d3e3fa;
-  border-color: #a8c7ef;
+  background: var(--wt-control-active);
+  border-color: var(--wt-control-active-border);
 }
 
 /* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
@@ -235,7 +234,7 @@
  * 加进这份排除名单，否则它的背景会被这条吃掉。 */
 .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
   border-color: var(--wt-chrome-border-strong);
-  background: #fbfbfc;
+  background: var(--wt-control);
   padding: 0 10px;
 }
 
@@ -263,7 +262,7 @@
   padding: 0 6px 0 10px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
-  background: #fbfbfc;
+  background: var(--wt-control);
   color: var(--wt-text);
   font-size: 12px;
   font-family: inherit;
@@ -272,7 +271,7 @@
 
 .wt-combo:hover {
   background: var(--wt-blue-light);
-  border-color: #a8c7ef;
+  border-color: var(--wt-control-hover-border-strong);
 }
 
 .wt-combo__value {
@@ -299,8 +298,8 @@
   padding: 4px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
-  background: #ffffff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  background: var(--wt-panel-bg);
+  box-shadow: var(--wt-panel-shadow);
 }
 
 .wt-combo__option {
@@ -322,7 +321,7 @@
 }
 
 .wt-combo__option--active {
-  background: #d3e3fa;
+  background: var(--wt-menu-active);
 }
 
 /* ---- 样式库 ----
@@ -351,11 +350,11 @@
 
 .wt-gallery__item:hover {
   background: var(--wt-blue-light);
-  border-color: #c4d9f5;
+  border-color: var(--wt-control-hover-border);
 }
 
 .wt-gallery__item--active {
-  background: #ffffff;
+  background: var(--wt-card-active);
   border-color: var(--wt-chrome-border-strong);
 }
 
@@ -404,7 +403,7 @@
 
 .wt-split__arrow:hover {
   background: var(--wt-blue-light);
-  border-color: #c4d9f5;
+  border-color: var(--wt-control-hover-border);
 }
 
 .wt-split__caret {
@@ -458,10 +457,9 @@
 /*
  * 「当前书」那格在没打开小说时禁用：没有书就没有「当前书」。
  *
- * 【必须让它看得出来，而且光靠底色不够】`.wt-ratio__input` 本来就没设 background，
- * 靠的是浏览器给输入框的默认白底；拿 `--wt-chrome`（#f7f7f8）当禁用底色，两者在浅色下
- * 几乎一模一样——真机截图里根本分不出哪格是禁用的。所以这里叠一层半透明：
- * 它在两种主题下都与可用态明显不同。 */
+ * 【必须让它看得出来，而且光靠底色不够】可用态的底是 --wt-input-bg（浅色下纯白）；
+ * 拿 `--wt-chrome`（#f7f7f8）当禁用底色，两者在浅色下几乎一模一样——真机截图里根本分不出
+ * 哪格是禁用的。所以这里叠一层半透明：它在两种主题下都与可用态明显不同。 */
 .wt-ratio__input:disabled {
   background: var(--wt-chrome);
   color: var(--wt-text-muted);
@@ -480,6 +478,7 @@
   padding: 0 6px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
+  background: var(--wt-input-bg);
   font-family: inherit;
   font-size: 12px;
   text-align: center;
@@ -534,7 +533,7 @@
   width: 680px;
   max-width: calc(100% - 48px);
   height: min(410px, calc(100vh - 48px));
-  background: #ffffff;
+  background: var(--wt-panel-bg);
   border-radius: 8px;
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.14),
@@ -868,6 +867,7 @@
   padding: 0 8px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
+  background: var(--wt-input-bg);
   font-family: inherit;
   font-size: 12px;
 }
@@ -895,19 +895,19 @@
 
 .wt-modal__body .wt-btn:hover,
 .wt-modal__footer .wt-btn:hover {
-  border-color: #c4d9f5;
+  border-color: var(--wt-control-hover-border);
 }
 
 /*
  * 「保存」是主按钮：真 Word 的对话框里确定键就是蓝底白字，与旁边的「关闭」拉开主次。
  *
  * 【必须排在上面那两条 `.wt-modal__footer .wt-btn` 之后】同特异度 (0,2,0) 靠源码顺序决胜，
- * 上移的话底色会被上面那条吃掉。深色那侧另有一处同名排除，见下面 `:not(.wt-btn--primary)`。
+ * 上移的话底色会被上面那条吃掉。
  */
 .wt-modal__footer .wt-btn--primary {
   background: var(--wt-primary);
   border-color: var(--wt-primary);
-  color: #fff;
+  color: var(--wt-primary-text);
 }
 
 .wt-modal__footer .wt-btn--primary:hover {
@@ -922,103 +922,14 @@
 }
 
 /* ================= 深色外观 =================
-   这里只放【写死了浅色值】的那些规则；能用 token 表达的在 word.css 里已经跟着翻了。 */
-/* 深色下**不**跟 --wt-titlebar（那是 #1f1f22）走：选中页签的底色与功能区同为 #202024，
-   标签条若也落在 #1f1f22 就只差一档，「选中页签与下方功能区连成一片」当场看不出来。
-   压到 #191919 拉开一档，选中态才立得住。 */
-[data-theme='dark'] .wt-tabs {
-  background: #191919;
-}
-
-[data-theme='dark'] .wt-tab:hover {
-  background: rgba(255, 255, 255, 0.07);
-}
-
-/* 选中页签仍靠「与下方功能区连成一片」表达：两边用同一个底色 */
-[data-theme='dark'] .wt-tab--active {
-  background: #202024;
-  color: var(--wt-accent);
-}
-
-/* 与浅色那条同理，只是这里两边都多一个属性选择器：`[data-theme='dark'] .wt-tab:hover`
-   是 (0,3,0)，`[data-theme='dark'] .wt-tab--active` 是 (0,2,0)，前者照样盖后者。
-   本条 (0,3,0) 且排在后面，胜出。 */
-[data-theme='dark'] .wt-tab--active:hover {
-  background: #202024;
-  color: var(--wt-accent);
-}
-
-[data-theme='dark'] .wt-toolbar {
-  background: #202024;
-}
-
-/* 下拉框与样式库那几处写死的浅色值。悬停用的是 --wt-blue-light，那个 token 自己会翻。 */
-[data-theme='dark'] .wt-combo {
-  background: #2a2a31;
-}
-
-[data-theme='dark'] .wt-combo__panel {
-  background: #26262c;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-[data-theme='dark'] .wt-combo__option--active {
-  background: #3a3a44;
-}
-
-[data-theme='dark'] .wt-gallery__item--active {
-  background: #2a2a31;
-}
-
-/* 【`:not(.wt-btn--primary)` 与 `:not(.wt-btn--active)` 同理，不能省】这条链的特异度是
-   (0,5,0)（`[data-theme]` + `.wt-btn` + 三个 `:not()` 各自的简单选择器），压得过主按钮那条
-   (0,2,0)。少了这个 `:not`，深色下「保存」会被铺成灰底——蓝底白字正是它区别于「关闭」的地方。 */
-[data-theme='dark']
-  .wt-btn:not(.wt-btn--large):not(.wt-btn--active):not(.wt-btn--primary):not(:has(.wt-btn__icon)) {
-  background: #2a2a31;
-}
-
-[data-theme='dark'] .wt-btn:hover {
-  border-color: #3d4d66;
-}
-
-[data-theme='dark'] .wt-btn:active,
-[data-theme='dark'] .wt-btn--active,
-[data-theme='dark'] .wt-btn--active:hover {
-  background: #2c3a52;
-  border-color: #405a80;
-}
-
+   能用 token 表达的在 word.css 里已经跟着翻了。这里只留 token 装不下的部分：
+   遮罩与半透明 hover。 */
 [data-theme='dark'] .wt-modal {
   background: rgba(0, 0, 0, 0.52);
 }
 
-[data-theme='dark'] .wt-modal__panel {
-  background: #26262b;
-}
-
 [data-theme='dark'] .wt-modal__close:hover {
   background: rgba(255, 255, 255, 0.14);
-}
-
-[data-theme='dark'] .wt-ratio__input,
-[data-theme='dark'] .wt-modal__text {
-  background: #1c1c20;
-  color: var(--wt-text);
-}
-
-[data-theme='dark'] .wt-modal__body .wt-btn:hover,
-[data-theme='dark'] .wt-modal__footer .wt-btn:hover {
-  border-color: #3d4d66;
-}
-
-/* 主按钮的悬停 / 按下在深色下也要保住蓝底蓝边：上面那条与主按钮同特异度 (0,3,0)、
-   靠源码顺序压过去，而 `.wt-btn:active` 那一对同样是 (0,3,0)。不写这两条的话，
-   鼠标一划过或一按下，「保存」就变成灰边 / 暗蓝灰底。 */
-[data-theme='dark'] .wt-modal__footer .wt-btn--primary:hover,
-[data-theme='dark'] .wt-modal__footer .wt-btn--primary:active {
-  background: var(--wt-primary-hover);
-  border-color: var(--wt-primary-hover);
 }
 
 /* 复选框那行 */
@@ -1035,10 +946,6 @@
   height: 14px;
   accent-color: var(--wt-accent);
   cursor: pointer;
-}
-
-[data-theme='dark'] .wt-modal__check input {
-  accent-color: var(--wt-accent);
 }
 
 /* ---- 平台各自的标题条 ----
@@ -1093,14 +1000,8 @@
 .wt-seg .wt-btn--active,
 .wt-seg .wt-btn--active:hover {
   background: var(--wt-accent);
-  color: #ffffff;
+  color: var(--wt-seg-active-fg);
   font-weight: 600;
-}
-
-[data-theme='dark'] .wt-seg .wt-btn--active,
-[data-theme='dark'] .wt-seg .wt-btn--active:hover {
-  /* 深色下强调色是浅蓝，配深字对比最强 */
-  color: #10141a;
 }
 
 /* 快捷键录制框。做成 button 而不是 input：这个应用的焦点豁免名单里有 `input`，

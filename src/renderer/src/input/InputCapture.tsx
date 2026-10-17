@@ -108,8 +108,12 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
       if (document.activeElement !== el) el.focus({ preventScroll: true })
     }
 
-    // 挂载时先聚焦一次。不走上面那条闸（`e.target` 是隐藏 textarea 自己）。
-    if (document.activeElement !== el) el.focus({ preventScroll: true })
+    // 挂载时先聚焦一次。不走上面那条闸（`e.target` 是隐藏 textarea 自己），但要避开对话框：
+    // 启动恢复是异步的，用户可能在它完成前就打开设置。textarea 上刻意不挂 autoFocus：
+    // 那条没有对话框闸，会把刚打开的设置里的焦点抢走。
+    const active = document.activeElement
+    const inDialog = active instanceof Element && active.closest('[role="dialog"]') !== null
+    if (!inDialog && active !== el) el.focus({ preventScroll: true })
 
     // 点击阅读区任意位置都要把按键接回接收器
     window.addEventListener('mousedown', focusIfNotTextInput)
@@ -241,7 +245,6 @@ export function InputCapture({ engine, mode }: InputCaptureProps) {
       className="wt-input"
       data-testid="input-capture"
       aria-label="文档输入区"
-      autoFocus
       spellCheck={false}
       autoComplete="off"
       onKeyDown={handleKeyDown}
