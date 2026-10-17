@@ -56,10 +56,8 @@ export function Page({
   const shownLength = md ? md.cursor - md.revealStart : visibleText.length
   const folded = !expanded && shownLength > RENDER_WINDOW_LIMIT
   /**
-   * 【md 的折叠为什么按块边界】按字符硬切会把一段话、一张表切成两半，屏幕上就是残缺的
-   * 东西（设计第 12 节最后一行）。块的字符跨度从语法树上直接读得到，不需要布局信息，
-   * 所以折叠这一步**不**去量高度——它吃的是 `BlockSpan`，与铺满吃的 `BlockHeight`
-   * 不是一回事。
+   * 【md 的折叠按块边界】按字符硬切会把一段话、一张表切成两半（设计第 12 节）。
+   * 块的字符跨度从语法树直接读得到，不需要布局信息，所以折叠不量高度。
    */
   const spans: BlockSpan[] = md
     ? md.doc.children.map((n) => ({
@@ -67,7 +65,11 @@ export function Page({
         end: n.position?.end.offset ?? 0
       }))
     : []
-  const foldStart = md ? (folded ? pickFoldStart(spans, RENDER_WINDOW_LIMIT) : md.revealStart) : 0
+  const foldStart = md
+    ? folded
+      ? pickFoldStart(spans, RENDER_WINDOW_LIMIT, md.cursor)
+      : md.revealStart
+    : 0
   const foldedChars = md ? foldStart - md.revealStart : visibleText.length - RENDER_WINDOW_LIMIT
   const shown = !md && folded ? visibleText.slice(visibleText.length - RENDER_WINDOW_LIMIT) : visibleText
 

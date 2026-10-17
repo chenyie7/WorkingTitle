@@ -1168,3 +1168,33 @@ describe('shortcuts 字段的向后兼容', () => {
     expect(store.readSettings()).toEqual(settings)
   })
 })
+
+describe('写通道先校验再落盘', () => {
+  it('writeSettings 拒绝不合法载荷，磁盘上原来那份不被覆盖', () => {
+    const store = createSessionStore(dir)
+    const good = { ...defaultSettings(), docTitle: '季度汇报' }
+    expect(store.writeSettings(good).ok).toBe(true)
+    const result = store.writeSettings({ ...good, ratio: Number.NaN })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toContain('ratio 不是有限数字')
+    expect(store.readSettings().docTitle).toBe('季度汇报')
+  })
+
+  it('writeSession 拒绝不合法载荷，上一份进度不被覆盖', () => {
+    const store = createSessionStore(dir)
+    const good = makeSession({ cursor: 120 })
+    expect(store.writeSession(good).ok).toBe(true)
+    const result = store.writeSession({ ...good, cursor: Number.NaN })
+    expect(result.ok).toBe(false)
+    expect(store.readSession('/tmp/测试书.txt')).toEqual(good)
+  })
+
+  it('clearReadingHistory 返回 ok，只清阅读记录、不碰设置', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession())
+    store.writeSettings(defaultSettings())
+    expect(store.clearReadingHistory().ok).toBe(true)
+    expect(existsSync(join(dir, 'sessions'))).toBe(false)
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
+  })
+})

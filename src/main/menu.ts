@@ -1,5 +1,5 @@
 import { app, Menu, shell, type BrowserWindow } from 'electron'
-import { CH, type MenuCommand } from './ipc'
+import { CH, type MenuCommand } from './channels'
 import type { ResolvedShortcuts } from '../core/shortcuts'
 import { toAccelerator } from '../core/shortcuts'
 
@@ -104,7 +104,7 @@ export function buildAppMenu(
         {
           label: '项目主页',
           click: () => {
-            void shell.openExternal('https://github.com/')
+            void shell.openExternal('https://github.com/chenyie7/WorkingTitle')
           }
         }
       ]

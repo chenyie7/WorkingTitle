@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { getApi } from '../api'
 
 export interface MarkdownImageProps {
   url: string
@@ -30,12 +31,17 @@ const cache = new Map<string, Promise<string | null>>()
 function fetchOnce(url: string): Promise<string | null> {
   const hit = cache.get(url)
   if (hit) return hit
-  const api = (
-    window as unknown as { api?: { loadWorkDocImage?: (s: string) => Promise<string | null> } }
-  ).api
-  const p = (api?.loadWorkDocImage?.(url) ?? Promise.resolve(null)).catch(() => null)
+  const p = (getApi()?.loadWorkDocImage(url) ?? Promise.resolve(null)).catch(() => null)
   cache.set(url, p)
   return p
+}
+
+/**
+ * 换工作文档时清一次。缓存键只有原始地址，两份文档出现同一相对路径时会串图；
+ * 文档一换，旧地址的解析基准也不再成立。
+ */
+export function clearMarkdownImageCache(): void {
+  cache.clear()
 }
 
 /**

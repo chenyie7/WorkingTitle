@@ -2,25 +2,29 @@ import { BOSS_FILL_MAX } from './bossKey'
 import type { ShortcutId } from './shortcuts'
 
 export interface Chapter {
-  index: number
-  title: string
+  readonly index: number
+  readonly title: string
   /** 在 flatText 中的起始偏移（含） */
-  start: number
+  readonly start: number
   /** 结束偏移（不含） */
-  end: number
-  charCount: number
+  readonly end: number
+  readonly charCount: number
 }
 
+/**
+ * 只读：`flatText` 同时是游标坐标系与章节偏移的基准，运行期改它等于把两者一起弄错，
+ * 而没有任何地方会因此抛错。所有字段都是 `readonly`，构造之后只读。
+ */
 export interface Novel {
   /** 文件名（去扩展名） */
-  title: string
-  sourcePath: string
+  readonly title: string
+  readonly sourcePath: string
   /** 检测到的编码名，如 'UTF-8' / 'GB18030' */
-  encoding: string
-  hadBom: boolean
+  readonly encoding: string
+  readonly hadBom: boolean
   /** 所有章节首尾相接（含标题行本身） */
-  flatText: string
-  chapters: Chapter[]
+  readonly flatText: string
+  readonly chapters: readonly Chapter[]
 }
 
 export type InputMode = 'ime' | 'key'
@@ -60,7 +64,7 @@ export interface NovelCacheMeta {
   encoding: string
   hadBom: boolean
   title: string
-  chapters: Chapter[]
+  chapters: readonly Chapter[]
   /**
    * novel-cache.txt 的 UTF-8 字节数，用作缓存两个文件之间的「提交点」（见 Task 5）：
    * 只有本字段与实际文本文件大小一致时，才承认这对缓存有效。

@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { SHORTCUTS, shortcutProblem, type ShortcutId } from '../core/shortcuts'
+import type { IpcResult } from '../core/api'
 import { defaultSettings } from '../core/types'
 import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
 
@@ -20,10 +21,11 @@ function isShortcutId(id: string): id is ShortcutId {
 
 export interface SessionStore {
   readSettings(): AppSettings
-  writeSettings(s: AppSettings): void
+  /** 写前按读盘同一套校验；不合格的载荷不落盘，把字段名交回去。 */
+  writeSettings(s: unknown): IpcResult<void>
   readSession(sourcePath: string): PersistedSession | null
-  writeSession(s: PersistedSession): void
-  clearReadingHistory(): void
+  writeSession(s: unknown): IpcResult<void>
+  clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
   writeNovelCache(novel: Novel): void
   readNovelCache(filePath: string): Novel | null
@@ -256,6 +258,13 @@ function readSettingsFile(path: string): AppSettings {
   }
 }
 
+/** 临时文件名带 pid 与自增序号：两个进程写同一目标时不会抢同一个临时文件。 */
+let tempSeq = 0
+function tempPathFor(path: string): string {
+  tempSeq += 1
+  return `${path}.${process.pid}.${tempSeq}.tmp`
+}
+
 /**
  * 返回「这一次是否确实落地了」——迁移里「上次打开的是哪本有没有落盘」那道闸用它。
  *
@@ -267,8 +276,9 @@ function writeSettingsFile(path: string, s: AppSettings): boolean {
     mkdirSync(dirname(path), { recursive: true })
     // 与 session 同样的 temp+rename。文档名是用户敲进去的、不可再生，
     // 截断的 settings.json 读回来只会是默认值。
-    writeFileSync(`${path}.tmp`, JSON.stringify(s), 'utf8')
-    renameSync(`${path}.tmp`, path)
+    const tmp = tempPathFor(path)
+    writeFileSync(tmp, JSON.stringify(s), 'utf8')
+    renameSync(tmp, path)
     return true
   } catch (err) {
     console.warn('[wt] 保存设置失败，本次改动未落盘：', err)
@@ -353,8 +363,9 @@ function writeSessionFile(file: string, s: PersistedSession): boolean {
     // 游标、chapterPos、activeChapter、ratio、mode、startedAt 全部静默丢失。
     // 实测这种残留的表现：截断成 20 字节与空文件都读回 null。
     // 注意这条保护的是一次写入【之内】的完整性，写入之间的窗口只能靠调用方的防抖收敛。
-    writeFileSync(`${file}.tmp`, JSON.stringify(s), 'utf8')
-    renameSync(`${file}.tmp`, file)
+    const tmp = tempPathFor(file)
+    writeFileSync(tmp, JSON.stringify(s), 'utf8')
+    renameSync(tmp, file)
     return true
   } catch (err) {
     console.warn('[wt] 保存会话失败，本次进度未落盘：', err)
@@ -380,8 +391,15 @@ export function createSessionStore(baseDir: string): SessionStore {
       return readSettingsFile(settingsPath)
     },
 
-    writeSettings(s: AppSettings): void {
-      writeSettingsFile(settingsPath, s)
+    writeSettings(s: unknown): IpcResult<void> {
+      const problem = settingsProblem(s)
+      if (problem) {
+        console.warn(`[wt] 保存设置失败：结构不合法（${problem}），本次改动未落盘`)
+        return { ok: false, reason: `设置结构不合法：${problem}` }
+      }
+      return writeSettingsFile(settingsPath, s as AppSettings)
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: '设置写盘失败' }
     },
 
     readSession(sourcePath: string): PersistedSession | null {
@@ -398,18 +416,23 @@ export function createSessionStore(baseDir: string): SessionStore {
       return readSessionFile(sessionFile(sourcePath), sourcePath)
     },
 
-    writeSession(s: PersistedSession): void {
-      if (typeof s?.sourcePath !== 'string') {
-        console.warn('[wt] 保存会话失败：sourcePath 不是字符串，本次进度未落盘')
-        return
+    writeSession(s: unknown): IpcResult<void> {
+      const problem = sessionProblem(s)
+      if (problem) {
+        console.warn(`[wt] 保存会话失败：结构不合法（${problem}），本次进度未落盘`)
+        return { ok: false, reason: `会话结构不合法：${problem}` }
       }
-      writeSessionFile(sessionFile(s.sourcePath), s)
+      const session = s as PersistedSession
+      return writeSessionFile(sessionFile(session.sourcePath), session)
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: '会话写盘失败' }
     },
 
-    clearReadingHistory(): void {
+    clearReadingHistory(): IpcResult<void> {
       // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
       // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
       // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
+      const failed: string[] = []
       for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
         try {
           // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
@@ -417,6 +440,7 @@ export function createSessionStore(baseDir: string): SessionStore {
           // 告警更糟：它教会看日志的人忽略这一行。
           rmSync(p, { force: true })
         } catch (err) {
+          failed.push(p)
           console.warn('[wt] 删除持久化文件失败：', p, err)
         }
       }
@@ -425,8 +449,12 @@ export function createSessionStore(baseDir: string): SessionStore {
       try {
         rmSync(sessionsDir, { recursive: true, force: true })
       } catch (err) {
+        failed.push(sessionsDir)
         console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
       }
+      return failed.length === 0
+        ? { ok: true, value: undefined }
+        : { ok: false, reason: `删除失败：${failed.join('、')}` }
     },
 
     migrateLegacySession(): void {

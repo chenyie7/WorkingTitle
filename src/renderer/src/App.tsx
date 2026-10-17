@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BOSS_FILL_MAX, clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
+import { clampBossFillPercent, fillCharsFor, stepBossFill } from '../../core/bossKey'
 import { TypingEngine } from '../../core/engine'
 import { formatShortcut, platformKind, resolveShortcuts } from '../../core/shortcuts'
-import {
-  DEFAULT_DOC_TITLE,
-  DEFAULT_RATIO,
-  PAGE_FONT_SIZE_DEFAULT,
-  clampPageFontSize
-} from '../../core/types'
-import type { AppSettings, InputMode, Novel } from '../../core/types'
+import { clampPageFontSize } from '../../core/types'
+import type { InputMode, Novel } from '../../core/types'
 import { ChapterList } from './components/ChapterList'
 import { Page } from './components/Page'
 import type { MarkdownSource } from './components/Page'
@@ -16,33 +11,20 @@ import { Ribbon } from './components/Ribbon'
 import { StatusBar } from './components/StatusBar'
 import { Toast } from './components/Toast'
 import { InputCapture } from './input/InputCapture'
+import { useAppSettings } from './state/settingsStore'
+import { useBossFill } from './state/useBossFill'
 import { useShortcutDispatcher } from './state/shortcuts'
 import { useDarkPaper, usePageFontSize, useSystemTheme, useThemePreference } from './state/theme'
 import { TOAST_MS, ToolbarProvider } from './state/ToolbarContext'
+import { clearMarkdownImageCache } from './markdown/MarkdownImage'
 import { isMarkdownPath, parseMarkdown } from './markdown/parse'
-import { pickFillCut, type BlockHeight } from './markdown/fill'
-import { measureBlocks } from './markdown/measure'
 import { useTypingEngine } from './state/useTypingEngine'
-import type { ThemeSource, WtApi } from './types/global'
+import { getApi } from './api'
+import type { ThemeSource } from '../../core/types'
 
 const SAVE_DEBOUNCE_MS = 600
 /** 光标与画布上下沿之间保留的空隙：.wt-canvas 上下各有 padding，贴着边等于贴到灰底上 */
 const CARET_MARGIN = 24
-
-/**
- * 取 preload 注入的接口；**它可能不存在**。
- *
- * sandboxed preload 加载失败时（Task 6 实测的形态：`Error: module not found: node:fs`），
- * 页面照常渲染而 `window.api === undefined`——用户看到的就是一个「伪装成 Word 的空窗口」。
- * `global.d.ts` 把它声明成必填（`api: WtApi`），所以 `tsc` 认为它恒存在、**不会提醒你判空**，
- * 这里必须自己转一道。
- *
- * 每次用的时候现取，【不要在模块顶层缓存成常量】：那等于把「preload 一定在模块加载前注入」
- * 写死进加载顺序，一旦不成立，拿到的就是永久为 null 的缓存。
- */
-function getApi(): WtApi | null {
-  return (window as unknown as { api?: WtApi }).api ?? null
-}
 
 export default function App() {
   const [novel, setNovel] = useState<Novel | null>(null)
@@ -69,187 +51,54 @@ export default function App() {
    * 与 `settingsOpen` 是同一条路：状态归 `App`，组件收成受控的。
    */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  /**
-   * 蓝条上的文档名。**刻意与 `novel.title` 无关**——那个是文件名（`诡秘之主（整理版）`），
-   * 显示出来等于把「在看小说」写在了窗口最显眼的位置。这里永远是用户自己定的名字，
-   * 默认取一个中性的 `文档1`。
-   */
-  const [docTitle, setDocTitle] = useState(DEFAULT_DOC_TITLE)
-  /** 「深色模式下纸张也变暗」。默认关——真 Word 的深色模式里纸张仍是白的。 */
-  const [darkPaper, setDarkPaper] = useState(false)
-  /** 外观偏好，默认跟随系统。它决定原生部分（红绿灯）与网页部分一起怎么显示。 */
-  const [themeSource, setThemeSource] = useState<ThemeSource>('system')
-  /** 上次打开的书。启动时读回来、导入时更新，写进 settings.json 供下次启动恢复。 */
-  const [lastSourcePath, setLastSourcePath] = useState<string | null>(null)
-  /**
-   * 设置对话框开不开。**从 Ribbon 里提上来的**：Ribbon 不再自己监听 ⌘/Ctrl + ,（那条归
-   * 全局分发器，而分发器长在这一层），所以这个状态得由本组件持有再传下去。
-   */
+  /** 设置对话框开不开。状态归本层，因为分发器也长在本层。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
-  /**
-   * **全局**阅读替换比例：新导入的书拿它当起点。
-   *
-   * 真正生效的是**当前书**的比例（引擎里那个，存在会话里）。这个不是「覆盖值」而是「初值」：
-   * 一本书第一次打开时取它，之后各管各的——改这个**不影响已经打开过的书**，只影响之后导入的。
-   * 所以两者之间没有「跟随」状态，设置里两个普通输入框就够了。
-   */
-  const [globalRatio, setGlobalRatio] = useState(DEFAULT_RATIO)
-  /**
-   * 设置对话框正在录制键位。录制期间分发器必须静音——不静音的话，用户在录制框里按下
-   * `Ctrl+O` 的那一刻文件选择框就弹出来了（见下面 `useShortcutDispatcher` 那段）。
-   *
-   * 它由 `SettingsDialog` 经 `Ribbon` 上报。那两根线（`onRecordingChange` 与
-   * `onShortcutsChange`）都是「可选带默认值」的，所以漏接一根**类型上不会报错、界面上也看不
-   * 出来**——而两条线**各有一条用例专门钉着**（`tests/unit/app.test.tsx` 的「录制期间分发器
-   * 静音」与「在设置里录一条新快捷键并保存」，两个方向都实测过：各删一次，各红对应的那一条）。
-   */
+  /** 设置对话框正在录制键位；期间分发器必须静音，否则录 ⌘O 会当场触发真导入。 */
   const [recording, setRecording] = useState(false)
-  /** toast 的当前内容。**归 App 所有**——老板键的提示从这一层的分发器里弹，见设计文档 6.2 节。 */
+  /** toast 的当前内容。老板键的提示从本层的分发器里弹。 */
   const [toast, setToast] = useState<string | null>(null)
-  /**
-   * 用户改过的快捷键（**稀疏表**：缺条目＝用该平台的默认值，`{}` 就是「全默认」）。
-   *
-   * 【为什么原样收着，不在这里 `resolveShortcuts` 补齐】它读回来的是磁盘上那个字段、写回去
-   * 的也是它。补齐是按平台做的，而「当前是哪个平台」只有渲染这一层知道——补过的表落盘就
-   * 等于把 macOS 的默认值写进了 Windows 的配置，换台机器打开就全是错的键。
-   * 补齐只发生在**消费点**（下面前缀成 `shortcutTable`，以及设置里按平台格式化那几处）。
-   */
-  const [shortcuts, setShortcuts] = useState<AppSettings['shortcuts']>({})
-  /**
-   * 工作文档路径与老板键的铺满量。
-   *
-   * 【这里不是「让界面跟随」，只是**把磁盘上那份原样带回去**】下面那个 memo 就是防抖落盘的
-   * 载荷，少一个字段就等于「启动一次之后把它冲成默认值」。`shortcuts` 曾经恒为写死的 `{}`
-   * 时正是这个症状：手改过 settings.json 的人启动一次就被无声冲成空表（见下面那段说明）。
-   * 所以这两个字段哪怕界面上还没有入口，也必须先读进来、再原样写回去。
-   *
-   * 【两个 setter 现在都有调用方了】`setBossFillPercent` 在 `adjustBossFill` 与启动读盘两处；
-   * `setWorkDocPath` 在 `handleImportWorkDoc` / `handleRemoveWorkDoc` 与启动读盘三处
-   * ——「设置里的工作文档」那一步已经接上了。
-   */
-  const [workDocPath, setWorkDocPath] = useState<string | null>(null)
-  const [bossFillPercent, setBossFillPercent] = useState(BOSS_FILL_MAX)
-  /**
-   * 阅读区正文字号。**只作用于小说与 `.txt` 工作文档**（md 那条路的字号是写死的，见
-   * `page.css` 里 `.wt-page__novel` 那段）。
-   *
-   * 【为什么全局一份、不像比例那样分「全局 / 当前书」】字号是显示偏好，与「在读哪一本」
-   * 无关，跟 `themeSource` / `darkPaper` 同类。
-   */
-  const [pageFontSize, setPageFontSize] = useState(PAGE_FONT_SIZE_DEFAULT)
-  /**
-   * 设置是否已经读回来了。
-   *
-   * 【少了这道闸，启动会把用户存的设置覆盖成默认值】设置是「改了就写回」的（下面那个
-   * 防抖 effect），而首帧渲染时这几个状态还都是默认值——读盘是异步的。于是那个 effect
-   * 会先拿着「文档1 / 跟随系统 / 不暗 / null」写一遍，把磁盘上真正的设置冲掉，然后才读到
-   * 已经被自己冲掉的默认值。
-   */
+  /** 设置是否已经从磁盘读回。少了这道闸，首帧会拿默认值把磁盘上的设置冲掉。 */
   const [settingsLoaded, setSettingsLoaded] = useState(false)
+
+  /**
+   * 设置的唯一来源：全部字段在同一个对象里，改动一律走 `patchSettings`。
+   * 拆成九个 useState 时，boot、写盘载荷、依赖数组各要同步一遍，漏一处只静默失效。
+   */
+  const { settings, patchSettings, replaceSettings } = useAppSettings()
+  const {
+    docTitle,
+    darkPaper,
+    themeSource,
+    workDocPath,
+    bossFillPercent,
+    pageFontSize,
+    shortcuts
+  } = settings
+
+  // 图片缓存按原始相对地址做键；换工作文档后解析基准变了，不清会串图。
+  useEffect(() => {
+    clearMarkdownImageCache()
+  }, [workNovel])
 
   useSystemTheme()
   useDarkPaper(darkPaper)
   useThemePreference(themeSource)
-  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。与上面三个同处一层：
-  // 全是「把用户的外观偏好写到 documentElement 上」。
+  // 正文字号走 CSS 变量（`page.css` 的 `.wt-page__novel` 读它）。
   usePageFontSize(pageFontSize)
-  /**
-   * **持久化专用**的引擎引用：永远指向小说那一本。
-   *
-   * 【为什么必须与「当前显示的那份」拆开】进老板模式之后屏幕上是工作文档，而工作文档
-   * **不落盘**。若 `flushSession` 读的是「当前显示的那一份」，关窗那一下就会把工作文档的
-   * 进度写进 `sessions/<工作文档的 hash>.json`——恰好是设计里说好不做的那件事，而且是在
-   * 关窗那一下**静默**发生的。
-   */
+  /** **持久化专用**的引擎引用：永远指向小说那一本，与「当前显示的那份」拆开。 */
   const novelEngineRef = useRef<TypingEngine | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null)
   novelEngineRef.current = engine
-  /**
-   * 最新的全局比例，挂在 ref 上给 `openNovel` 读。
-   *
-   * 【为什么不能用闭包里的那个值】`openNovel` 的依赖是 `[flushSession]`，而那是个稳定引用
-   * ——于是它永远保留**首次渲染**那一刻闭包里的 `globalRatio`（默认 10），启动读回真正的
-   * 全局值之后也不会更新。实测过：全局设成 3、导入一本新书，引擎拿到的仍是 10。
-   *
-   * 【为什么也不把它加进依赖数组】`openNovel` 的身份一变，**启动那个 effect 就会重跑**，
-   * 于是每次改全局比例都会把书重新打开一遍（重新读会话、重置 expanded…）。
-   * 渲染期写 ref 是本文件既有的写法（见上面的 `novelEngineRef.current = engine`）。
-   */
-  const globalRatioRef = useRef(DEFAULT_RATIO)
-  globalRatioRef.current = globalRatio
-  /**
-   * 最新的铺满量，挂在 ref 上给下面两个动作读。
-   *
-   * 【为什么不用闭包里的 `bossFillPercent`】那两个动作每次渲染都是新函数（它们要进分发器的
-   * actions 对象），直接把 `bossFillPercent` 放进依赖也行——但 `toggleBoss` 同时依赖
-   * `workNovel` / `workEngine` / `bossMode`，每改一次铺满量就换一次身份。挂 ref 与
-   * `globalRatioRef` 是同一套写法，也同一套理由。
-   */
-  const bossFillPercentRef = useRef(BOSS_FILL_MAX)
-  bossFillPercentRef.current = bossFillPercent
-  /**
-   * 最新的正文字号，挂在 ref 上给 `applyFill` 与那条 toast 读。
-   *
-   * 【为什么与 `bossFillPercentRef` 同一套写法】那两处一个是 `useCallback`、一个在依赖数组
-   * 里已经很长；字号只是喂给 `fillCharsFor` 的一个乘数，没有理由让它改变这两者的身份。
-   */
-  const pageFontSizeRef = useRef(PAGE_FONT_SIZE_DEFAULT)
-  pageFontSizeRef.current = pageFontSize
 
-  const settingsRef = useRef<AppSettings | null>(null)
   /**
-   * 设置的当前值：**一处构造，两处消费**（防抖写盘的载荷、关窗前的快照）。
-   *
-   * 【为什么要合并】这些字段此前在三个地方各写了一遍：防抖 effect 的载荷、那个 effect 的
-   * 依赖数组、以及 ref 的字面量。加设置项时漏改依赖数组＝「只在关窗时落盘」，漏改 ref
-   * 字面量＝「防抖写了、关窗丢」——两种都只在特定退出路径下才显形。
-   *
-   * 【合并之后上面那句要重读】两条路现在读的是**同一个对象**：漏改下面那个依赖数组，
-   * memo 不重算，于是防抖的载荷与关窗的快照一起停在旧值上——那个字段的改动在别的依赖也
-   * 变化之前，哪条路都带不上去（既不报错、也不落盘，只是悄悄不变）。所以依赖数组必须与
-   * 返回对象里的字段一一对应；字段也只在这一处增删。
-   *
-   * 【`shortcuts` 这一项是这条规矩的活例】它曾经恒为写死的 `{}`、因此**不在依赖数组里**
-   * ——那时没有后果（那个值永远不会变）。接上状态之后两处必须同时改，两种漏法都只静默：
-   * 留着写死的 `{}`，手改过 `settings.json` 的人启动一次就会被 600ms 那次防抖**无声冲成
-   * 空表**；漏掉依赖里的 `shortcuts`，memo 不重算，那条改动哪条路都带不上去。
-   *
-   * 两件事各有一条用例钉着（都在 `tests/unit/app.test.tsx`）：启动那条载荷断言管前者，
-   * 「在设置里录一条新快捷键并保存」管后者。
-   *
-   * 【后者的载荷断言为什么必须排在按新键导入之前】那一步会动 `lastSourcePath`（memo 的另一个
-   * 依赖），memo 被带着重算——而**重算本身不给漏依赖这件事解围**：此刻落盘的仍是重算前那一次
-   * 排的防抖写。真正让它隐形的是**紧接着又落一次盘**：重算改了 `settings` 的身份，防抖再排一发，
-   * 600ms 后写下的那一份就是带上了新表的。所以断言一旦排到那两次写之后、读的又是最后一次调用，
-   * 它就永远看到正确的那一份。实测（变异＝值留住、只把 `shortcuts` 从依赖数组里删掉）：
-   * 断言排在导入之后且**不补推进**时这条仍红；**再补一次 `advanceTimersByTimeAsync(2000)`**
-   * 就转绿。排序把断言钉在「重算前那一次写」上，这才让它对这处漏接敏感。
+   * 最新设置的同步镜像，给 `useCallback` 与事件回调读。
+   * 直接闭包 `settings` 会永久停在首次渲染那份；每个字段各挂一个 ref 则是同一事实的多份副本。
    */
-  const settings: AppSettings = useMemo(
-    () => ({
-      docTitle,
-      themeSource,
-      darkPaper,
-      lastSourcePath,
-      ratio: globalRatio,
-      workDocPath,
-      bossFillPercent,
-      pageFontSize,
-      shortcuts
-    }),
-    [
-      docTitle,
-      themeSource,
-      darkPaper,
-      lastSourcePath,
-      globalRatio,
-      workDocPath,
-      bossFillPercent,
-      pageFontSize,
-      shortcuts
-    ]
-  )
-  settingsRef.current = settingsLoaded ? settings : null
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+  const settingsLoadedRef = useRef(false)
+  settingsLoadedRef.current = settingsLoaded
+
   /** 见 openNovel 里那段说明：只用来丢弃过期的打开结果 */
   const openSeqRef = useRef(0)
 
@@ -296,113 +145,15 @@ export default function App() {
     return parseMarkdown(shownNovel.flatText)
   }, [shownNovel])
 
-  /**
-   * 量高度用的隐藏副本开关。默认关：那份副本是**整篇**文档的 DOM，
-   * 每次按键都渲染它不可接受。只有「要算铺满切点」时才开一下（Task 11）。
-   */
-  const [measuring, setMeasuring] = useState(false)
-  /** 隐藏副本的根元素。`MarkdownView` 挂载时交过来，量高度时读它的直接子元素 */
-  const measureElRef = useRef<HTMLElement | null>(null)
-  const onMeasureNode = useCallback((el: HTMLElement | null): void => {
-    measureElRef.current = el
-  }, [])
-
-  /**
-   * 量好的块高表。
-   *
-   * 【为什么缓存】算铺满切点要用它，而它只跟「文档 + 样式」有关，与铺满百分比无关。
-   * 于是按 ⌘⇧↑/↓ 时只重算切点，不重量。挂 `doc` 一起存，换文档自然失效。
-   */
-  const heightsRef = useRef<{ doc: unknown; heights: BlockHeight[] } | null>(null)
-  /** 有一次「开量高度」在等结果：量完要拿它接着算切点 */
-  const pendingFillRef = useRef<number | null>(null)
-
-  /** 纸张正文区的高度。**量出来的，不是写死的 912**。 */
-  const pageTextHeight = useCallback((): number => {
-    const el = document.querySelector('.wt-page')
-    if (!(el instanceof HTMLElement)) return 0
-    const cs = getComputedStyle(el)
-    const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
-    return Number.isFinite(inner) && inner > 0 ? inner : 0
-  }, [])
-
-  /**
-   * 铺满铺的是**工作文档**，所以「要不要量高度」判的也是它，**不是当前显示的那一份**。
-   *
-   * 【为什么不能用 `mdDoc`】`mdDoc` 跟着 `shownNovel = bossActive ? workNovel : novel` 走，
-   * 而按下老板键那一刻 `bossActive` 还是 false——那一下 `mdDoc` 还是**小说**那一份的
-   * （小说是 txt 时为 null）。照 `mdDoc` 分岔，进老板模式就永远进不了量高度那一支，
-   * 铺出来的是按字数估的切点、屏幕底部切在半句话上；只有「已经在老板模式里」再按
-   * ⌘⇧↑/↓ 才会量。实测（Task 11 收尾）：把分岔改回 `mdDoc`，那条「按 ⌘⇧B 会调
-   * `measureBlocks`」的用例当场红。
-   */
+  /** 铺满铺的是工作文档，所以判的是它、不是当前显示的那份。 */
   const workIsMarkdown = workNovel !== null && isMarkdownPath(workNovel.sourcePath)
 
-  /**
-   * 铺满：能算就直接算，算不了就先开量高度、等量完再算。
-   *
-   * 【三条路，顺序不能换】
-   * 1. 有缓存（同一份文档量过）→ 直接算切点；
-   * 2. 没有缓存 → 开 `measuring` 渲染隐藏副本，把百分比记在 `pendingFillRef` 里，
-   *    量完的那个 effect 接着算；
-   * 3. 量不出来（jsdom、或者量出来是 0）→ **退回按字符数**（`fillCharsFor`）。
-   *    这条兜底是设计第 7 节写明的，也是这条路径唯一能在单测里跑到的那一半。
-   */
-  const applyFill = useCallback(
-    (percent: number): void => {
-      const eng = workEngine
-      if (!eng) return
-      const cached = heightsRef.current
-      if (workIsMarkdown && cached && cached.doc === workNovel) {
-        eng.revealTo(pickFillCut(cached.heights, (pageTextHeight() * percent) / 100))
-        return
-      }
-      if (!workIsMarkdown) {
-        // 不是 md：没有结构可量，本来就是按字符数铺
-        eng.revealTo(fillCharsFor(percent, pageFontSizeRef.current))
-        return
-      }
-      pendingFillRef.current = percent
-      setMeasuring(true)
-    },
-    [workEngine, workNovel, workIsMarkdown, pageTextHeight]
-  )
-
-  /**
-   * 隐藏副本渲染完之后：量高度、算切点、把开关关掉。
-   *
-   * 【为什么必须在 effect 里】量的是 DOM 的布局，而布局要等 commit 之后才有。
-   */
-  useEffect(() => {
-    if (!measuring) return
-    const el = measureElRef.current
-    /**
-     * 【为什么整个包在 try 里】设计第 7 节那条兜底写的是「量不出高度（jsdom 里
-     * `offsetHeight` 恒为 0，**或测量抛错**）→ 退回按字符数」。`offsetHeight` 本身
-     * 不抛，但读布局在渲染异常、DOM 已被卸载之类的情况下会抛，而这条 effect 里抛出去
-     * 就是一次未捕获异常。包住它，兜底路径才真的是兜底。
-     *
-     * 【为什么不再传 ends】`measureBlocks` 现在从 DOM 自己的 `data-block-end` 读偏移，
-     * 不再吃一个外部数组。原因是那样是「两处各自决定有几个块」，永远能对不上；
-     * 而对不上的后果是整篇静默退回按字符数铺（见 `MarkdownView` 里那段说明）。
-     */
-    let heights: BlockHeight[] | null = null
-    try {
-      heights = measureBlocks(el)
-    } catch (err) {
-      console.warn('[wt] 量 markdown 块高失败，退回按字符数铺：', err)
-    }
-    const percent = pendingFillRef.current
-    pendingFillRef.current = null
-    if (heights && workIsMarkdown) heightsRef.current = { doc: workNovel, heights }
-    // 量到了就用高度算，量不到就退回按字符数 —— 两条都在这里分岔
-    workEngine?.revealTo(
-      heights
-        ? pickFillCut(heights, (pageTextHeight() * (percent ?? 0)) / 100)
-        : fillCharsFor(percent ?? 0, pageFontSizeRef.current)
-    )
-    setMeasuring(false)
-  }, [measuring, workIsMarkdown, workNovel, workEngine, pageTextHeight])
+  const { measuring, onMeasureNode, applyFill, invalidateHeights } = useBossFill({
+    workNovel,
+    workEngine,
+    workIsMarkdown,
+    pageFontSize
+  })
 
   const mdSource: MarkdownSource | null =
     mdDoc && state
@@ -419,7 +170,11 @@ export default function App() {
   const flushSession = useCallback((): void => {
     const api = getApi()
     const current = novelEngineRef.current
-    if (api && current) void api.saveSession(current.toSession())
+    if (!api || !current) return
+    // 这里没有界面可提示（关窗路径），至少让失败留下痕迹而不是被 void 吞掉。
+    void api.saveSession(current.toSession()).then((r) => {
+      if (!r.ok) console.warn('[wt] 保存阅读进度失败：', r.reason)
+    })
   }, [])
 
   /**
@@ -454,21 +209,24 @@ export default function App() {
       setEngine(
         session
           ? TypingEngine.fromSession(next, session)
-          : new TypingEngine(next, { ratio: globalRatioRef.current })
+          : new TypingEngine(next, { ratio: settingsRef.current.ratio })
       )
       setExpanded(false)
-      setLastSourcePath(next.sourcePath)
+      patchSettings({ lastSourcePath: next.sourcePath })
     },
-    [flushSession]
+    [flushSession, patchSettings]
   )
 
   const handleImport = useCallback(async () => {
     const api = getApi()
     if (!api) return
-    const next = await api.importNovel()
-    if (!next) return
-    await openNovel(next)
-  }, [openNovel])
+    const result = await api.importNovel()
+    if (!result.ok) {
+      if (result.reason !== 'canceled') notify(`导入失败：${result.reason}`)
+      return
+    }
+    await openNovel(result.value)
+  }, [openNovel, notify])
 
   const handleClearSession = useCallback(async () => {
     const api = getApi()
@@ -483,9 +241,10 @@ export default function App() {
     setEngine(null)
     // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
     // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
-    setLastSourcePath(null)
-    await api.clearSession()
-  }, [])
+    patchSettings({ lastSourcePath: null })
+    const result = await api.clearSession()
+    if (!result.ok) notify(`清除阅读记录失败：${result.reason}`)
+  }, [notify, patchSettings])
 
   /**
    * 导入工作文档。**与「导入小说」同类：立即动作，不走「草稿 + 保存」。**
@@ -500,9 +259,13 @@ export default function App() {
   const handleImportWorkDoc = useCallback(async (): Promise<void> => {
     const api = getApi()
     if (!api) return
-    const doc = await api.importWorkDoc()
-    // null ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
-    if (!doc) return
+    const result = await api.importWorkDoc()
+    // 'canceled' ＝ 用户在文件对话框里取消了，静默返回（这不是错误，不该弹东西）
+    if (!result.ok) {
+      if (result.reason !== 'canceled') notify(result.reason)
+      return
+    }
+    const doc = result.value
     /**
      * **空文件在这里出声并拒绝**（设计 §9：「当场拒绝 + toast，设置不变」）。
      *
@@ -517,30 +280,26 @@ export default function App() {
       notify('这个文件是空的，换一个')
       return
     }
-    // 【表达意图的冗余，不是承重的那道闸】块高表真正的失效判据是**身份**
-    // （`cached.doc === workNovel`），而这里必然换上一个新的 `workNovel`、陈旧表本来就命中
-    // 不了。留着它是「别捏着上一份文档的高度数组不放」。同款一处见 `handleRemoveWorkDoc`。
-    heightsRef.current = null
+    // 块高表真正的失效判据是身份（换文档就命中不了），这里只是别捏着上一份数组不放。
+    invalidateHeights()
     setWorkNovel(doc)
-    setWorkEngine(new TypingEngine(doc, { ratio: globalRatioRef.current }))
+    setWorkEngine(new TypingEngine(doc, { ratio: settingsRef.current.ratio }))
     // 路径就在 Novel 里，不必让 IPC 多返回一个值
-    setWorkDocPath(doc.sourcePath)
+    patchSettings({ workDocPath: doc.sourcePath })
     setWorkDocBroken(false)
     setBossMode(false)
     notify('已导入工作文档')
-  }, [notify])
+  }, [notify, patchSettings, invalidateHeights])
 
   const handleRemoveWorkDoc = useCallback((): void => {
-    // 同 `handleImportWorkDoc`：身份（`workNovel` 变成 null）已经足以判失效，这一行是
-    // 「顺手丢掉那份引用」，不是任何用例的判据。
-    heightsRef.current = null
+    invalidateHeights()
     setWorkNovel(null)
     setWorkEngine(null)
-    setWorkDocPath(null)
+    patchSettings({ workDocPath: null })
     setWorkDocBroken(false)
     setBossMode(false)
     notify('已移除工作文档')
-  }, [notify])
+  }, [notify, patchSettings, invalidateHeights])
 
   /**
    * 老板键：切到工作文档 / 切回小说。
@@ -559,7 +318,7 @@ export default function App() {
       return
     }
     const next = !bossMode
-    if (next) applyFill(bossFillPercentRef.current)
+    if (next) applyFill(settingsRef.current.bossFillPercent)
     /**
      * 「展开前文」是阅读区那一侧的窗口状态，**进出两个方向都清掉**。
      *
@@ -580,12 +339,12 @@ export default function App() {
   /** 老板键铺满 +/-：改设置；正在老板模式时**立刻重铺**，让用户当场看到效果。 */
   const adjustBossFill = useCallback(
     (dir: 1 | -1): void => {
-      const next = stepBossFill(bossFillPercentRef.current, dir)
-      if (next === bossFillPercentRef.current) {
+      const next = stepBossFill(settingsRef.current.bossFillPercent, dir)
+      if (next === settingsRef.current.bossFillPercent) {
         notify(`铺满已是 ${next}%`)
         return
       }
-      setBossFillPercent(next)
+      patchSettings({ bossFillPercent: next })
       // 这一处会**刻意**往回退（按 − 就是要少显示一点）。
       //
       // 【但「会往回退」不是这一处独有的】`toggleBoss` 那条路也会：在**非**老板模式下把铺满量
@@ -612,10 +371,10 @@ export default function App() {
       notify(
         workIsMarkdown
           ? `铺满 ${next}%`
-          : `铺满 ${next}% ≈ ${fillCharsFor(next, pageFontSizeRef.current)} 字`
+          : `铺满 ${next}% ≈ ${fillCharsFor(next, settingsRef.current.pageFontSize)} 字`
       )
     },
-    [bossActive, applyFill, notify, workIsMarkdown]
+    [bossActive, applyFill, notify, workIsMarkdown, patchSettings]
   )
 
   // 启动：先把设置读回来，再打开命令行指定的书、否则打开上次那本
@@ -630,45 +389,28 @@ export default function App() {
 
     const boot = async (): Promise<void> => {
       // 设置先读：它同时给出「上次打开的是哪本」。命令行参数优先于它。
-      const settings = await api.loadSettings()
+      const loaded = await api.loadSettings()
       if (cancelled) return
-      setDocTitle(settings.docTitle)
-      setDarkPaper(settings.darkPaper)
-      setThemeSource(settings.themeSource)
-      setLastSourcePath(settings.lastSourcePath)
-      setGlobalRatio(settings.ratio)
-      setShortcuts(settings.shortcuts)
-      // 【这一夹是必须的，不是防御】settingsProblem 只判「是不是有限数字」，值域夹紧归 core
-      // ——少了它，手改出来的 `bossFillPercent: 500` 会原样进 React 状态、再照原样写回磁盘，
-      // 而第一次按「铺满 −」会从 500 一步跳到 100。
-      setBossFillPercent(clampBossFillPercent(settings.bossFillPercent))
-      // 同一姿态：settingsProblem 只判「是不是有限数字」，12–24 这个值域在这里夹。
-      setPageFontSize(clampPageFontSize(settings.pageFontSize))
-      setWorkDocPath(settings.workDocPath)
+      // 值域夹紧归 core：settingsProblem 只判「是不是有限数字」，500 这种值会原样进状态、
+      // 再照原样写回磁盘，而第一次按「铺满 −」会从 500 一步跳到 100。
+      replaceSettings({
+        ...loaded,
+        bossFillPercent: clampBossFillPercent(loaded.bossFillPercent),
+        pageFontSize: clampPageFontSize(loaded.pageFontSize)
+      })
       setSettingsLoaded(true)
 
       // 工作文档：**启动时就读进来常驻内存**。老板键要的是零延迟——等按下去了才读盘，
       // 老板已经站在旁边了。读不出来时不弹打扰提示（那会在你早忘了这回事的时候吓你一下），
       // 只在设置里标红，以及按老板键时给一句说明。
-      if (settings.workDocPath) {
-        const doc = await api.loadWorkDoc(settings.workDocPath)
+      if (loaded.workDocPath) {
+        const doc = await api.loadWorkDoc(loaded.workDocPath)
         if (cancelled) return
         if (doc) {
           setWorkNovel(doc)
-          // 与「新导入一本书」同一条路：拿全局比例当初值。
-          //
-          // 【这里读的是刚读回来的 `settings.ratio`，不是 `globalRatioRef.current`】两者本该
-          // 同值，但**那个 ref 在这一次 await 之后还是旧的**：写 ref 发生在渲染期，而上面那几行
-          // `setGlobalRatio(settings.ratio)` 排的那次渲染还没提交，`await api.loadWorkDoc(...)`
-          // 就已经返回了。实测（探针＝把 loadWorkDoc 的桩拖成一个 50ms 的宏任务）：延迟之后比值
-          // 就对上了——所以这不是「值算错了」而是**竞态**，真实 IPC 的耗时碰巧总让 React 先渲染完，
-          // 于是它只在单测里显形。刚读回来的这个值没有这个问题，语义与「拿全局比例当初值」一致。
-          //
-          // 【别为了「两处看起来一致」把这里换回 ref】`openNovel` 必须读 ref，是因为它闭包里
-          // 那个 `globalRatio` 是**首次渲染**时的旧值（它的依赖只有 `flushSession`，见
-          // `globalRatioRef` 那段说明）；而 boot 里 `settings` 就在手边，压根不存在那个问题。
-          // 同一个写法在两个不同前提下会变成教条——这里要的是「当前值」，那里要的是「绕开闭包」。
-          setWorkEngine(new TypingEngine(doc, { ratio: settings.ratio }))
+          // 与「新导入一本书」同一条路：拿全局比例当初值。读刚读回来的那份而不是
+          // `settingsRef`：后者要等这次 setSettings 的渲染提交，而这里隔着一次 await。
+          setWorkEngine(new TypingEngine(doc, { ratio: loaded.ratio }))
         } else {
           // **路径刻意保留**：文件可能只是临时不在，下次启动也许就回来了
           setWorkDocBroken(true)
@@ -680,7 +422,7 @@ export default function App() {
       // 合并成一次之后必须显式写出来——否则「命令行指了一个打不开的文件」会直接落到空状态，
       // 而磁盘上明明有一本上次读的书。去重是为了两处指向同一个路径时不要试两遍。
       const initialPath = await api.initialNovelPath()
-      const targets = [initialPath, settings.lastSourcePath].filter(
+      const targets = [initialPath, loaded.lastSourcePath].filter(
         (p, i, arr): p is string => typeof p === 'string' && p !== '' && arr.indexOf(p) === i
       )
 
@@ -698,8 +440,10 @@ export default function App() {
         try {
           const loaded = await api.openNovelPath(target)
           if (cancelled) return
-          // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 loaded.sourcePath 名下那本书的进度
-          await openNovel(loaded)
+          // 这个目标打不开：试下一个
+          if (!loaded.ok) continue
+          // 「接着读还是从头」交给 openNovel 一个人判——它读的正是 sourcePath 名下那本书的进度
+          await openNovel(loaded.value)
           return
         } catch {
           // 这个目标不可用，试下一个；都不可用就停在空状态，等用户重新导入
@@ -711,7 +455,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [openNovel])
+  }, [openNovel, replaceSettings])
 
   // 菜单命令 → 渲染进程动作
   useEffect(() => {
@@ -771,7 +515,8 @@ export default function App() {
   useShortcutDispatcher({
     platform,
     table: shortcutTable,
-    enabled: !recording,
+    // 对话框开着时也静音：否则 ⌘⇧B 会在对话框后面切书，对话框里的比例还是旧值。
+    enabled: !recording && !settingsOpen,
     actions: {
       import: () => void handleImport(),
       // 【老板模式下不写】收起在那边是**强制覆盖**的（见下面 ChapterList 的 `collapsed`），
@@ -796,10 +541,12 @@ export default function App() {
     const api = getApi()
     if (!engine || !api) return
     const timer = window.setTimeout(() => {
-      void api.saveSession(engine.toSession())
+      void api.saveSession(engine.toSession()).then((r) => {
+        if (!r.ok) notify(`保存阅读进度失败：${r.reason}`)
+      })
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [engine, state])
+  }, [engine, state, notify])
 
   // 设置持久化（防抖）。与会话同一套节奏：600ms 内的连续改动只落盘一次。
   useEffect(() => {
@@ -807,10 +554,12 @@ export default function App() {
     // 读回来之前不写，见 settingsLoaded 的说明
     if (!api || !settingsLoaded) return
     const timer = window.setTimeout(() => {
-      void api.saveSettings(settings)
+      void api.saveSettings(settings).then((r) => {
+        if (!r.ok) notify(`保存设置失败：${r.reason}`)
+      })
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [settings, settingsLoaded])
+  }, [settings, settingsLoaded, notify])
 
   // 关闭前强制落盘
   useEffect(() => {
@@ -819,15 +568,16 @@ export default function App() {
     const flush = (): void => {
       flushSession()
       // 设置也有防抖窗口：改完文档名立刻关窗（或退出）会落在窗口里，关窗前的最后一次补上。
-      const settings = settingsRef.current
-      if (settings) void api.saveSettings(settings)
+      if (!settingsLoadedRef.current) return
+      void api.saveSettings(settingsRef.current).then((r) => {
+        if (!r.ok) console.warn('[wt] 关窗前保存设置失败：', r.reason)
+      })
     }
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
   }, [flushSession])
 
   const visibleText = shownEngine?.visibleText ?? ''
-  const revealedChars = state ? state.cursor - state.revealStart : 0
 
   /**
    * 让阅读区跟着光标滚。
@@ -887,9 +637,9 @@ export default function App() {
     () => ({
       ratio: state?.ratio,
       mode: state?.mode,
-      globalRatio,
+      globalRatio: settings.ratio,
       onRatioChange: (n: number) => shownEngine?.setRatio(n),
-      onGlobalRatioChange: setGlobalRatio,
+      onGlobalRatioChange: (n: number) => patchSettings({ ratio: n }),
       onModeChange: (m: InputMode) => shownEngine?.setMode(m),
       onImport: () => void handleImport(),
       onClearSession: () => void handleClearSession(),
@@ -906,13 +656,25 @@ export default function App() {
     [
       state?.ratio,
       state?.mode,
-      globalRatio,
+      settings.ratio,
       shownEngine,
+      patchSettings,
       handleImport,
       handleClearSession,
       toast,
       notify
     ]
+  )
+
+  /**
+   * 快捷键的提交必须走函数式更新：一次「保存」会在同一个事件里连续提交多条，
+   * 每条都基于同一份旧表就会后写覆盖先写，只有最后一条生效（D1）。
+   */
+  const handleShortcutsChange = useCallback(
+    (update: (prev: (typeof shortcuts)) => typeof shortcuts): void => {
+      patchSettings((prev) => ({ shortcuts: update(prev.shortcuts) }))
+    },
+    [patchSettings]
   )
 
   return (
@@ -921,19 +683,19 @@ export default function App() {
         <Ribbon
           docTitle={docTitle}
           displayTitle={bossActive && workNovel ? workNovel.title : docTitle}
-          onDocTitleChange={setDocTitle}
+          onDocTitleChange={(v) => patchSettings({ docTitle: v })}
           darkPaper={darkPaper}
-          onDarkPaperChange={setDarkPaper}
+          onDarkPaperChange={(v) => patchSettings({ darkPaper: v })}
           themeSource={themeSource}
-          onThemeSourceChange={setThemeSource}
+          onThemeSourceChange={(v) => patchSettings({ themeSource: v })}
           pageFontSize={pageFontSize}
-          onPageFontSizeChange={setPageFontSize}
+          onPageFontSizeChange={(v) => patchSettings({ pageFontSize: v })}
           novelOpen={shownNovel !== null}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           shortcuts={shortcuts}
           platform={platform}
-          onShortcutsChange={setShortcuts}
+          onShortcutsChange={handleShortcutsChange}
           onRecordingChange={setRecording}
           workDocTitle={workNovel?.title ?? null}
           workDocPath={workDocPath}
@@ -978,7 +740,7 @@ export default function App() {
 
         <StatusBar
           novel={shownNovel}
-          revealedChars={revealedChars}
+          cursor={state?.cursor ?? 0}
           activeChapter={state?.activeChapter ?? 0}
           ratio={state?.ratio ?? 10}
           mode={state?.mode ?? 'ime'}

@@ -6,7 +6,7 @@ import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import type { WtApi } from '../../src/core/api'
 
 /** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
 const FILL_CHARS = fillCharsFor(100)
@@ -69,8 +69,10 @@ function installApi(
     // importWorkDoc / loadWorkDoc）。**只补它**——那两个已经在下头，再写一遍就是对象字面量
     // 重复键（TS1117）。
     platform: 'darwin',
-    importNovel: vi.fn(async () => novel),
-    openNovelPath: vi.fn(async () => novel as Novel),
+    importNovel: vi.fn(async () =>
+      novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
+    ),
+    openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
     initialNovelPath: vi.fn(async () => null),
     loadSession: vi.fn(async (sourcePath: string) => {
       sessionAskedFor = sourcePath
@@ -78,8 +80,9 @@ function installApi(
     }),
     saveSession: vi.fn(async (s: PersistedSession) => {
       saved = s
+      return { ok: true as const, value: undefined }
     }),
-    clearSession: vi.fn(async () => {}),
+    clearSession: vi.fn(async () => ({ ok: true as const, value: undefined })),
     /**
      * 【默认桩刻意不指任何书】`lastSourcePath` 是启动恢复的唯一线索，给成 null 就等于
      * 「用户上次什么都没打开」——启动什么都不开。于是凡是要有书的用例**都必须自己走导入路径**
@@ -90,14 +93,16 @@ function installApi(
      * 需要「设置指路 → 启动恢复」那一条路径的用例（目前只有一条）在自己的体内显式覆盖它。
      */
     loadSettings: vi.fn(async () => settings),
-    saveSettings: vi.fn(async () => {}),
+    saveSettings: vi.fn(async () => ({ ok: true as const, value: undefined })),
     onMenuCommand: vi.fn(() => () => {}),
     getTheme: vi.fn(async () => false),
-    setThemeSource: vi.fn(async () => {}),
+    setThemeSource: vi.fn(async () => ({ ok: true as const, value: undefined })),
     onThemeChange: vi.fn(() => () => {}),
     // 【工作文档这两条是本次新加的】它刻意与小说那条路**不共用**：小说走 openNovelPath
     // （会读会话、会写缓存），工作文档只走 loadWorkDoc（两者都不做）。
-    importWorkDoc: vi.fn(async () => workDoc),
+    importWorkDoc: vi.fn(async () =>
+      workDoc ? { ok: true as const, value: workDoc } : { ok: false as const, reason: 'canceled' }
+    ),
     loadWorkDoc: loadWorkDocMock,
     // 【Task 9 补的第三个有闸的替身】本文件这个对象字面量的目标类型是 `WtApi`（见上面那段
     // 说明），所以少写一个成员同样报 TS2741——计划 Task 9 Step 6 只点了 `tests/setup.ts`
@@ -283,8 +288,10 @@ describe('App 端到端（单测层）', () => {
     }))
     ;(window.api as unknown as { openNovelPath: unknown }).openNovelPath = vi.fn(
       async (p: string) => {
-        if (p === '/tmp/打不开.txt') throw new Error('模拟：命令行指的文件打不开')
-        return novel
+        if (p === '/tmp/打不开.txt') {
+          return { ok: false as const, reason: '模拟：命令行指的文件打不开' }
+        }
+        return { ok: true as const, value: novel }
       }
     )
 
@@ -426,7 +433,10 @@ describe('设置的持久化', () => {
   // 少了它，一个「防抖根本没接上」的实现也能让第一段绿。
   it('读回设置之前不写盘（否则会用自己的默认值覆盖磁盘）', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     let release: (s: AppSettings) => void = () => {}
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(
       () =>
@@ -475,7 +485,10 @@ describe('设置的持久化', () => {
   // 在补上本条之前全套 372 条**照样全绿**，补上之后这一条单独变红。
   it('磁盘上的 workDocPath / bossFillPercent 原样写回，不被默认值冲掉', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
       ...defaultSettings(),
       workDocPath: '/tmp/周报.txt',
@@ -498,7 +511,10 @@ describe('设置的持久化', () => {
   // 实测（变异＝把那一夹去掉）：在补上本条之前全套 373 条**照样全绿**。
   it('磁盘上超出值域的 bossFillPercent 进状态时就夹紧，写回的也是夹紧后的值', async () => {
     installApi(null)
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { loadSettings: unknown }).loadSettings = vi.fn(async () => ({
       ...defaultSettings(),
       bossFillPercent: 500
@@ -513,7 +529,10 @@ describe('设置的持久化', () => {
 
   it('改了文档名之后会把设置写回去', async () => {
     installApi(makeNovel())
-    const saveSettings = vi.fn(async (_settings: AppSettings) => {})
+    const saveSettings = vi.fn(async (_settings: AppSettings) => ({
+      ok: true as const,
+      value: undefined
+    }))
     ;(window.api as unknown as { saveSettings: unknown }).saveSettings = saveSettings
     render(<App />)
     // 【先让启动那一次设置读盘落地】它是异步的，而下面几步是同步点击。少了这一句，
@@ -732,12 +751,16 @@ describe('快捷键接线', () => {
     render(<App />)
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
-    openSettings()
 
     // 【前提自检：没在录制时这条键是好使的】少了它，一个「分发器压根没接上」的实现
     // （按什么都没反应）也能让下面那两段绿。
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
     expect(screen.queryByTestId('chapter-list')).toBeNull()
+    fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+
+    openSettings()
+    // 对话框开着时分发器整体静音：⌘⇧B / Ctrl+Shift+H 这类动作不能绕过模态改后面的状态。
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
     expect(screen.getByTestId('chapter-list')).toBeTruthy()
 
@@ -794,6 +817,41 @@ describe('快捷键接线', () => {
     // 新键当场生效（旧的那条 Ctrl+O 此后不该再有反应——上面那条用例已经钉了反向的一半）
     fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
     await waitFor(() => expect(screen.getByTestId('page-text')).toBeTruthy())
+  })
+
+  it('一次保存改两条快捷键：两条都生效（字段级 commit 不能基于同一份旧表）', async () => {
+    installApi(makeNovel())
+    setPlatformWin32()
+    render(<App />)
+    await act(async () => {})
+    openSettings()
+
+    const importBox = screen.getByTestId('shortcut-import-input')
+    fireEvent.click(importBox)
+    fireEvent.keyDown(importBox, { code: 'KeyJ', ctrlKey: true })
+    const sidebarBox = screen.getByTestId('shortcut-toggle-sidebar-input')
+    fireEvent.click(sidebarBox)
+    fireEvent.keyDown(sidebarBox, { code: 'KeyK', ctrlKey: true, altKey: true })
+    expect(sidebarBox.textContent).toBe('Ctrl+Alt+K')
+
+    // 同一个事件里连续提交两条，然后只点一次保存
+    fireEvent.click(screen.getByTestId('settings-save'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as { mock: { calls: AppSettings[][] } }
+    const last = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
+    expect(last.shortcuts).toEqual({ import: 'Ctrl+KeyJ', 'toggle-sidebar': 'Ctrl+Alt+KeyK' })
+
+    // 两条都真的生效：一条触发导入、一条收起章节栏
+    const importNovel = window.api.importNovel as unknown as { mock: { calls: unknown[] } }
+    const before = importNovel.mock.calls.length
+    fireEvent.keyDown(window, { code: 'KeyJ', ctrlKey: true })
+    await waitFor(() => expect(importNovel.mock.calls.length).toBe(before + 1))
+    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    fireEvent.keyDown(window, { code: 'KeyK', ctrlKey: true, altKey: true })
+    expect(screen.queryByTestId('chapter-list')).toBeNull()
   })
 })
 

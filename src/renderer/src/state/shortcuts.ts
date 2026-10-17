@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { getApi } from '../api'
 import {
   SHORTCUTS,
   defaultShortcut,
@@ -48,8 +49,7 @@ export function toChord(e: KeyboardEvent): KeyChord | null {
  * 对方的祖先。写得只有两行，比为此把它们拧成依赖关系划算。
  */
 function hostPlatform(): string {
-  const host = (window as unknown as { api?: { platform?: string } }).api
-  return host?.platform ?? 'other'
+  return getApi()?.platform ?? 'other'
 }
 
 /**

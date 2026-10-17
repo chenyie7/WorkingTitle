@@ -2,7 +2,8 @@ import type { InputMode, Novel } from '../../../core/types'
 
 export interface StatusBarProps {
   novel: Novel | null
-  revealedChars: number
+  /** 阅读游标在全书 flatText 里的下标。进度必须按它算，不能按当前显示窗口的长度算。 */
+  cursor: number
   activeChapter: number
   ratio: number
   mode: InputMode
@@ -39,7 +40,7 @@ export interface StatusBarProps {
  */
 export function StatusBar({
   novel,
-  revealedChars,
+  cursor,
   activeChapter,
   ratio,
   mode,
@@ -47,7 +48,8 @@ export function StatusBar({
 }: StatusBarProps) {
   const totalChars = novel?.flatText.length ?? 0
   const totalChapters = novel?.chapters.length ?? 0
-  const percent = totalChars === 0 ? 0 : Math.floor((revealedChars / totalChars) * 100)
+  // 跳章会把 revealStart 抬到章首；按 cursor - revealStart 算，进度会退成「章内偏移 ÷ 全书」。
+  const percent = totalChars === 0 ? 0 : Math.floor((cursor / totalChars) * 100)
 
   return (
     <div className="wt-statusbar" data-testid="statusbar">

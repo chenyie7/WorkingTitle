@@ -13,7 +13,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node", "vitest/globals"]
+    "types": []
   },
-  "include": ["src/renderer/src", "src/core", "tests"]
+  "include": ["src/renderer/src", "src/core"],
+  "exclude": ["src/core/decode.ts"]
 }

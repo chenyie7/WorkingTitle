@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import type { Root } from 'mdast'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
-import { clipTree, WT_BLANK_LINES, WT_BLANK_ROWS } from '../../src/renderer/src/markdown/clip'
+import { clipTree } from '../../src/renderer/src/markdown/clip'
+import { setBlankCount, setValueStart } from '../../src/renderer/src/markdown/nodeMeta'
 import { renderMarkdown } from '../../src/renderer/src/markdown/toReact'
+import type { WtApi } from '../../src/core/api'
 
 /** 把 md 渲染进一个容器，返回容器本身——断言一律用 querySelector / textContent。 */
 function dom(md: string): HTMLElement {
@@ -199,11 +201,14 @@ describe('renderMarkdown —— 行内 HTML（合并兄弟节点）', () => {
  * 比串起 clipTree 更小、也更能指名道姓。
  */
 describe('renderMarkdown —— 未揭示部分的占位', () => {
-  function withBlank(node: Record<string, unknown>, field: string, n: number): Root {
-    return {
-      type: 'root',
-      children: [{ position: { start: { offset: 0 }, end: { offset: 10 } }, ...node, [field]: n }]
-    } as unknown as Root
+  function withBlank(
+    node: Record<string, unknown>,
+    kind: 'lines' | 'rows',
+    n: number
+  ): Root {
+    const child = { position: { start: { offset: 0 }, end: { offset: 10 } }, ...node }
+    setBlankCount(child, kind, n)
+    return { type: 'root', children: [child] } as unknown as Root
   }
 
   it('表格有剩余行时：表格之后多出一块空白，且不带任何网格线', () => {
@@ -217,7 +222,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
           }
         ]
       },
-      WT_BLANK_ROWS,
+      'rows',
       2
     )
     const c = render(<>{renderMarkdown(doc)}</>).container
@@ -241,7 +246,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
           }
         ]
       },
-      WT_BLANK_ROWS,
+      'rows',
       0
     )
     const c = render(<>{renderMarkdown(doc)}</>).container
@@ -249,7 +254,7 @@ describe('renderMarkdown —— 未揭示部分的占位', () => {
   })
 
   it('代码块有未揭示的行时：代码框之后多出一块空白', () => {
-    const doc = withBlank({ type: 'code', value: '第一行' }, WT_BLANK_LINES, 2)
+    const doc = withBlank({ type: 'code', value: '第一行' }, 'lines', 2)
     const c = render(<>{renderMarkdown(doc)}</>).container
     const blank = c.querySelector('.wt-md-pre-blank')
     expect(blank).not.toBeNull()
@@ -365,23 +370,19 @@ describe('renderMarkdown —— 阅读光标', () => {
   })
 
   it('光标插进代码框里，而不是掉到框下面', () => {
-    const doc = {
-      type: 'root',
-      children: [
-        {
-          type: 'code',
-          value: '第一行',
-          position: { start: { offset: 0 }, end: { offset: 10 } },
-          wtValueStart: 4
-        }
-      ]
-    } as unknown as Root
+    const code = {
+      type: 'code',
+      value: '第一行',
+      position: { start: { offset: 0 }, end: { offset: 10 } }
+    }
+    setValueStart(code, 4)
+    const doc = { type: 'root', children: [code] } as unknown as Root
     const c = render(<>{renderMarkdown(doc, { caretAt: 6 })}</>).container
     const pre = c.querySelector('pre')!
     expect(pre.textContent).toBe('第一行')
     const caret = pre.querySelector('[data-testid="caret"]')
     expect(caret).not.toBeNull()
-    // `caretAt: 6`、`wtValueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
+    // `caretAt: 6`、`valueStart: 4` ⇒ `at = clamp(6 − 4, 0, 3) = 2` ⇒ 切成 ['第一', '行']
     // 【这两个字面量差一个字符就整条失效】原计划写的是 `'第'` / `'一行'`，
     // 那与实现自相矛盾——实施者量出来了。这条用例的真正作用是**守住 `origin`**。
     expect(caret!.previousSibling!.textContent).toBe('第一')
@@ -397,7 +398,7 @@ describe('renderMarkdown —— 阅读光标', () => {
  * 落到占位之后、下一行、或图的右边——而**隐形输入框与输入法候选框都按这个坐标摆**。
  *
  * 【为什么必须走真管线】缺陷正出在 `clip` 与 `toReact` 的**接缝**上：手工造树造不出
- * `clip` 写的 `wtValueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
+ * `clip` 写的 `valueStart` 与占位计数的真实取值。这是本文件第一次跑完整链路。
  *
  * 【实现者注意】下面每个 `to` 都要**先确认它在旧代码上真的红**（Step 2 那一步），
  * 落点不对就自己找一个能复现的偏移并**在报告里写清实测数**——别为了让用例变绿去改断言。
@@ -664,7 +665,7 @@ describe('renderMarkdown —— 光标的落点（真管线）', () => {
  * 【夹具为什么是这六份】前四份是计划 Step 1 给的，第六份是评审那张表里「表格尾部 32–35」
  * 对应的夹具（那份表的数字只有它对得上）；第五份（**单行**的那种容器里的围栏）是补的：
  * 计划那张表把「容器里的代码 3–7」列为坏格，而**多行**围栏（计划 Step 1 用的那份）实测
- * 一格都不坏——`wtBlankLines > 0`，占位自己接住了光标（那是 Step 5 要回归的口径）。
+ * 一格都不坏——`blankCountOf(node, 'lines') > 0`，占位自己接住了光标（那是 Step 5 要回归的口径）。
  * 坏格的机制是「`code` 的 `value` 为空、内容起点在揭示偏移之后、**围栏里没有第二行可留白**」，
  * 所以复现它要用单行的那种。
  */
@@ -881,5 +882,51 @@ describe('合并串上的链尾（真管线，逐偏移）', () => {
       const caret = c.querySelector('[data-testid="caret"]') as HTMLElement
       expect(caret.parentElement, `to=${to} 掉到块下方`).not.toBe(c)
     }
+  })
+})
+
+/**
+ * 量高度那一份走 layoutOnly：不挂真实图片（不触发取图 IPC，设计 8.2）、不插光标，
+ * 但仍要保留每个顶层块的包装与块结束偏移，`measureBlocks` 的 offsetTop 差分才成立。
+ */
+describe('renderMarkdown —— layoutOnly（量高度那一份）', () => {
+  function installImageApi(): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(async () => 'data:image/png;base64,AAA')
+    ;(window as unknown as { api: WtApi }).api = {
+      ...(window.api as WtApi),
+      loadWorkDocImage: spy
+    }
+    return spy
+  }
+
+  it('图片只画占位，不挂 MarkdownImage、不发取图 IPC', () => {
+    const spy = installImageApi()
+    const doc = parseMarkdown('甲 ![图](a.png) 乙\n')!
+    const c = render(
+      <div>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}</div>
+    ).container
+    expect(c.querySelectorAll('img')).toHaveLength(0)
+    expect(c.querySelector('.wt-md-img')!.getAttribute('data-src')).toBe('a.png')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('不插光标（即使调用方传了 caretAt）', () => {
+    const doc = parseMarkdown('甲乙丙\n')!
+    const c = render(
+      <>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true, caretAt: 2 })}</>
+    ).container
+    expect(c.querySelectorAll('[data-testid="caret"]')).toHaveLength(0)
+  })
+
+  it('每个顶层块仍有带块结束偏移的包装', () => {
+    const doc = parseMarkdown('# 标题\n\n[a]: https://example.com\n\n正文\n')!
+    const c = render(
+      <div>{renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}</div>
+    ).container
+    const wrappers = Array.from(c.firstElementChild!.children)
+    expect(wrappers).toHaveLength(doc.children.length)
+    wrappers.forEach((el, i) => {
+      expect(el.getAttribute('data-block-end')).toBe(String(doc.children[i].position?.end.offset))
+    })
   })
 })

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
-import { MarkdownImage } from '../../src/renderer/src/markdown/MarkdownImage'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import { MarkdownImage, clearMarkdownImageCache } from '../../src/renderer/src/markdown/MarkdownImage'
+import type { WtApi } from '../../src/core/api'
 
 function install(load: (src: string) => Promise<string | null>): ReturnType<typeof vi.fn> {
   const spy = vi.fn(load)
@@ -11,6 +11,7 @@ function install(load: (src: string) => Promise<string | null>): ReturnType<type
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  clearMarkdownImageCache()
 })
 
 // 【每个用例用自己的地址，别复用】缓存是**模块级、跨用例存活**的（设计 8.4 要求它

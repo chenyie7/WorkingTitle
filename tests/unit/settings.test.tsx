@@ -9,7 +9,7 @@ import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
 import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
-import type { ThemeSource } from '../../src/renderer/src/types/global'
+import type { ThemeSource } from '../../src/core/types'
 
 interface SetupOptions {
   ratio?: number
@@ -35,7 +35,9 @@ interface SetupOptions {
    */
   shortcuts?: Record<string, string>
   platform?: string
-  onShortcutsChange?: (next: Record<string, string | undefined>) => void
+  onShortcutsChange?: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   /** 观察录制态的上报（壳里同时把它接进分发器的 enabled） */
   onRecordingChange?: (recording: boolean) => void
   /** 阅读区正文字号。不传＝默认值（`PAGE_FONT_SIZE_DEFAULT`） */
@@ -926,9 +928,10 @@ describe('设置里的快捷键录制', () => {
     fireEvent.keyDown(screen.getByTestId('shortcut-import-input'), { code: 'KeyI', ctrlKey: true })
     expect(onShortcutsChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('settings-save'))
-    expect(onShortcutsChange).toHaveBeenCalledWith(
-      expect.objectContaining({ import: 'Ctrl+KeyI' })
-    )
+    const update = onShortcutsChange.mock.calls.at(-1)![0] as (
+      prev: Record<string, string | undefined>
+    ) => Record<string, string | undefined>
+    expect(update({})).toEqual(expect.objectContaining({ import: 'Ctrl+KeyI' }))
   })
 
   it('↺ 恢复该平台默认值，并且这一条从稀疏表里消失', () => {
@@ -942,9 +945,11 @@ describe('设置里的快捷键录制', () => {
     expect(screen.getByTestId('shortcut-import-input').textContent).toContain('Ctrl+O')
 
     fireEvent.click(screen.getByTestId('settings-save'))
-    // ……而且「和默认一样」时不该写进稀疏表：`{}` ＝ 全默认。稀疏表里「显式写回默认值」
-    // 与「从未改过」对读取方完全没区别，没有理由把表撑大。
-    expect(onShortcutsChange).toHaveBeenCalledWith({})
+    // ……而且「和默认一样」时不该写进稀疏表：`{}` ＝ 全默认。
+    const update = onShortcutsChange.mock.calls.at(-1)![0] as (
+      prev: Record<string, string | undefined>
+    ) => Record<string, string | undefined>
+    expect(update({ import: 'Ctrl+KeyI' })).toEqual({})
   })
 
   it('录制期间分发器必须静音——否则录 ⌘O 会当场触发一次真导入', () => {

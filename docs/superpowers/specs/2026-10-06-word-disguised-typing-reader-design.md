@@ -139,19 +139,30 @@ src/
 ### IPC 契约
 
 ```ts
-// preload 暴露为 window.api
+// preload 暴露为 window.api；权威类型在 src/core/api.ts 的 WtApi
+type IpcResult<T> = { ok: true; value: T } | { ok: false; reason: string }
+
 interface Api {
-  importNovel(): Promise<Novel | null>       // null = 用户取消
-  openNovelPath(path: string): Promise<Novel>
+  platform: string
+  importNovel(): Promise<IpcResult<Novel>>          // reason === 'canceled' = 用户取消
+  importWorkDoc(): Promise<IpcResult<Novel>>
+  loadWorkDoc(path: string): Promise<Novel | null>   // 读不出来是正常路径
+  loadWorkDocImage(src: string): Promise<string | null>
+  openNovelPath(path: string): Promise<IpcResult<Novel>>
   initialNovelPath(): Promise<string | null>
   loadSession(sourcePath: string): Promise<PersistedSession | null>  // 按书取：进度每本书一份
-  saveSession(s: PersistedSession): Promise<void>
-  clearSession(): Promise<void>              // = 清阅读历史；设置刻意保留，见 §8
-  loadSettings(): Promise<AppSettings>       // 文档名 / 外观 / 纸张 / 上次打开的是哪本
-  saveSettings(s: AppSettings): Promise<void>
+  saveSession(s: PersistedSession): Promise<IpcResult<void>>
+  clearSession(): Promise<IpcResult<void>>           // = 清阅读历史；设置刻意保留，见 §8
+  loadSettings(): Promise<AppSettings>               // 文档名 / 外观 / 纸张 / 上次打开的是哪本
+  saveSettings(s: AppSettings): Promise<IpcResult<void>>
+  getTheme(): Promise<boolean>
+  setThemeSource(source: ThemeSource): Promise<IpcResult<void>>
   onMenuCommand(cb: (cmd: MenuCommand) => void): () => void
+  onThemeChange(cb: (dark: boolean) => void): () => void
 }
 ```
+
+**写通道先校验再落盘，并返回结果（2026-10-17 评审修正）。** `saveSession` / `saveSettings` / `clearSession` 的载荷在 `main` 侧按与读盘同一套校验器逐字段检查，不合格的不落盘并把字段名放进 `reason`；渲染层对失败弹 toast，不再用 `void` 把 Promise 丢掉。类型是 `src/core/api.ts` 里的 `WtApi`：preload 的对象字面量以它为目标类型（少写/多写编译期报错），渲染层只经 `getApi()` 一个出口取。
 
 `MenuCommand` 覆盖原生菜单项（`import-novel` / `about` / `toggle-devtools` 等），供主进程菜单与渲染进程 Ribbon 联动。
 
@@ -223,6 +234,8 @@ A4 纸样式：白底、圆角、投影、衬线字体（`Georgia` / `宋体` �
 `已显示 12,340 / 全书 328,000 字` · `第 12 章 / 共 87 章` · `比例 1:10` · `编码 UTF-8` · `输入模式 输入法` · `用时 00:42:13` · 右侧页码样式的百分比。
 
 空状态（未导入）显示引导文案：「文件 → 设置 → 导入小说，或按 Ctrl+O」。
+
+**右侧百分比按 `cursor / flatText.length` 算（2026-10-17 评审修正）。** 不能按 `cursor - revealStart`（当前显示窗口长度）算：跳章会把 `revealStart` 抬到章首，那样一个「1201 / 1382、0%」的错状态会同时写进会话，重启后继续错。`revealStart` 只留给折叠逻辑。
 
 ### 5.6 设置对话框
 
@@ -299,14 +312,19 @@ A4 纸样式：白底、圆角、投影、衬线字体（`Georgia` / `宋体` �
 
 > 曾有一处说法称「原始 CRLF 会让 `flatText !== 源文件`」——**实测不成立**。`split('\n')` 会**保留** `\r`，而拼接时补的那个 `\n` 正好补全 `\r\n`，所以 CRLF 反而逐字还原；真正被 join 丢掉的是分隔用的 `\n`。穷举 36 种 CRLF 形状后，原始 CRLF 与归一化输入的结论**逐例相同**，失真的那些格全部是「文件以空白行开头 → 前言被 `kept` 丢弃」，与换行种类无关。
 
-**标题正则**（命中即视为章节标题）：
+**标题正则**（命中即视为章节标题；量的是 `line.trim()`，trim 后超过 40 字一律不算）：
 
 ```
-/^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇]\s*.{0,40}$/
-/^\s*(?:序章|楔子|尾声|后记|前言|引子|番外)\s*.{0,40}$/
-/^\s*Chapter\s+\d+.*$/i
-/^\s*[0-9]{1,4}\s*[、.．]\s*.{0,40}$/
+/^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/
+/^\s*(?:序章|楔子|尾声|后记|前言|引子|番外)(?:[0-9零一二三四五六七八九十]+|[\s　]+\S.{0,30})?\s*$/
+/^\s*chapter\s+\d+.*$/i
+/^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
 ```
+
+**句读闸门只作用于最后一条（数字 + 顿号）。** 那一条没有强前缀，`1．他说道，这是第一章。` 与
+`1、开端` 形状相同，只能靠 `。！？；，` 区分——所以数字 + 顿号开头的行里带句读就不算标题。
+前三条的前缀本身已锁定「这是标题」，副标题里的标点照常识别（「第一章 风起，云涌」是标题；
+它此前被一个不分模式的标点闸门误伤，整本书会退化成单章节）。
 
 **切分规则**：
 

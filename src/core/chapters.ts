@@ -2,7 +2,7 @@ import type { Chapter } from './types'
 
 export const PREAMBLE_TITLE = '前言'
 
-/** 正文里常见的句读符号：标题行不会包含它们 */
+/** 正文里常见的句读符号。编号正文与编号标题只靠它区分，见 isChapterTitle。 */
 const SENTENCE_PUNCT = /[。！？；，]/
 
 /**
@@ -14,6 +14,9 @@ const SENTENCE_PUNCT = /[。！？；，]/
  */
 const MAX_TITLE_LEN = 40
 
+/** 「数字 + 顿号」没有强前缀，只能靠句读与编号正文区分；单独取出，闸门只对它生效。 */
+const NUMBERED_TITLE = /^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
+
 /**
  * 【每个模式都不得带 /g 或 /y】——这条靠注释与评审守，类型系统守不住。
  *
@@ -23,7 +26,7 @@ const MAX_TITLE_LEN = 40
  *
  * 下面的 readonly 挡不住这件事：它只能阻止往表里 push、或对元素重新赋值，管不到
  * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
- * readonly 守的是另一件小事（别往这张表里塞模式）。
+ * readonly 守的是另一件小事（别往这张表里塞模式）。表外的 NUMBERED_TITLE 同样受这条约束。
  */
 const TITLE_PATTERNS: readonly RegExp[] = [
   // 第一章 / 第 12 章 / 第十二章 / 第一百零八回 / 第3节
@@ -34,13 +37,14 @@ const TITLE_PATTERNS: readonly RegExp[] = [
   // Chapter 3 The Beginning
   /^\s*chapter\s+\d+.*$/i,
   // 1、开端 / 12．转折
-  /^\s*[0-9]{1,4}\s*[、.．]\s*\S.{0,30}$/
+  NUMBERED_TITLE
 ]
 
 export function isChapterTitle(line: string): boolean {
   const t = line.trim()
   if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
-  if (SENTENCE_PUNCT.test(t)) return false
+  // 句读闸门只作用于数字 + 顿号那条：前三条的强前缀足够与正文区分，副标题允许带标点。
+  if (SENTENCE_PUNCT.test(t) && NUMBERED_TITLE.test(t)) return false
   return TITLE_PATTERNS.some((re) => re.test(t))
 }
 

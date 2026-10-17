@@ -1,19 +1,12 @@
 import type { BlockHeight } from './fill'
 
 /**
- * 每个顶层块在「量高度用的那一份隐藏副本」里带的结束偏移属性。
+ * 每个顶层块在「量高度用的那一份隐藏副本」里带的结束偏移属性。**`toReact.tsx` 直接 import 它**。
  *
- * 【为什么偏移写在 DOM 上，而不是另外算一份数组传进来】「有几个块」如果由两处各自决定，
- * 就永远能对不上——而这里的判据是「对不上就整篇退回按字符数铺」，于是对不上是**静默**的。
- * 实测能触发它的两种节点：
- * - `definition`（`[a]: https://example.com`，真 md 里很常见）走 `renderMarkdown` 的
- *   `default` 分支渲染成 `null`，**零个 Element**；
- * - 只含注释 / `<script>` 的 HTML 块，`tokenizeHtml` 白名单过滤之后产物只剩文本子节点，
- *   而 `container.children` **只数 Element、不数文本**。
- *
- * 两种都让 DOM 的直接子元素比「块」少一个。现在每个顶层块由
- * `renderMarkdown(root, { withBlockEnds: true })` 套一层带偏移的包装，一一对应由构造保证。
- * **渲染与测量共用这一个常量，改名要同步 `toReact.tsx`。**
+ * 【偏移写在 DOM 上】「有几个块」若由两处各自决定，就永远能对不上，而对不上的判据是
+ * 「整篇静默退回按字符数铺」。渲染成 `null` 的 `definition`、白名单过滤后只剩文本的 HTML 块
+ * 都会让 DOM 子元素比块少，所以每个顶层块由 `renderMarkdown(..., { withBlockEnds: true })`
+ * 套一层带偏移的包装，一一对应由构造保证。
  */
 export const BLOCK_END_ATTR = 'data-block-end'
 

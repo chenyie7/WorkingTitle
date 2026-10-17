@@ -32,7 +32,7 @@ import {
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
-import type { ThemeSource } from '../types/global'
+import type { ThemeSource } from '../../../core/types'
 import {
   IconBook,
   IconClear,
@@ -92,7 +92,10 @@ export interface SettingsDialogProps {
   /** 平台原值（`window.api.platform`），用来决定 ↺ 恢复成哪一套默认值。 */
   platform: string
   /** 快捷键改完的提交。与文档名一样，点了保存才生效。 */
-  onShortcutsChange: (next: Record<string, string | undefined>) => void
+  /** 函数式更新：一次保存会连续提交多条，基于旧表各自覆盖会只剩最后一条。 */
+  onShortcutsChange: (
+    update: (prev: Record<string, string | undefined>) => Record<string, string | undefined>
+  ) => void
   /**
    * 录制态变化时通知外面。
    * 【为什么必须通知】录制期间分发器必须静音——不然录 `⌘O` 会当场触发一次真导入，
@@ -343,13 +346,13 @@ export function SettingsDialog({
         // 草稿可能是「录制中」这个状态，此时不留任何东西；真出草稿时它一定已经是合法规范串
         normalize: (raw, committed) => (raw === '' ? committed : raw),
         commit: (value) => {
-          // 【与默认值相同时把这一条抹掉】稀疏表里「显式写回默认值」与「从未改过」对读取方
-          // 完全没有区别（`resolveShortcuts` 两者都落到同一个默认值），那就没有理由把表撑大。
-          // 点 ↺ 之后这一条消失，正是这个意思。
-          const next = { ...shortcuts }
-          if (value === defaultShortcut(def.id, kind)) delete next[def.id]
-          else next[def.id] = value
-          onShortcutsChange(next)
+          // 与默认值相同时把这一条抹掉：稀疏表里「显式写回默认值」与「从未改过」等价。
+          onShortcutsChange((prev) => {
+            const next = { ...prev }
+            if (value === defaultShortcut(def.id, kind)) delete next[def.id]
+            else next[def.id] = value
+            return next
+          })
         }
       }))
     ],
@@ -478,7 +481,8 @@ export function SettingsDialog({
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
+      // 合成中的 Esc 是输入法自己的（取消候选），不是关对话框
+      if (e.key !== 'Escape' || e.isComposing) return
       onClose()
     }
     window.addEventListener('keydown', onKeyDown)
@@ -614,7 +618,8 @@ export function SettingsDialog({
                   onBlur={() => blur('doc-title')}
                   // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
+                    // 合成中的 Enter 是选词，不是保存
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                   }}
                 />
               </div>
@@ -642,7 +647,7 @@ export function SettingsDialog({
                       onChange={(e) => setDraft('global-ratio', e.target.value)}
                       onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSave()
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                       }}
                     />
                     <span className="wt-ratio__label">字</span>
@@ -662,7 +667,7 @@ export function SettingsDialog({
                       onChange={(e) => setDraft('ratio', e.target.value)}
                       onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSave()
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                       }}
                     />
                     <span className="wt-ratio__label">字</span>
@@ -717,7 +722,8 @@ export function SettingsDialog({
                     '字号'
                   )}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
+                    // 合成中的 Enter 是选词，不是保存
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSave()
                   }}
                 />
                 <span className="wt-ratio__label">px</span>

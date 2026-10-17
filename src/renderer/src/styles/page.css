@@ -65,6 +65,9 @@
   white-space: pre-wrap;
   word-break: break-word;
   min-height: 40px;
+  /* 隐藏的测量副本是 absolute + width:100%。没有这一行，它的包含块是 .wt-page（794px），
+     而可见正文只有 626px——副本折行更少，量出的块高系统性偏小。 */
+  position: relative;
 }
 
 .wt-caret {

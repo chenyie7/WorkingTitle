@@ -275,3 +275,35 @@ test('重启后恢复到上次阅读位置，无需重新输入', async () => {
 
   await expect.poll(revealed).toBe(40)
 })
+
+test('preload 暴露的接口与渲染层契约一致（进程边界的运行期闸）', async () => {
+  // 类型闸（preload 的对象字面量 : WtApi）只在编译期；这里钉住真机上确实挂出了同一组方法。
+  const surface = await win.evaluate(() => {
+    const raw = (window as unknown as { api?: Record<string, unknown> }).api
+    if (!raw) return null
+    return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, typeof v]))
+  })
+  expect(surface).not.toBeNull()
+  const expected: Record<string, string> = {
+    platform: 'string',
+    importNovel: 'function',
+    importWorkDoc: 'function',
+    loadWorkDoc: 'function',
+    loadWorkDocImage: 'function',
+    openNovelPath: 'function',
+    initialNovelPath: 'function',
+    loadSession: 'function',
+    saveSession: 'function',
+    clearSession: 'function',
+    loadSettings: 'function',
+    saveSettings: 'function',
+    onMenuCommand: 'function',
+    getTheme: 'function',
+    setThemeSource: 'function',
+    onThemeChange: 'function'
+  }
+  expect(Object.keys(surface!).sort()).toEqual(Object.keys(expected).sort())
+  for (const [key, kind] of Object.entries(expected)) {
+    expect(surface![key]).toBe(kind)
+  }
+})

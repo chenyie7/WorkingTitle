@@ -43,7 +43,11 @@ export function MarkdownView({
   measuring,
   onMeasureNode
 }: MarkdownViewProps): ReactNode {
-  const visible = useMemo(() => clipTree(doc, foldStart, cursor), [doc, foldStart, cursor])
+  // 折点不得越过光标：越过时窗口是空的，页面只剩折叠条。
+  const visible = useMemo(
+    () => clipTree(doc, Math.min(foldStart, cursor), cursor),
+    [doc, foldStart, cursor]
+  )
   return (
     <>
       {/*
@@ -56,14 +60,11 @@ export function MarkdownView({
       {measuring && (
         <div className="wt-md-measure" ref={onMeasureNode} aria-hidden="true">
           {/*
-            【`withBlockEnds` 是这一份副本独有的】它给每个顶层块套一层带
-            `data-block-end` 的包装。这样「有几个块」就只由渲染这一处决定——
-            渲染出 null 的节点（`definition`，即 `[a]: url` 那种链接引用定义，
-            真 md 里很常见）照样有一个包装、高度 0。少了这一层，「DOM 子元素个数」
-            与「外部数组长度」是两处各自决定的，永远能对不上，而对不上的后果是
-            **整篇静默退回按字符数铺**：不报错、不白屏，只有真机上铺不满才看得出来。
+            【layoutOnly】量高度不挂真实图片：一挂就触发取图 IPC，未揭示的图也会被提前请求
+            （设计 8.2）。【withBlockEnds】每个顶层块一个带 `data-block-end` 的包装，
+            「有几个块」只由渲染这一处决定，`measureBlocks` 的 offsetTop 差分才成立。
           */}
-          {renderMarkdown(doc, { withBlockEnds: true })}
+          {renderMarkdown(doc, { withBlockEnds: true, layoutOnly: true })}
         </div>
       )}
     </>

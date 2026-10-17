@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { Page, type MarkdownSource } from '../../src/renderer/src/components/Page'
+import { MarkdownView } from '../../src/renderer/src/markdown/MarkdownView'
 import { parseMarkdown } from '../../src/renderer/src/markdown/parse'
+import type { WtApi } from '../../src/core/api'
 
 const DOC = ['# 季度汇报', '', '本季度共归档 3 项。', '', '- 归档流程上线', '- 复核环节压缩到 2 天'].join('\n')
 
@@ -115,6 +117,69 @@ describe('Page —— md 分支', () => {
     for (const el of Array.from(measure.children)) {
       expect(el.getAttribute('data-block-end')).not.toBeNull()
     }
+  })
+})
+
+/**
+ * D3：折点不得越过光标。
+ *
+ * 折叠切点从**文档末尾**累加时，若光标在中段、后面还有一整段长尾，长尾自己就超过
+ * `RENDER_WINDOW_LIMIT`，折点落到光标之后，窗口 `[折点, 光标)` 是空的——页面上只剩折叠条。
+ */
+describe('Page —— 折叠的上界（D3）', () => {
+  it('光标在中段、后面有长尾：折叠后仍显示光标前那一段，不是只剩折叠条', () => {
+    const src = '# 标题\n\n' + 'A'.repeat(40000) + '\n\n' + 'B'.repeat(40000) + '\n'
+    const doc = parseMarkdown(src)!
+    const cursor = src.indexOf('B') - 5 // 揭示超过上限，且光标停在长尾之前
+    expect(cursor).toBeGreaterThan(30000)
+    const c = page({ doc, revealStart: 0, cursor, measuring: false }, '', { expanded: false }).container
+
+    // 主判据：窗口里还有已揭示的内容。折点越过光标时这里一个字都没有。
+    const shown = c.querySelector('[data-testid="page-text"]')!.textContent ?? ''
+    expect(shown.length).toBeGreaterThan(0)
+    expect(shown).toContain('A')
+    expect(shown).not.toContain('B') // 长尾一个字都没揭示
+
+    const fold = c.querySelector('[data-testid="page-fold"]')
+    expect(fold).not.toBeNull()
+    const folded = Number(fold!.textContent!.replace(/\D+/g, ''))
+    expect(folded).toBeGreaterThan(0)
+    // 折点 = 第二个块的起始偏移（标题之后），且绝不超过光标
+    expect(folded).toBe(doc.children[1].position!.start.offset)
+    expect(folded).toBeLessThanOrEqual(cursor)
+  })
+
+  it('MarkdownView 自身也防御：折点更大时按光标夹', () => {
+    const doc = parseMarkdown('甲乙丙。\n\n丁戊己。\n')!
+    const cursor = 3
+    const clamped = render(
+      <MarkdownView doc={doc} foldStart={cursor} cursor={cursor} measuring={false} />
+    ).container.innerHTML
+    const over = render(
+      <MarkdownView doc={doc} foldStart={1000} cursor={cursor} measuring={false} />
+    ).container.innerHTML
+    expect(over).toBe(clamped)
+  })
+})
+
+/**
+ * 量高度那一份是 layoutOnly：不挂真实图片，所以未揭示的图不会被提前请求（设计 8.2）。
+ */
+describe('Page —— 量高度副本不请求图片', () => {
+  it('measuring 为真、可见树是空的时候，一个取图 IPC 都不发', () => {
+    const spy = vi.fn(async () => null)
+    ;(window as unknown as { api: WtApi }).api = {
+      ...(window.api as WtApi),
+      loadWorkDocImage: spy
+    }
+    const doc = parseMarkdown('甲 ![图](a.png)\n')!
+    const c = page({ doc, revealStart: 0, cursor: 0, measuring: true }).container
+    expect(c.querySelector('.wt-md-measure')).not.toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+    // 副本里只有占位，没有真图——但块包装仍在（量高度的配对靠它）
+    const measure = c.querySelector('.wt-md-measure')!
+    expect(measure.querySelector('img')).toBeNull()
+    expect(measure.querySelectorAll('.wt-md-measure-block')).toHaveLength(doc.children.length)
   })
 })
 

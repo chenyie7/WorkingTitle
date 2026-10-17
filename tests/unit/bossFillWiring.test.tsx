@@ -6,7 +6,7 @@ import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
 import type { Novel } from '../../src/core/types'
-import type { WtApi } from '../../src/renderer/src/types/global'
+import type { WtApi } from '../../src/core/api'
 
 /**
  * 铺满那一路的**接线**判据：进老板模式那一下，到底有没有去量块高。
@@ -72,7 +72,7 @@ function installApi(workDoc: Novel | null): void {
   loadWorkDoc = vi.fn(async (_path: string) => workDoc)
   ;(window as unknown as { api: WtApi }).api = {
     ...(window.api as WtApi),
-    importNovel: async () => makeNovel(),
+    importNovel: async () => ({ ok: true, value: makeNovel() }),
     loadSettings: async () => ({ ...defaultSettings(), workDocPath: workDoc?.sourcePath ?? null }),
     loadWorkDoc
   }

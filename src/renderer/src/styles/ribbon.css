@@ -184,6 +184,12 @@
   border-color: #a8c7ef;
 }
 
+/* `.wt-btn:hover` 的特异度 (0,2,0) 压过 `.wt-btn--active` (0,1,0)，不补这条，选中的按钮一悬停就变浅。 */
+.wt-btn--active:hover {
+  background: #d3e3fa;
+  border-color: #a8c7ef;
+}
+
 /* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
 .wt-btn--large {
   flex-direction: column;
@@ -977,7 +983,8 @@
 }
 
 [data-theme='dark'] .wt-btn:active,
-[data-theme='dark'] .wt-btn--active {
+[data-theme='dark'] .wt-btn--active,
+[data-theme='dark'] .wt-btn--active:hover {
   background: #2c3a52;
   border-color: #405a80;
 }

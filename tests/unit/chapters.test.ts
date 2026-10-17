@@ -40,6 +40,11 @@ describe('isChapterTitle', () => {
     'Chapter 3 The Beginning',
     '1、开端',
     '12．转折',
+    // 副标题里的句读不拦：强前缀（第 X 章 / 序章 / Chapter N）已经把「这是标题」说清楚了。
+    // 句读闸门只服务于「数字 + 顿号」那条，见下面「不把正文当标题」里的编号正文样本。
+    '第一章 风起，云涌',
+    '序章 雪夜，风起',
+    'Chapter 3 The Beginning, and More',
     // 前后各垫 20 个全角空格：上限量的是 trim 后的串，补白不该影响判定
     PADDED_TITLE
   ])('识别标题行：%s', (line) => {
@@ -50,11 +55,11 @@ describe('isChapterTitle', () => {
     '第三章的内容很有意思，我读了三遍。',
     '前言不搭后语',
     '林昭站在城墙上。',
-    // 下面这条是【唯一】只被 SENTENCE_PUNCT 那道闸拦下的样本：它匹配 TITLE_PATTERNS[3]
-    // （数字 + 、/.． + 正文），长度也在上限内。上面三条其实都被【模式不匹配】拒掉，
-    // 等于同一个分支测了三遍——删掉那道闸，只有这一条会红。没有它，一行普通的编号正文
-    // （「1．他说道，这是第一章。」）就会变成章节标题。
+    // 下面两条是【只】被 SENTENCE_PUNCT 那道闸拦下的样本：它们匹配 NUMBERED_TITLE
+    // （数字 + 、/.． + 正文），长度也在上限内。删掉那道闸，这两条会红——一行普通的编号正文
+    // 就会变成章节标题。上面三条其实都被【模式不匹配】拒掉，等于同一个分支测了三遍。
     '1．他说道，这是第一章。',
+    '1、开端，转折',
     ''
   ])('不把正文当标题：%s', (line) => {
     expect(isChapterTitle(line)).toBe(false)
@@ -104,6 +109,14 @@ describe('splitChapters', () => {
     // 【保真律】完整表述见「标题前只有空白时…」那条：flatText 是 text 的后缀，被去掉的前缀全是空白。
     // 本用例是「前缀为空」的那一支（什么都没丢）→ flatText === text。
     expect(flatText).toBe(text)
+  })
+
+  it('副标题带标点时仍按标题切开（句读闸门只作用于数字 + 顿号那条）', () => {
+    const text = '第一章 风起，云涌\n正文一。\n第二章 云涌；雷动\n正文二。\n'
+    const { flatText, chapters } = splitChapters(text, 'x')
+    expect(chapters.map((c) => c.title)).toEqual(['第一章 风起，云涌', '第二章 云涌；雷动'])
+    expect(flatText).toBe(text)
+    expectContiguous(flatText, chapters)
   })
 
   it('章节正文包含标题行本身', () => {
