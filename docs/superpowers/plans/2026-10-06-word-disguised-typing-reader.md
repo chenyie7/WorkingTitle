@@ -6569,22 +6569,28 @@ body {
  * 设置面板。680px 是「152px 左栏 + 约 500px 内容区」的宽度；内容区那一侧要放得下
  * 「当前书 1 键显示 [10] 字」这种整行不折的组合。
  *
- * 【max-height 修的是**缩放**，不是小窗口】窗口本身下不去——`src/main/index.ts` 的
- * `minHeight: 620`，而改动前那版一页到底的对话框在最小窗口高度上是**放得下**的
- * （footer 够得着）。真正会把它顶出屏幕的是**页面缩放**：视图菜单里就有
- * resetZoom / zoomIn / zoomOut 三条 role，⌘+ 把视口压到 400 出头时，面板那一坨内容
- * （固定高的 header + footer + 按内容高的 body）并不会跟着变矮，于是上下都出界、
- * footer 够不着。将来某一页变高同理。
+ * 【为什么是**固定高度**】三页的行数差得远（阅读设置 6 行、外观设置 2 行、快捷键设置 6 行），
+ * 而遮罩是垂直居中的——高度由内容撑的话，换页时面板既变高矮、又上下跳（实测：410 / 198 / 386，
+ * 高矮差 212px、顶边跳 106px）。固定成一个值之后三页完全一致、切换时面板一动不动。
  *
- * 【别照字面去最小窗口高度上试】那儿什么都看不出来，于是很容易判定这条是死代码而删掉——
- * 而删掉之后 200% 缩放下 footer 当场够不着（实测）。
+ * 【410 是量出来的，不是拍的】它就是最高那页（阅读设置）的自然高度：38（标题条）
+ * + 324（内容区）+ 48（footer）——在真 Electron 里跑 `out/` 构建量的。内容更少的那两页
+ * 底部留白（真 Word 的「选项」对话框就是这个观感：窗口固定，内容少就空着）。
  *
- * 配合下面 `.wt-modal__body` 的 `overflow-y: auto` 生效。
+ * 【`min()` 不能省】窗口矮或页面缩放时按视口收：200% 缩放下是 min(410, 262) = 262，
+ * 内容区变 176、自己滚。写成裸的 `height: 410px` 会让面板在高缩放下顶出屏幕、footer 够不着
+ * ——那正是上一批 `max-height` 要修的东西，绕回去等于白改。
+ *
+ * 【原来的 `max-height` 已删】它已经被这个 `height` 包进去了，两份互相重叠的约束只会让人
+ * 将来以为都得改。顺带一个好处：固定 `height` 让面板的高度**恒为确定值**，百分比
+ * flex-basis 不再是「容器主尺寸不确定时解不出来」的情形——上一批「标题条被压扁」那条链的
+ * 根因就此消失（所以下面 `.wt-modal__header` 那条 `flex: 0 0 auto` 从「必需」降为
+ * 「多余但无害」，**保留**）。
  */
 .wt-modal__panel {
   width: 680px;
   max-width: calc(100% - 48px);
-  max-height: calc(100vh - 48px);
+  height: min(410px, calc(100vh - 48px));
   background: #ffffff;
   border-radius: 8px;
   box-shadow:
@@ -6597,12 +6603,16 @@ body {
 
 /* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感。
  *
- * 【flex 不能省】它是面板这个 column flex 容器的第一项，而面板的高度是 auto 被 max-height
- * 夹出来的——夹紧的那一刻 main 的 `flex-basis: 0%` 在**高度不确定**的容器里解不出 0，会退回
- * 内容高（实测 316px），于是出现负自由空间、进入收缩相：标题条按 (38 : 内容高) 的比例被压扁
- * （实测 150% 缩放 → 34.06px；200% → 26px，正好是下面那个 26px 的 ✕ 按钮的高度，也就是它
- * 自己的自动最小尺寸，压到那儿就停）。footer 的内容是 30px 按钮 + 18px 下内边距、自动最小
- * 尺寸正好 48px，所以从不参与收缩。钉成 `0 0 auto` 后全部溢出落到 main（它已有 min-height: 0）。
+ * 【这条 `flex` 现在是**保险**，不再是必需】它是面板这个 column flex 容器的第一项。
+ * 在面板高度由内容撑（`height: auto` + `max-height`）的年代，夹紧的那一刻 main 的
+ * `flex-basis: 0%` 在**高度不确定**的容器里解不出 0、会退回内容高，于是出现负自由空间、
+ * 进入收缩相，标题条按比例被压扁（当年实测 150% 缩放 → 34.06px；200% → 26px，正好是下面
+ * 那个 26px 的 ✕ 按钮的高度，也就是它自己的自动最小尺寸）。
+ *
+ * 【现在不会发生了】面板改成固定的 `height: min(410px, calc(100vh - 48px))` 之后，高度
+ * **恒为确定值**，收缩相根本不产生。实测：把这条改成允许收缩的 `flex: 0 1 auto`，五档缩放
+ * 下标题条仍是 38；换回旧写法则是 200% → 35.06、250% / 300% → 26。留着 `0 0 auto` 是因为
+ * 它不会错——删掉只会让将来改动重新暴露在同一个坑里。
  *
  * 【判据】压缩与不压缩时 `header + main + footer` 都等于面板高度（flex 本来就这样），
  * 有区分度的只有 `header.offsetHeight === 38`。
@@ -6666,7 +6676,7 @@ body {
  * 无论内容多宽（试到 4300px 不可断行）body 宽度都不变。留着是因为它与 `overflow-y: auto`
  * 互为保险：谁将来把 `overflow-y` 拿掉，它立刻开始承重（实测那种组合下 body 会被顶到 4326px）。
  *
- * 【overflow-y: auto】与面板的 max-height 配套，见上。反过来，它也是上面那句
+ * 【overflow-y: auto】与面板的 `height: min(...)` 配套，见上。反过来，它也是上面那句
  * 「min-width 冗余」成立的前提——两半拆开都别单删。
  */
 .wt-modal__body {
@@ -6691,11 +6701,11 @@ body {
  * 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。
  *
  * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
- * main 的高度**、会跟着面板被 `max-height` 夹而变矮；而左栏的内容是固定高的
+ * main 的高度**、会跟着面板被 `height: min(...)` 夹而变矮；而左栏的内容是固定高的
  * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
  * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
  * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
- * footer 那一条——与标题条那条是**同一个根因**（我们加的 `max-height` 让面板开始夹紧），
+ * footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它开始夹紧），
  * 所以一并认下来。
  */
 .wt-modal__nav {
@@ -6710,6 +6720,18 @@ body {
  *
  * 【border-left 常态也要占位】常态是 2px 透明、选中才上色。写成「常态不给 border」的话，
  * 选中时这一项会整体右移 2px，字与图标跳一下。
+ *
+ * 【过渡】底色 / 左缘竖条 / 文字颜色各 90ms，与 `.wt-btn` 是同一个词汇
+ * （`background-color 90ms ease`、`border-color 90ms ease`）。
+ *
+ * 【`font-weight` 刻意不进 transition】选中态从 400 跳到 600，而本应用用的是系统字体栈、
+ * 不是可变字体——浏览器对非可变字体的字重**不做插值**，写进 transition 只会让
+ * 「颜色在动、字重当场跳」，同一时刻一部分属性在跑、一部分在蹦，反而更乱。
+ * `.wt-seg` 那组选中态也是这么处理的（颜色过渡、`font-weight: 600` 硬跳）。
+ *
+ * 【`border-color` 必须进】选中/未选中之间 `border-left` 从 `transparent` 变到
+ * `--wt-accent`。不写它，那道 2px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
+ * 两者不同步非常明显。
  */
 .wt-nav__item {
   display: flex;
@@ -6726,6 +6748,10 @@ body {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease,
+    color 90ms ease;
 }
 
 .wt-nav__item:hover {
@@ -6777,11 +6803,41 @@ body {
   flex: 0 0 auto;
 }
 
+/*
+ * 切页时内容淡入。
+ *
+ * 【为什么不需要 key、不需要强制 reflow】非当前页是 `display: none`（见下面那条
+ * `.wt-tabpanel[hidden]`）。按规范，元素从 `display: none` 变成有显示时，它的动画会
+ * **从头开始**——所以切回来时这条自然重跑。任何 JS 都是多余的。
+ *
+ * 【打开对话框时当前页也会淡入一次】这是想要的：它顺带成了「对话框出现了」的提示。
+ *
+ * 【关键帧里只能动 `opacity`，别加 `transform`】`getBoundingClientRect()` 会被
+ * `transform: scale()` 影响，而 e2e 里那条「三页等高」正是在切页之后读高度的——加了缩放，
+ * 它会量到动画的中间态。（`translateY` 不影响高度，但本次连位移都不做。）
+ *
+ * 【`toBeVisible()` 不受这条动画影响，实测过】Playwright 1.63.0 的可见判据是
+ * `element.checkVisibility()`（无参）+ `visibility !== 'hidden'` + 盒子非零，**整条链里
+ * 没有 opacity**；在真 Chromium（Electron 44.5.1 / Chrome 152）里量过：
+ * `opacity: 0` 的元素 `checkVisibility()` 返回 `true`，而显式的
+ * `checkVisibility({ opacityProperty: true })` 才返回 `false`。所以淡入的第一帧
+ * `toBeVisible()` 就返回，不会等动画、不会变慢。
+ */
+@keyframes wt-panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* 每个页自己管自己那组行：这三条是从 `.wt-modal__body` 挪过来的 */
 .wt-tabpanel {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  animation: wt-panel-in 120ms ease;
 }
 
 /*
@@ -6796,6 +6852,30 @@ body {
  */
 .wt-tabpanel[hidden] {
   display: none;
+}
+
+/*
+ * 关掉上面那两条动效。
+ *
+ * 【注意：本应用里的媒体查询能不能命中，是**没验证过**的】本仓库已知
+ * `@media (prefers-color-scheme: dark)` 在渲染层**恒不命中**（Electron 那条坑，见 CLAUDE.md
+ * 的「外观与主题」一节）。`prefers-reduced-motion` 是否命中**没有量过**。这条不命中时
+ * 完全惰性（不影响任何用户），所以先按标准做法加上。
+ *
+ * 【若将来量出它恒不命中，别删掉这条】正解是走主进程 IPC 把它递过来——与主题
+ * （`wt:get-theme` / `wt:theme-changed`）同一条路。删掉只会让「尊重减动效」这件事静默消失。
+ *
+ * 【必须排在这两个规则之后】`.wt-nav__item` 与 `.wt-tabpanel` 的特异度与本条相同
+ * （都是 (0,1,0)），靠源码顺序胜出。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wt-nav__item {
+    transition: none;
+  }
+
+  .wt-tabpanel {
+    animation: none;
+  }
 }
 
 .wt-modal__row {
@@ -14075,6 +14155,61 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   // 焦点没回来的话，下面这几个字母会在遮罩后面抽进小说，`revealed` 就从 0 变成 3。
   await win.keyboard.type('xxx')
   await expect.poll(revealed).toBe(0)
+})
+
+/**
+ * 三页的面板必须一样大。
+ *
+ * 【为什么只有这条判得了】jsdom 没有布局，`getBoundingClientRect()` 恒为 0——这个不变量
+ * 在单测里根本不存在。它只能由真机判。
+ *
+ * 【改动前为什么是红的】面板高度由内容撑（`height: auto` + `max-height`），三页的行数是
+ * 6 / 2 / 6，实测 410 / 198 / 386——而遮罩是垂直居中的，所以换页时面板既变高矮、又上下跳。
+ */
+test('设置面板三页大小一致', async () => {
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  const heights: number[] = []
+  const overflows: number[] = []
+  for (const id of ['reading', 'appearance', 'shortcuts']) {
+    await win.locator(`[data-testid="settings-tab-${id}"]`).click()
+    // 【为什么等它可见再量】`click()` 只保证「点到了」，不保证「切过去了」。少了这一行，
+    // 点击处理器坏掉时三次都会量到同一页的高度——下面那条 `Set.size === 1` 会**假绿**。
+    // 等的是「被点那一页真的可见」，等价于断言切换确实生效。
+    await expect(win.locator(`[data-testid="settings-tabpanel-${id}"]`)).toBeVisible()
+    // 【另两页必须藏着】少了这一条还有一个假绿口子：若有人删掉
+    // `.wt-tabpanel[hidden] { display: none }`，三页会叠在一起、面板每次都是同一个值，
+    // `Set.size === 1` 照样绿（而被点的那块本来就可见，上面那个 settle 点也不会失败）。
+    // 那条 CSS 自己的注释就写着「单测只看属性，照样全绿」——这条 e2e 正好补上。
+    for (const other of ['reading', 'appearance', 'shortcuts'].filter((x) => x !== id)) {
+      await expect(win.locator(`[data-testid="settings-tabpanel-${other}"]`)).toBeHidden()
+    }
+    heights.push(
+      await win
+        .locator('[data-testid="settings"] .wt-modal__panel')
+        .evaluate((el) => el.getBoundingClientRect().height)
+    )
+    overflows.push(
+      await win.evaluate(() => {
+        const body = document.querySelector('.wt-modal__body') as HTMLElement
+        return body.scrollHeight - body.clientHeight
+      })
+    )
+  }
+
+  // 【三者必须**严格**相等，不是「差不多」】三页的行数差得远，高度只要还由内容撑，
+  // 这条当场红。
+  expect(new Set(heights).size).toBe(1)
+
+  // 【三页一致还不够：还要确认内容没被裁】少了这一条，把固定高度改小之后三页仍然相等，
+  // 而阅读设置那页的内容被切掉——上面那条照样绿。
+  //
+  // 判的是 `scrollHeight <= clientHeight`，**不是某个绝对像素值**：它不依赖窗口高度、
+  // 也不依赖字体度量，直接回答「有没有东西被切掉」。反方向它也管——将来阅读设置页加了
+  // 一行、自然高度超过固定值时，这里会红。
+  expect(Math.max(...overflows)).toBe(0)
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {

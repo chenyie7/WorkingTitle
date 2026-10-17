@@ -1,7 +1,7 @@
 # 设置面板：统一尺寸 + 切页动效 —— 设计文档
 
 日期：2026-10-17
-状态：待用户审阅
+状态：已实现（2026-10-17）
 
 ## 1. 目标
 
@@ -166,3 +166,52 @@ jsdom 没有布局（`getBoundingClientRect()` 恒为 0），单测判不了「�
 - **不记住「上次停在哪个尺寸」之类**：尺寸与动效都是静态决定，没有状态。
 - **不给 `prefers-reduced-motion` 走主进程 IPC**：那是「量出它恒不命中」之后的事，本次先按标准做法加上。
 - **不动 `SettingsDialog.tsx`**：本次纯 CSS + 一条 e2e。
+
+## 9. 实现记录（2026-10-17）
+
+### 9.1 落地了哪些
+
+| 提交 | 改了什么 |
+|---|---|
+| `a1d743b` | `tests/e2e/app.spec.ts`：新增「三页面板大小一致」的真机断言（**先红**：实测 410 / 198 / 386） |
+| `bf63293` | 同一条用例加固：堵两个假绿口子、把「>= 410」换成 `scrollHeight - clientHeight === 0` |
+| `e3d9b7c` | `ribbon.css`：`max-height` → `height: min(410px, calc(100vh - 48px))`（让上面那条转绿） |
+| `233d72e` | `ribbon.css`：同步三处还在讲旧 `max-height` 机制的注释 |
+| `ee55c27` | `ribbon.css`：左栏 90ms 过渡、`.wt-tabpanel` 120ms 淡入、`prefers-reduced-motion` |
+
+**明确没动**：`SettingsDialog.tsx`（一行都没改）、`src/core/**`、`src/main/**`、`src/preload/**`、任何持久化字段。
+
+### 9.2 门禁实测
+
+| 命令 | exit | 结果 |
+|---|---|---|
+| `pnpm typecheck` | **0** | 两个 tsconfig |
+| `pnpm test` | **0** | 32 文件 / 659 用例，无 `Errors` 行 |
+| `pnpm build` | **0** | — |
+| `pnpm test:e2e` | **0** | **9 passed**（新增那条「三页等高」在内） |
+
+### 9.3 评审实测出来的东西
+
+**尺寸（真 Blink，五档缩放 × 两种窗口 × 三页）**：面板恒等于 `min(410, 100vh − 48)`——默认窗口 100%/150% 取 410、200% 起取 calc 支（382 / 296 / 238.67）；最小窗口 150% 起取 calc 支（365.33 / 262 / 200 / 158.67）。**`header` 五档全是 38**，footer 始终完整可见，三页在每一档都等高。
+
+**一个变异实验把 3.1 从推演变成实测**：把 `.wt-modal__header` 的 `flex: 0 0 auto` 改成允许收缩的 `flex: 0 1 auto`——**新 CSS 五档仍是 38**，换回旧写法才复现 200% → 35.06、250%/300% → 26。固定 `height` 消掉了收缩相，`flex: 0 0 auto` 现在是保险。
+
+**淡入（真 Blink）**：切页时 `opacity` 0 → 0.771（60ms）→ 1（150ms），`getAnimations()` 的 `currentTime` 回到 0；**切回来也一样**——「`display: none` 会让动画自动重跑、不需要 JS」成立。动画期间面板恒 410、`tabpanel.offsetHeight` 恒定（opacity 不碰布局）。
+
+**左栏过渡（真 Blink）**：`transition-property` 是 `background-color, border-color, color`、`0.09s`；中途三条同步插值，而 **`font-weight` 在 t=0 就跳到 400、没有被插值**（正是刻意）。选中项强制 `:hover` 时计算值仍是 `rgb(234,241,251)`——上一批修的「悬停吃掉选中底」没被破坏。
+
+### 9.4 `prefers-reduced-motion`：两件事必须分开记
+
+**这是本条设计里唯一一处「未验证」，而本次也只验证了一半。**
+
+- **(a) CSS 本身对不对 —— 已证实（CDP `Emulation.setEmulatedMedia`，真 Blink）**：模拟 `reduce` 之后 `matchMedia` 变 `true`、`.wt-nav__item` 的 `transition-property` 变 `none`、`.wt-tabpanel` 的 `animation-name` 变 `none`，去掉 `hidden` 后 `getAnimations()` 是空、`opacity` 直接是 1（没有 0 的首帧）。重置模拟后一切恢复。**级联顺序与关闭效果都正确。**
+
+- **(b) 操作系统的设置能不能传到渲染层 —— 仍未证实，而且在这台机器上量不出来。** 系统「减弱动态效果」处于关闭（`ReduceMotionEnabled = 0`），此时「链路通、正确返回 false」与「恒返回 false」**观测值完全相同**，无法区分。同机还复现了 `prefers-color-scheme` 那条已知断链（主进程 `shouldUseDarkColors = true`、渲染层 `matchMedia` 为 false），说明这个环境正是那个坑。
+
+**推论：别把 (a) 当成 (b)。** 要得到 (b) 的答案需要一台真的打开了「减弱动态效果」的机器；若那时发现它恒不命中，正解是走主进程 IPC（与主题同一条路），**不是删掉那条媒体查询**。
+
+### 9.5 一处与设计的偏差（评审提出、已采纳）
+
+初稿的 e2e 断言里有一条 `heights[0] >= 410`，用来「防止把 `min()` 的第一项改小、三页虽然一致但内容被裁」。评审指出这是个**代理断言**：它挡不住反方向——阅读设置将来加一行、自然高度超过 410 时，面板仍是 410、内容被裁，而它照样通过。已换成 `.wt-modal__body` 的 `scrollHeight - clientHeight === 0`（三页都要），既覆盖「改小了」也覆盖「内容长了」，且不依赖窗口高度。实测确认：往阅读页尾部加一行同构的行后，`324 → 370`、overflow 46，那条当场失败。
+
+同一次还堵了另一个假绿口子：**三页同时可见时**（若有人删掉 `.wt-tabpanel[hidden] { display: none }`）面板恒为同一个值，只断言「三者相等」会绿。现在每轮另加两个 tabpanel 的 `toBeHidden()`。
