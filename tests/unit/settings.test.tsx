@@ -1443,4 +1443,31 @@ describe('设置里的分章规则', () => {
       expect(screen.getByTestId('chapter-rule-result').textContent).toContain('没有识别出任何章节')
     )
   })
+
+  it('选中自定义但未输入时提示先写一条正则', () => {
+    setup()
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-custom'))
+    expect(screen.getByTestId('chapter-rule-empty').textContent).toContain('先写一条正则')
+  })
+
+  it('应用执行中按钮显示处理中并禁用', async () => {
+    let resolveApply!: (r: { ok: true; value: number }) => void
+    const onApplyChapterRule = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: number }>((resolve) => {
+          resolveApply = resolve
+        })
+    )
+    setup({ onApplyChapterRule })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    const button = screen.getByTestId('chapter-rule-apply') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toContain('处理中')
+    resolveApply({ ok: true, value: 3 })
+    await waitFor(() =>
+      expect(screen.getByTestId('chapter-rule-result').textContent).toContain('3')
+    )
+  })
 })

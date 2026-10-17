@@ -998,45 +998,56 @@ export function SettingsDialog({
 
               <div className="wt-modal__row">
                 <span className="wt-modal__label">识别规则</span>
-                <div className="wt-chapter-rules" role="radiogroup" aria-label="章节识别规则">
-                  <label className="wt-modal__check">
-                    <input
-                      type="radio"
-                      name="chapter-rule"
-                      data-testid="chapter-rule-auto"
-                      checked={chapterChoice === 'auto'}
-                      disabled={novelTitle === null}
-                      onChange={() => setChapterDraft({ kind: 'auto' })}
-                    />
-                    自动识别（默认）
-                  </label>
-                  {(Object.keys(CHAPTER_PRESETS) as ChapterPresetId[]).map((id) => (
-                    <label className="wt-modal__check" key={id}>
+                <div className="wt-chapter-rules">
+                  <div
+                    role="radiogroup"
+                    aria-label="章节识别规则"
+                    className="wt-chapter-rules__choices"
+                  >
+                    <label className="wt-modal__check">
                       <input
                         type="radio"
                         name="chapter-rule"
-                        data-testid={`chapter-rule-preset-${id}`}
-                        checked={chapterChoice === id}
+                        data-testid="chapter-rule-auto"
+                        checked={chapterChoice === 'auto'}
                         disabled={novelTitle === null}
-                        onChange={() => setChapterDraft({ kind: 'preset', id })}
+                        onChange={() => setChapterDraft({ kind: 'auto' })}
                       />
-                      {CHAPTER_PRESETS[id]}
+                      自动识别（默认）
                     </label>
-                  ))}
-                  <label className="wt-modal__check">
-                    <input
-                      type="radio"
-                      name="chapter-rule"
-                      data-testid="chapter-rule-custom"
-                      checked={chapterChoice === 'custom'}
-                      disabled={novelTitle === null}
-                      onChange={() => setChapterDraft({ kind: 'custom', pattern: customPattern })}
-                    />
-                    自定义正则
-                  </label>
+                    {(Object.keys(CHAPTER_PRESETS) as ChapterPresetId[]).map((id) => (
+                      <label className="wt-modal__check" key={id}>
+                        <input
+                          type="radio"
+                          name="chapter-rule"
+                          data-testid={`chapter-rule-preset-${id}`}
+                          checked={chapterChoice === id}
+                          disabled={novelTitle === null}
+                          onChange={() => setChapterDraft({ kind: 'preset', id })}
+                        />
+                        {CHAPTER_PRESETS[id]}
+                      </label>
+                    ))}
+                    <label className="wt-modal__check">
+                      <input
+                        type="radio"
+                        name="chapter-rule"
+                        data-testid="chapter-rule-custom"
+                        checked={chapterChoice === 'custom'}
+                        disabled={novelTitle === null}
+                        onChange={() => setChapterDraft({ kind: 'custom', pattern: customPattern })}
+                      />
+                      自定义正则
+                    </label>
+                  </div>
 
                   {chapterChoice === 'custom' && (
                     <>
+                      {customPattern === '' && (
+                        <span className="wt-ratio__note" data-testid="chapter-rule-empty">
+                          先写一条正则
+                        </span>
+                      )}
                       <input
                         className="wt-modal__text"
                         data-testid="chapter-rule-pattern"
