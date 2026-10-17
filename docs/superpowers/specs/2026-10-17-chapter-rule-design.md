@@ -69,7 +69,8 @@ const SPECIAL_TITLE =
 1. 对每个 trim 后的整行做 `RegExp.test`，命中即标题。
 2. 原样编译，只额外加 `i`；不由用户提供 flags，因此不会再引入 `/g` / `/y` 的 `lastIndex` 状态问题。
 3. 不套 40 字上限，也不套句读闸门——用户手写的规则就是最终规则。
-4. 编译失败视为规则不合法；匹配 0 行视为应用失败（见第 9 节）。
+4. 只有空白字符的 pattern 视为不合法（匹配跑在 trim 后的行上，纯空白正则会命中几乎所有正文行）。
+5. 编译失败视为规则不合法；匹配 0 行视为应用失败（见第 9 节）。
 
 ### 2.4 校验与相等
 
@@ -81,7 +82,7 @@ export function chapterRuleEqual(a: ChapterRule, b: ChapterRule): boolean
 ```
 
 `chapterRuleProblem` 返回第一个不合格字段的描述（与 `sessionProblem` / `settingsProblem` 同一姿势）：
-不是对象、`kind` 不认识、预置 id 不认识、`pattern` 不是非空字符串、正则编译失败。
+不是对象、`kind` 不认识、预置 id 不认识、`pattern` 不是非空白字符串、正则编译失败。
 
 `chapterRuleEqual` 逐字段比较；`undefined` 先归一成 auto 再比。
 
