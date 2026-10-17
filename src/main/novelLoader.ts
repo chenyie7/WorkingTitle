@@ -49,7 +49,7 @@ function ensureChild(): Electron.UtilityProcess {
     waiter.resolve(msg)
   })
   proc.on('exit', (code) => {
-    const err = new NovelWorkerExitedError(`小说解码进程退出（${code}）`)
+    const err = new NovelWorkerExitedError(`小说后台进程退出（${code}）`)
     for (const waiter of pending.values()) {
       if (waiter.timer) clearTimeout(waiter.timer)
       waiter.reject(err)

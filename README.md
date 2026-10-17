@@ -51,6 +51,10 @@ This app is **not code-signed** (certificates cost money), so:
    whole sidebar. Both shortcuts are rebindable — see [Shortcuts](#shortcuts).
 4. **Adjust the look** — Settings offers Follow system / Light / Dark. In dark mode the page stays
    white by default (just like real Word); enable "dark paper" if you'd rather it didn't.
+5. **Fix chapter splitting** — if a novel's chapters are detected wrong, open Settings →
+   **Chapter splitting**, pick a built-in rule or write your own regular expression, and press
+   **Apply**. The rule is remembered per book, and your reading position and the text itself do
+   not change.
 
 Settings persist across restarts, and **reading progress is kept per book** — importing a second
 novel doesn't lose your place in the first.
