@@ -230,3 +230,65 @@ export function splitChapters(
 
   return { flatText, chapters }
 }
+
+/**
+ * 重新分章专用：只重算章节边界，**保证 flatText 逐字等于输入**。
+ *
+ * splitChapters 会重新拼正文、并丢掉文件开头的全空白前言；那套语义在导入时成立，
+ * 但重新分章时 flatText 是游标与 chapterPos 的坐标系，动它会让阅读位置整体错位。
+ * 这里不拼正文，只把行号换成偏移：
+ * - 第一个标题前的内容非空白 → 单列「前言」一章；
+ * - 全是空白 → 折进第一章，第一章仍从 0 开始。
+ */
+export function resplitChapters(
+  text: string,
+  fallbackTitle: string,
+  rule: ChapterRule = DEFAULT_CHAPTER_RULE
+): SplitResult {
+  const matcher = makeMatcher(rule)
+  const lines = text.split('\n')
+
+  const lineStart: number[] = new Array(lines.length)
+  let offset = 0
+  for (let i = 0; i < lines.length; i++) {
+    lineStart[i] = offset
+    offset += lines[i].length + 1
+  }
+
+  const titleIdx: number[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (matcher(lines[i])) titleIdx.push(i)
+  }
+
+  if (titleIdx.length === 0) {
+    return {
+      flatText: text,
+      chapters: [
+        { index: 0, title: fallbackTitle, start: 0, end: text.length, charCount: text.length }
+      ]
+    }
+  }
+
+  const firstTitleOffset = lineStart[titleIdx[0]]
+  const slices: Array<{ title: string; start: number }> = []
+  if (firstTitleOffset > 0 && text.slice(0, firstTitleOffset).trim() !== '') {
+    slices.push({ title: PREAMBLE_TITLE, start: 0 })
+  }
+  for (let i = 0; i < titleIdx.length; i++) {
+    const start = i === 0 && slices.length === 0 ? 0 : lineStart[titleIdx[i]]
+    slices.push({ title: lines[titleIdx[i]].trim(), start })
+  }
+
+  const chapters: Chapter[] = slices.map((s, i) => {
+    const end = i + 1 < slices.length ? slices[i + 1].start : text.length
+    return { index: i, title: s.title, start: s.start, end, charCount: end - s.start }
+  })
+
+  return { flatText: text, chapters }
+}
+
+/** 这条规则能不能在这段正文里认出至少一个标题。some 短路，正例通常只看几行。 */
+export function hasChapterTitles(text: string, rule: ChapterRule = DEFAULT_CHAPTER_RULE): boolean {
+  const matcher = makeMatcher(rule)
+  return text.split('\n').some((line) => matcher(line))
+}

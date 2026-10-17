@@ -5,7 +5,9 @@ import {
   CHAPTER_PRESETS,
   chapterRuleEqual,
   chapterRuleProblem,
+  hasChapterTitles,
   isChapterTitle,
+  resplitChapters,
   splitChapters,
   PREAMBLE_TITLE
 } from '../../src/core/chapters'
@@ -350,5 +352,57 @@ describe('可配置的分章规则', () => {
     expect(flatText).toBe(text)
     // 前提自检：默认规则认不出这两行，否则这条用例证明不了第三个参数生效
     expect(splitChapters(text, 'x').chapters).toHaveLength(1)
+  })
+})
+
+describe('resplitChapters', () => {
+  const text = '第一章 甲\n正文一。\n第二章 乙\n正文二。\n'
+
+  it('flatText 永远等于输入，章节按新规则重切', () => {
+    const result = resplitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.flatText).toBe(text)
+    expect(result.chapters.map((c) => c.title)).toEqual(['第一章 甲', '第二章 乙'])
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('开头有非空白前言时单列前言一章', () => {
+    const withPreamble = '作者的话\n' + text
+    const result = resplitChapters(withPreamble, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters.map((c) => c.title)).toEqual([PREAMBLE_TITLE, '第一章 甲', '第二章 乙'])
+    expect(result.flatText).toBe(withPreamble)
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('开头只有空白时折进第一章，不丢字符', () => {
+    const withBlank = '\n\n' + text
+    const result = resplitChapters(withBlank, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.flatText).toBe(withBlank)
+    expect(result.chapters[0].title).toBe('第一章 甲')
+    expect(result.chapters[0].start).toBe(0)
+    expectContiguous(result.flatText, result.chapters)
+  })
+
+  it('一条标题都没有时整本一章，flatText 仍是输入', () => {
+    const plain = '没有标题的正文。\n第二行。'
+    const result = resplitChapters(plain, '我的小说', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters).toHaveLength(1)
+    expect(result.chapters[0]).toMatchObject({
+      index: 0,
+      title: '我的小说',
+      start: 0,
+      end: plain.length
+    })
+    expect(result.flatText).toBe(plain)
+  })
+
+  it('输入开头没有空白前言时，结果与 splitChapters 一致', () => {
+    const a = splitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
+    const b = resplitChapters(text, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(b.chapters).toEqual(a.chapters)
+  })
+
+  it('hasChapterTitles：有标题为真，无标题为假', () => {
+    expect(hasChapterTitles(text, { kind: 'preset', id: 'cn-chapter' })).toBe(true)
+    expect(hasChapterTitles('纯正文。', { kind: 'preset', id: 'cn-chapter' })).toBe(false)
   })
 })
