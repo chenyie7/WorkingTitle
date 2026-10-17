@@ -32,7 +32,8 @@ import {
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
-import type { ThemeSource } from '../../../core/types'
+import type { ChapterRule, ThemeSource } from '../../../core/types'
+import type { IpcResult } from '../../../core/api'
 import {
   IconBook,
   IconClear,
@@ -117,6 +118,11 @@ export interface SettingsDialogProps {
   /** 立即动作，与 onImport / onClearSession 同类——**不走「草稿 + 保存」那一套**。 */
   onImportWorkDoc: () => void
   onRemoveWorkDoc: () => void
+  /** 当前小说名；null＝没导入小说。 */
+  novelTitle: string | null
+  chapterCount: number
+  chapterRule: ChapterRule
+  onApplyChapterRule: (rule: ChapterRule) => Promise<IpcResult<number>>
 }
 
 const THEME_OPTIONS = [
@@ -179,7 +185,11 @@ export function SettingsDialog({
   workDocPath,
   workDocBroken,
   onImportWorkDoc,
-  onRemoveWorkDoc
+  onRemoveWorkDoc,
+  novelTitle,
+  chapterCount,
+  chapterRule,
+  onApplyChapterRule
 }: SettingsDialogProps) {
   const { ratio, setRatio, globalRatio, setGlobalRatio, mode, setMode, onImport, onClearSession, notify } =
     useToolbar()

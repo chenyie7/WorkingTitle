@@ -633,6 +633,36 @@ describe('导入一本读过的书', () => {
   })
 })
 
+describe('分章规则随书保存', () => {
+  it('打开书时读回会话里的规则，打字后落盘的会话带着它', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const capture = screen.getByTestId('input-capture')
+    fireEvent.input(capture, { target: { value: 'x' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved!.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
+  })
+})
+
 describe('快捷键接线', () => {
   /**
    * 【为什么平台显式设成 win32】默认桩（`installApi`）里没有 `platform` 这个字段，于是

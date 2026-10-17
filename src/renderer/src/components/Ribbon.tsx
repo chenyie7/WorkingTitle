@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { getApi } from '../api'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
-import { PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
+import { DEFAULT_CHAPTER_RULE, PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
-import type { ThemeSource } from '../../../core/types'
+import type { ChapterRule, ThemeSource } from '../../../core/types'
+import type { IpcResult } from '../../../core/api'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
   IconAlignCenter,
@@ -1210,6 +1211,10 @@ const ignoreRecordingChange = (): void => {}
 /** 工作文档那两个立即动作的默认值（同一条理由：身份稳定，别每次渲染换新函数） */
 const ignoreAction = (): void => {}
 const ignoreNumberChange = (): void => {}
+const ignoreApplyChapterRule = async (): Promise<IpcResult<number>> => ({
+  ok: false,
+  reason: '没有可用的分章功能'
+})
 
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
@@ -1248,6 +1253,10 @@ export function Ribbon({
   workDocBroken = false,
   onImportWorkDoc = ignoreAction,
   onRemoveWorkDoc = ignoreAction,
+  novelTitle = null,
+  chapterCount = 0,
+  chapterRule = DEFAULT_CHAPTER_RULE,
+  onApplyChapterRule = ignoreApplyChapterRule,
   settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
@@ -1303,6 +1312,11 @@ export function Ribbon({
   workDocBroken?: boolean
   onImportWorkDoc?: () => void
   onRemoveWorkDoc?: () => void
+  /** 当前小说名；null＝没导入小说（分章页据此禁用）。 */
+  novelTitle?: string | null
+  chapterCount?: number
+  chapterRule?: ChapterRule
+  onApplyChapterRule?: (rule: ChapterRule) => Promise<IpcResult<number>>
   /**
    * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
    * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
@@ -1371,6 +1385,10 @@ export function Ribbon({
         workDocBroken={workDocBroken}
         onImportWorkDoc={onImportWorkDoc}
         onRemoveWorkDoc={onRemoveWorkDoc}
+        novelTitle={novelTitle}
+        chapterCount={chapterCount}
+        chapterRule={chapterRule}
+        onApplyChapterRule={onApplyChapterRule}
       />
     </div>
   )
