@@ -10,7 +10,7 @@ import type { Chapter, ChapterRule, Novel } from '../core/types'
 /** 后台进程起不来（启动失败）。请求中途退出用 NovelWorkerExitedError。 */
 export class NovelWorkerUnavailableError extends Error {}
 
-/** 后台进程在请求进行中退出。不能退回主进程重跑，否则自定义正则可能卡死主进程。 */
+/** 重新分章请求进行中进程退出：不能退回主进程重跑用户正则。 */
 export class NovelWorkerExitedError extends NovelWorkerUnavailableError {}
 
 /** 重新分章超时：自定义正则灾难性回溯时后台进程卡死，只能杀掉重来。 */
@@ -25,6 +25,7 @@ type Reply =
 const RESPLIT_TIMEOUT_MS = 10_000
 
 interface Pending {
+  kind: 'open' | 'resplit'
   resolve: (reply: Reply) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout> | null
@@ -49,9 +50,12 @@ function ensureChild(): Electron.UtilityProcess {
     waiter.resolve(msg)
   })
   proc.on('exit', (code) => {
-    const err = new NovelWorkerExitedError(`小说后台进程退出（${code}）`)
     for (const waiter of pending.values()) {
       if (waiter.timer) clearTimeout(waiter.timer)
+      const err =
+        waiter.kind === 'resplit'
+          ? new NovelWorkerExitedError(`小说后台进程退出（${code}）`)
+          : new NovelWorkerUnavailableError(`小说后台进程退出（${code}）`)
       waiter.reject(err)
     }
     pending.clear()
@@ -76,7 +80,7 @@ function request(payload: RequestPayload, timeoutMs?: number): Promise<Reply> {
             child?.kill()
             reject(new NovelWorkerTimeoutError(`小说后台进程超时（${timeoutMs}ms）`))
           }, timeoutMs)
-    pending.set(id, { resolve, reject, timer })
+    pending.set(id, { kind: payload.type, resolve, reject, timer })
     try {
       ensureChild().postMessage({ id, ...payload, baseDir: app.getPath('userData') })
     } catch (err) {
