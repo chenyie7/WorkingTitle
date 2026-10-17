@@ -268,6 +268,14 @@ describe('可配置的分章规则', () => {
     expect(isChapterTitle('正文完', rule)).toBe(false)
   })
 
+  it.each([
+    '☆、开端', '★ 开端', '✦ 开端', '✧ 开端', '※ 开端',
+    '简介', '内容简介', '文章简介', '文案', '前言', '序章',
+    '楔子', '正文', '终章', '尾声', '后记', '番外', '【第一章】'
+  ])('special 认得 %s', (line) => {
+    expect(isChapterTitle(line, { kind: 'preset', id: 'special' })).toBe(true)
+  })
+
   it('自定义正则按 trim 后的整行匹配，且不区分大小写', () => {
     const rule = { kind: 'custom', pattern: '^chapter\\s+\\d+.*$' } as const
     expect(isChapterTitle('  CHAPTER 3 The Beginning  ', rule)).toBe(true)
@@ -293,6 +301,7 @@ describe('可配置的分章规则', () => {
     expect(chapterRuleProblem({ kind: 'custom', pattern: '^第.+章$' })).toBeNull()
     expect(chapterRuleProblem({ kind: 'custom', pattern: '(' })).toContain('正则')
     expect(chapterRuleProblem({ kind: 'custom', pattern: '' })).toContain('pattern')
+    expect(chapterRuleProblem({ kind: 'custom', pattern: '   ' })).toContain('pattern')
     expect(chapterRuleProblem({ kind: 'nope' })).toContain('kind')
     expect(chapterRuleProblem(null)).toContain('不是对象')
     // 原型链上的名字不能当 preset id
@@ -310,6 +319,12 @@ describe('可配置的分章规则', () => {
     expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^a' })).toBe(true)
     expect(chapterRuleEqual({ kind: 'custom', pattern: '^a' }, { kind: 'custom', pattern: '^b' })).toBe(false)
     expect(chapterRuleEqual({ kind: 'auto' }, { kind: 'custom', pattern: '^a' })).toBe(false)
+  })
+
+  it('chapterRuleEqual 把 undefined 归一成 auto', () => {
+    expect(chapterRuleEqual(undefined, { kind: 'auto' })).toBe(true)
+    expect(chapterRuleEqual({ kind: 'auto' }, undefined)).toBe(true)
+    expect(chapterRuleEqual(undefined, { kind: 'preset', id: 'numbered' })).toBe(false)
   })
 
   it('CHAPTER_PRESETS 覆盖四个 id 且文案非空', () => {

@@ -44,15 +44,16 @@ export const CHAPTER_PRESETS: Readonly<Record<ChapterPresetId, string>> = {
  * 「有人在某个模式字面量末尾写了个 /g」。所以真正的防线是这条注释加评审时的留意；
  * readonly 守的是另一件小事（别往这张表里塞模式）。表外的 NUMBERED_TITLE 同样受这条约束。
  */
+const CN_CHAPTER_TITLE =
+  /^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/
+const CHAPTER_EN_TITLE = /^\s*chapter\s+\d+.*$/i
+
 const TITLE_PATTERNS: readonly RegExp[] = [
-  // 第一章 / 第 12 章 / 第十二章 / 第一百零八回 / 第3节
-  /^\s*第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇](?:\s+\S.{0,30})?\s*$/,
+  CN_CHAPTER_TITLE,
   // 序章 / 楔子 雪夜 / 番外一 —— 后面必须跟空白才能带副标题，
   // 所以「前言不搭后语」不会被误判。
   /^\s*(?:序章|楔子|尾声|后记|前言|引子|番外)(?:[0-9零一二三四五六七八九十]+|[\s　]+\S.{0,30})?\s*$/,
-  // Chapter 3 The Beginning
-  /^\s*chapter\s+\d+.*$/i,
-  // 1、开端 / 12．转折
+  CHAPTER_EN_TITLE,
   NUMBERED_TITLE
 ]
 
@@ -69,11 +70,11 @@ function presetMatches(id: ChapterPresetId, line: string): boolean {
   if (t.length === 0 || t.length > MAX_TITLE_LEN) return false
   switch (id) {
     case 'cn-chapter':
-      return TITLE_PATTERNS[0].test(t)
+      return CN_CHAPTER_TITLE.test(t)
     case 'numbered':
       return !SENTENCE_PUNCT.test(t) && NUMBERED_TITLE.test(t)
     case 'chapter-en':
-      return TITLE_PATTERNS[2].test(t)
+      return CHAPTER_EN_TITLE.test(t)
     case 'special':
       return SPECIAL_TITLE.test(t)
     default:
@@ -114,7 +115,7 @@ export function chapterRuleProblem(v: unknown): string | null {
     return null
   }
   if (r.kind === 'custom') {
-    if (typeof r.pattern !== 'string' || r.pattern === '') {
+    if (typeof r.pattern !== 'string' || r.pattern.trim() === '') {
       return 'chapterRule.pattern 不是非空字符串'
     }
     try {
@@ -127,10 +128,15 @@ export function chapterRuleProblem(v: unknown): string | null {
   return 'chapterRule.kind 不认识'
 }
 
-export function chapterRuleEqual(a: ChapterRule, b: ChapterRule): boolean {
-  if (a.kind === 'auto' || b.kind === 'auto') return a.kind === b.kind
-  if (a.kind === 'preset' && b.kind === 'preset') return a.id === b.id
-  if (a.kind === 'custom' && b.kind === 'custom') return a.pattern === b.pattern
+export function chapterRuleEqual(
+  a: ChapterRule | undefined,
+  b: ChapterRule | undefined
+): boolean {
+  const ra = a ?? DEFAULT_CHAPTER_RULE
+  const rb = b ?? DEFAULT_CHAPTER_RULE
+  if (ra.kind === 'auto' || rb.kind === 'auto') return ra.kind === rb.kind
+  if (ra.kind === 'preset' && rb.kind === 'preset') return ra.id === rb.id
+  if (ra.kind === 'custom' && rb.kind === 'custom') return ra.pattern === rb.pattern
   return false
 }
 
