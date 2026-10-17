@@ -373,33 +373,49 @@ describe('App 端到端（单测层）', () => {
       revealStart: 0,
       chapterPos: [15, 0],
       activeChapter: 0,
-      startedAt: null
+      startedAt: 12345
     }
     installApi(novel, session)
     render(<App />)
     importViaSettings()
     await waitFor(() => expect(revealedChars()).toBe(15))
 
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const savesBeforeClear = saveSession.mock.calls.length
+
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
+    // 同步断言：handler 在第一个 await 之前就写回了，不靠 600ms 防抖。
+    expect(saveSession.mock.calls.length).toBe(savesBeforeClear + 1)
     await waitFor(() => expect(revealedChars()).toBe(0))
 
     // 书没有关掉：章节栏还在，空状态不出现。
     expect(screen.queryByTestId('page-empty')).toBeNull()
     expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
 
-    const saveSession = window.api.saveSession as unknown as {
-      mock: { calls: PersistedSession[][] }
-    }
-    await waitFor(() => expect(saveSession.mock.calls.length).toBeGreaterThan(0))
     const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
     expect(payload.cursor).toBe(0)
     expect(payload.revealStart).toBe(0)
     expect(payload.chapterPos).toEqual([0, 0])
     expect(payload.activeChapter).toBe(0)
+    expect(payload.startedAt).toBeNull()
     // 「怎么读」的偏好保留：比例与输入模式不被清零。
     expect(payload.ratio).toBe(5)
     expect(payload.mode).toBe('key')
+
+    // 清除不动「上次打开的是哪本」：书仍开着，重启后应当还回到它。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    const saveSettings = window.api.saveSettings as unknown as {
+      mock: { calls: AppSettings[][] }
+    }
+    expect(saveSettings.mock.calls.length).toBeGreaterThan(0)
+    expect(saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0].lastSourcePath).toBe(
+      '/tmp/测试书.txt'
+    )
   })
 
   it('没有打开小说时清除只提示，不写任何东西', async () => {
@@ -836,8 +852,15 @@ describe('分章规则随书保存', () => {
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const savesBeforeClear = saveSession.mock.calls.length
+
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
+    // 同步断言：立即写回，不等防抖。
+    expect(saveSession.mock.calls.length).toBe(savesBeforeClear + 1)
     await waitFor(() => expect(revealedChars()).toBe(0))
 
     openSettings()
@@ -846,10 +869,6 @@ describe('分章规则随书保存', () => {
       true
     )
 
-    const saveSession = window.api.saveSession as unknown as {
-      mock: { calls: PersistedSession[][] }
-    }
-    await waitFor(() => expect(saveSession.mock.calls.length).toBeGreaterThan(0))
     const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
     expect(payload.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
   })
