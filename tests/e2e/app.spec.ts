@@ -187,16 +187,30 @@ test('设置面板三页大小一致', async () => {
   await expect(win.locator('[data-testid="settings"]')).toBeVisible()
 
   const heights: number[] = []
+  const overflows: number[] = []
   for (const id of ['reading', 'appearance', 'shortcuts']) {
     await win.locator(`[data-testid="settings-tab-${id}"]`).click()
-    // 等那一页真的可见再量：`click()` 只保证点到了，不保证 React 已经重渲染完。
-    // 少了这一行，量到的可能是上一页的高度——而「上一页的高度」恰好会让这条断言
-    // 在「改动前」的世界里**假绿**一次（量到两次同一个数）。
+    // 【为什么等它可见再量】`click()` 只保证「点到了」，不保证「切过去了」。少了这一行，
+    // 点击处理器坏掉时三次都会量到同一页的高度——下面那条 `Set.size === 1` 会**假绿**。
+    // 等的是「被点那一页真的可见」，等价于断言切换确实生效。
     await expect(win.locator(`[data-testid="settings-tabpanel-${id}"]`)).toBeVisible()
+    // 【另两页必须藏着】少了这一条还有一个假绿口子：若有人删掉
+    // `.wt-tabpanel[hidden] { display: none }`，三页会叠在一起、面板每次都是同一个值，
+    // `Set.size === 1` 照样绿（而被点的那块本来就可见，上面那个 settle 点也不会失败）。
+    // 那条 CSS 自己的注释就写着「单测只看属性，照样全绿」——这条 e2e 正好补上。
+    for (const other of ['reading', 'appearance', 'shortcuts'].filter((x) => x !== id)) {
+      await expect(win.locator(`[data-testid="settings-tabpanel-${other}"]`)).toBeHidden()
+    }
     heights.push(
       await win
         .locator('[data-testid="settings"] .wt-modal__panel')
         .evaluate((el) => el.getBoundingClientRect().height)
+    )
+    overflows.push(
+      await win.evaluate(() => {
+        const body = document.querySelector('.wt-modal__body') as HTMLElement
+        return body.scrollHeight - body.clientHeight
+      })
     )
   }
 
@@ -204,13 +218,13 @@ test('设置面板三页大小一致', async () => {
   // 这条当场红。
   expect(new Set(heights).size).toBe(1)
 
-  // 【这一条防的是「三页一致了但内容被裁」】有人把 `min()` 的第一项改小，三页仍然相等，
-  // 但阅读设置那页会被裁。410 是它**实测的自然高度**（38 + 324 + 48）。
+  // 【三页一致还不够：还要确认内容没被裁】少了这一条，把固定高度改小之后三页仍然相等，
+  // 而阅读设置那页的内容被切掉——上面那条照样绿。
   //
-  // 【它依赖窗口够高】应用窗口是 1280×860（`src/main/index.ts`），`calc(100vh - 48px)` = 812 > 410。
-  // 窗口被改矮时三页**仍然相等**（一起被夹成同一个值）——那时红的是这一条，该改的是这个数，
-  // **不是断言**。
-  expect(heights[0]).toBeGreaterThanOrEqual(410)
+  // 判的是 `scrollHeight <= clientHeight`，**不是某个绝对像素值**：它不依赖窗口高度、
+  // 也不依赖字体度量，直接回答「有没有东西被切掉」。反方向它也管——将来阅读设置页加了
+  // 一行、自然高度超过固定值时，这里会红。
+  expect(Math.max(...overflows)).toBe(0)
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
