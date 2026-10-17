@@ -240,11 +240,17 @@ export default function App() {
       if (result.reason !== 'canceled') notify(`导入失败：${result.reason}`)
       return
     }
-    const { novel, status } = result.value
-    if (status === 'already-imported') notify('这本书已经导入过了')
-    else if (status === 'repaired') notify('这本书已经在书库里，拷贝文件已修复')
-    await openNovel(novel)
-  }, [openNovel, notify])
+    const { novel: imported, status } = result.value
+    if (status === 'already-imported') {
+      notify('这本书已经导入过了')
+      // 同一本书再导入：磁盘上的会话可能比内存里的旧，重开一次会把进度倒回去。
+      if (novel?.sourcePath === imported.sourcePath) {
+        setBossMode(false)
+        return
+      }
+    } else if (status === 'repaired') notify('这本书已经在书库里，拷贝文件已修复')
+    await openNovel(imported)
+  }, [novel?.sourcePath, openNovel, notify])
 
   const handleOpenNovel = useCallback(
     async (sourcePath: string): Promise<boolean> => {

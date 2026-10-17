@@ -128,6 +128,9 @@ artifacts under Actions.
   opens the file picker. Cancel it and record again.
 - **Document name and the two reading ratios only take effect when you press Save**, not as you
   type them. Appearance, paper and input mode apply immediately.
+- **The library identifies books by the original file path**: the same file imported through a
+  symlink or a case-variant path becomes a second book, and re-importing the same path never
+  re-reads changed content.
 
 ## Tech stack
 

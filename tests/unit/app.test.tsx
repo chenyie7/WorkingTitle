@@ -204,6 +204,85 @@ describe('App 端到端（单测层）', () => {
     expect(screen.getByTestId('toast').textContent).toContain('拷贝文件已修复')
   })
 
+  it('导入失败的错误只带一层前缀', async () => {
+    installApi(makeNovel())
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: false as const,
+      reason: '这个文件是空的，换一个'
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toBe('导入失败：这个文件是空的，换一个')
+    )
+    expect(screen.getByTestId('toast').textContent).not.toContain('导入失败：导入失败')
+  })
+
+  it('同一本书再导入：不重新读盘，书仍开着', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const loadSession = window.api.loadSession as unknown as { mock: { calls: unknown[][] } }
+    const before = loadSession.mock.calls.length
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'already-imported' as const }
+    }))
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('已经导入过了'))
+    expect(loadSession.mock.calls.length).toBe(before)
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+  })
+
+  it('从书库打开另一本书：按它的路径取进度，打开后对话框关闭', async () => {
+    installApi(makeNovel())
+    const other: Novel = { ...makeNovel(), title: '另一本', sourcePath: '/tmp/另一本.txt' }
+    const entries: LibraryEntry[] = [
+      {
+        id: 'f'.repeat(32),
+        title: '另一本',
+        sourcePath: other.sourcePath,
+        originalPath: '/tmp/源/另一本.txt',
+        size: 2048,
+        importedAt: 200,
+        charCount: other.flatText.length,
+        cursor: 0,
+        lastReadAt: 200,
+        broken: false
+      }
+    ]
+    const listNovels = window.api.listNovels as unknown as {
+      mockResolvedValue: (value: LibraryEntry[]) => void
+    }
+    listNovels.mockResolvedValue(entries)
+    const openNovelPath = window.api.openNovelPath as unknown as {
+      mockResolvedValue: (value: unknown) => void
+    }
+    openNovelPath.mockResolvedValue({ ok: true as const, value: other })
+    const loadSession = window.api.loadSession as unknown as { mock: { calls: [string][] } }
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    const before = loadSession.mock.calls.length
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-library'))
+    const row = await screen.findByTestId(`library-row-${'f'.repeat(32)}`)
+    fireEvent.click(within(row).getByText('打开'))
+
+    await waitFor(() => expect(window.api.openNovelPath).toHaveBeenCalledWith(other.sourcePath))
+    await waitFor(() =>
+      expect(loadSession.mock.calls.slice(before).some((c) => c[0] === other.sourcePath)).toBe(true)
+    )
+    await waitFor(() => expect(screen.queryByTestId('settings')).toBeNull())
+  })
+
   it('退格回吐显示，但小说内容不变', async () => {
     const novel = makeNovel()
     const originalFlat = novel.flatText

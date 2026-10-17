@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { splitChapters } from '../../src/core/chapters'
@@ -159,5 +159,43 @@ describe('导入小说入库', () => {
     expect(deps.library.listRawEntries()).toEqual([])
     expect(existsSync(sessionFile(copyPath))).toBe(false)
     expect(deps.store.readSession(src)?.cursor).toBe(42)
+  })
+
+  it('重建时打开失败：拷贝路径上原有的进度不被回滚删掉', async () => {
+    const src = writeSource('第一章 甲\n')
+    const first = await importNovelToLibrary(src, makeDeps())
+    const copyPath = first.novel.sourcePath
+    const deps = makeDeps({
+      openNovel: async () => {
+        throw new Error('boom')
+      }
+    })
+    expect(deps.store.writeSession(makeSession(copyPath)).ok).toBe(true)
+    writeFileSync(join(dataDir, 'library', libraryId(src), 'meta.json'), '{坏 json', 'utf8')
+
+    await expect(importNovelToLibrary(src, deps)).rejects.toThrow('boom')
+
+    expect(deps.library.listRawEntries()).toEqual([])
+    expect(deps.store.readSession(copyPath)?.cursor).toBe(42)
+  })
+
+  it('重建时元数据写盘失败：拷贝路径上原有的进度不被回滚删掉', async () => {
+    const src = writeSource('第一章 甲\n')
+    const first = await importNovelToLibrary(src, makeDeps())
+    const copyPath = first.novel.sourcePath
+    const metaPath = join(dataDir, 'library', libraryId(src), 'meta.json')
+    rmSync(metaPath)
+    const deps = makeDeps({
+      openNovel: async (filePath) => {
+        mkdirSync(metaPath)
+        return fakeOpenNovel(filePath)
+      }
+    })
+    expect(deps.store.writeSession(makeSession(copyPath)).ok).toBe(true)
+
+    await expect(importNovelToLibrary(src, deps)).rejects.toThrow('元数据写盘失败')
+
+    expect(deps.library.listRawEntries()).toEqual([])
+    expect(deps.store.readSession(copyPath)?.cursor).toBe(42)
   })
 })

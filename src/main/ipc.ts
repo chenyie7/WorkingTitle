@@ -119,7 +119,7 @@ export function registerIpc(deps: IpcDeps): void {
       }
     } catch (err) {
       console.warn('[wt] 导入小说失败：', err)
-      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
 
@@ -184,7 +184,7 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: true, value: (await importNovelToLibrary(filePath, deps)).novel }
     } catch (err) {
       console.warn('[wt] 打开小说失败：', filePath, err)
-      return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
 

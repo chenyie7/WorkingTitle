@@ -309,6 +309,20 @@ describe('列表与删除', () => {
     expect(entries[0].broken).toBe(true)
   })
 
+  it('候选书文件忽略 .DS_Store 这类点文件', () => {
+    const id = 'e'.repeat(32)
+    const entry = join(dir, 'library', id)
+    mkdirSync(entry, { recursive: true })
+    writeFileSync(join(entry, 'meta.json'), '{坏 json', 'utf8')
+    writeFileSync(join(entry, '书.txt'), '正文', 'utf8')
+    writeFileSync(join(entry, '.DS_Store'), 'mac', 'utf8')
+
+    const entries = library.listRawEntries()
+    expect(entries[0].fileName).toBe('书.txt')
+    expect(entries[0].copyPath).toBe(join(entry, '书.txt'))
+    expect(entries[0].broken).toBe(true)
+  })
+
   it('候选书文件忽略临时文件', () => {
     const id = 'b'.repeat(32)
     const entry = join(dir, 'library', id)

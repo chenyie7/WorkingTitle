@@ -28,6 +28,8 @@ export async function importNovelToLibrary(
   if (sourceSize === 0) throw new Error('这个文件是空的，换一个')
 
   const plan = library.planImport(src)
+  // rebuild 时拷贝路径上的会话就是用户已有的进度，回滚不能把它当作本次新建的删掉。
+  const hadCopySession = store.readSession(plan.copyPath) !== null
   library.copyIntoLibrary(src, plan)
 
   // 迁移必须先于打开：openNovelWithRule 要从会话里读分章规则。
@@ -36,7 +38,7 @@ export async function importNovelToLibrary(
     const migrated = store.copySession(src, plan.copyPath)
     if (hadOldSession && !migrated) {
       library.removeEntry(plan.id)
-      store.deleteSession(plan.copyPath)
+      if (!hadCopySession) store.deleteSession(plan.copyPath)
       throw new Error('阅读进度迁移失败')
     }
   }
@@ -47,7 +49,7 @@ export async function importNovelToLibrary(
   } catch (err) {
     if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
       library.removeEntry(plan.id)
-      store.deleteSession(plan.copyPath)
+      if (!hadCopySession) store.deleteSession(plan.copyPath)
     }
     throw err
   }
@@ -65,7 +67,7 @@ export async function importNovelToLibrary(
     if (!wrote.ok) {
       if (plan.kind === 'fresh' || plan.kind === 'rebuild') {
         library.removeEntry(plan.id)
-        store.deleteSession(plan.copyPath)
+        if (!hadCopySession) store.deleteSession(plan.copyPath)
       }
       throw new Error(wrote.reason)
     }

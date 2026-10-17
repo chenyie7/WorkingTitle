@@ -107,7 +107,7 @@ export function createLibraryStore(baseDir: string): LibraryStore {
           (d) =>
             d.isFile() &&
             d.name !== META_NAME &&
-            !d.name.startsWith('.tmp-') &&
+            !d.name.startsWith('.') &&
             !d.name.endsWith('.tmp')
         )
         .map((d) => d.name)
