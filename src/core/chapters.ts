@@ -76,6 +76,8 @@ function presetMatches(id: ChapterPresetId, line: string): boolean {
       return TITLE_PATTERNS[2].test(t)
     case 'special':
       return SPECIAL_TITLE.test(t)
+    default:
+      return false
   }
 }
 
@@ -84,6 +86,8 @@ function presetMatches(id: ChapterPresetId, line: string): boolean {
  * chapterRuleProblem 校验。这里不带 /g 或 /y，避免 lastIndex 让判定变成有状态的。
  */
 function makeMatcher(rule: ChapterRule): (line: string) => boolean {
+  const problem = chapterRuleProblem(rule)
+  if (problem !== null) throw new Error(problem)
   if (rule.kind === 'auto') return isAutoTitle
   if (rule.kind === 'preset') return (line) => presetMatches(rule.id, line)
   const re = new RegExp(rule.pattern, 'i')

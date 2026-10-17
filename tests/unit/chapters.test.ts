@@ -9,7 +9,7 @@ import {
   splitChapters,
   PREAMBLE_TITLE
 } from '../../src/core/chapters'
-import { DEFAULT_CHAPTER_RULE } from '../../src/core/types'
+import { DEFAULT_CHAPTER_RULE, type ChapterRule } from '../../src/core/types'
 
 const fixture = (name: string): string =>
   readFileSync(join(__dirname, '..', 'fixtures', name), 'utf8')
@@ -320,6 +320,12 @@ describe('可配置的分章规则', () => {
       'special'
     ])
     for (const label of Object.values(CHAPTER_PRESETS)) expect(label.length).toBeGreaterThan(0)
+  })
+
+  it('非法规则在切章入口直接抛错，不静默退化', () => {
+    const bogus = { kind: 'preset', id: 'nope' } as unknown as ChapterRule
+    expect(() => isChapterTitle('第一章 甲', bogus)).toThrow('id')
+    expect(() => splitChapters('第一章 甲\n正文。\n', 'x', bogus)).toThrow('id')
   })
 
   it('splitChapters 接受规则参数', () => {
