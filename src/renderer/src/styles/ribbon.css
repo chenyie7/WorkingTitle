@@ -948,6 +948,17 @@
   cursor: pointer;
 }
 
+.wt-modal__row--top {
+  align-items: flex-start;
+}
+
+.wt-chapter-current {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wt-chapter-rules {
   display: flex;
   flex-direction: column;

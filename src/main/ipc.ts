@@ -31,7 +31,7 @@ export async function openNovel(filePath: string): Promise<Novel> {
   try {
     return await openNovelInBackground(filePath)
   } catch (err) {
-    // 只有「起不来」才回退：请求进行中退出时主进程会重跑用户规则，正则可能把界面卡死。
+    // open 请求中途退出仍可回退；resplit 的退出由它的 handler 直接报错，不重跑用户正则。
     if (!(err instanceof NovelWorkerUnavailableError) || err instanceof NovelWorkerExitedError) throw err
     console.warn('[wt] 后台解码不可用，回退到主进程同步读取：', err)
   }

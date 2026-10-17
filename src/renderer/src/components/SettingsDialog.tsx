@@ -1002,14 +1002,14 @@ export function SettingsDialog({
                   <IconToc className="wt-modal__label-icon" />
                   当前小说
                 </span>
-                <span data-testid="chapter-current">
+                <span className="wt-chapter-current" data-testid="chapter-current">
                   {novelTitle === null
                     ? '未导入小说（先到「阅读设置」导入）'
                     : `${novelTitle} · 共 ${chapterCount} 章`}
                 </span>
               </div>
 
-              <div className="wt-modal__row">
+              <div className="wt-modal__row wt-modal__row--top">
                 <span className="wt-modal__label">识别规则</span>
                 <div className="wt-chapter-rules">
                   <div
