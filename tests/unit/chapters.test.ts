@@ -323,9 +323,11 @@ describe('可配置的分章规则', () => {
   })
 
   it('splitChapters 接受规则参数', () => {
-    const text = 'Chapter 1 A\n正文\nChapter 2 B\n正文'
-    const { flatText, chapters } = splitChapters(text, 'x', { kind: 'preset', id: 'chapter-en' })
-    expect(chapters.map((c) => c.title)).toEqual(['Chapter 1 A', 'Chapter 2 B'])
+    const text = '☆、开端\n故事开始。\n【第二章】\n继续。'
+    const { flatText, chapters } = splitChapters(text, 'x', { kind: 'preset', id: 'special' })
+    expect(chapters.map((c) => c.title)).toEqual(['☆、开端', '【第二章】'])
     expect(flatText).toBe(text)
+    // 前提自检：默认规则认不出这两行，否则这条用例证明不了第三个参数生效
+    expect(splitChapters(text, 'x').chapters).toHaveLength(1)
   })
 })
