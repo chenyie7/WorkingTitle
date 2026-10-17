@@ -32,7 +32,14 @@ export interface SessionStore {
   writeSettings(s: unknown): IpcResult<void>
   readSession(sourcePath: string): PersistedSession | null
   writeSession(s: unknown): IpcResult<void>
-  clearReadingHistory(): IpcResult<void>
+  /** 删掉一本书的进度文件。文件不存在也算成功。 */
+  deleteSession(sourcePath: string): IpcResult<void>
+  /** 把一本书的会话写到另一个路径下，旧文件保留。目标已可读时短路。 */
+  copySession(fromSourcePath: string, toSourcePath: string): boolean
+  /** 单槽缓存属于这本书时，把两个缓存文件一起删掉。 */
+  deleteCacheFor(sourcePath: string): void
+  /** 会话文件的修改时间，用来排「最近阅读」。没有会话给 null。 */
+  sessionFileMtime(sourcePath: string): number | null
   migrateLegacySession(): void
   writeNovelCache(novel: Novel, chapterRule?: ChapterRule): void
   readNovelCacheEntry(
@@ -503,33 +510,51 @@ export function createSessionStore(baseDir: string): SessionStore {
         : { ok: false, reason: '会话写盘失败' }
     },
 
-    clearReadingHistory(): IpcResult<void> {
-      // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
-      // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
-      // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
-      const failed: string[] = []
-      for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
-        try {
-          // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
-          // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
-          // 告警更糟：它教会看日志的人忽略这一行。
-          rmSync(p, { force: true })
-        } catch (err) {
-          failed.push(p)
-          console.warn('[wt] 删除持久化文件失败：', p, err)
-        }
-      }
-      // 整个目录一起删，而不是先 readdir 再逐个删：少一次「列目录时多出来一个新文件」的
-      // 竞态，也不用维护「哪些文件算会话」这份名单。
+    deleteSession(sourcePath: string): IpcResult<void> {
+      if (typeof sourcePath !== 'string') return { ok: false, reason: '路径不是字符串' }
       try {
-        rmSync(sessionsDir, { recursive: true, force: true })
+        rmSync(sessionFile(sourcePath), { force: true })
+        return { ok: true, value: undefined }
       } catch (err) {
-        failed.push(sessionsDir)
-        console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
+        console.warn('[wt] 删除会话失败：', err)
+        return { ok: false, reason: '删除会话失败' }
       }
-      return failed.length === 0
-        ? { ok: true, value: undefined }
-        : { ok: false, reason: `删除失败：${failed.join('、')}` }
+    },
+
+    copySession(fromSourcePath: string, toSourcePath: string): boolean {
+      if (typeof fromSourcePath !== 'string' || typeof toSourcePath !== 'string') return false
+      const session = readSessionFile(sessionFile(fromSourcePath), fromSourcePath)
+      if (session === null) return false
+      const target = sessionFile(toSourcePath)
+      // 目标已可读时短路：那一份通常更新（同一本书上一次已经迁过）。
+      if (readSessionFile(target, toSourcePath) !== null) return true
+      // 写成功不等于读得回来：迁移成功后要删旧会话，必须确认新文件真的可用。
+      return (
+        writeSessionFile(target, { ...session, sourcePath: toSourcePath }) &&
+        readSessionFile(target, toSourcePath) !== null
+      )
+    },
+
+    deleteCacheFor(sourcePath: string): void {
+      try {
+        if (!existsSync(cacheMetaPath)) return
+        const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
+        if (typeof parsed !== 'object' || parsed === null) return
+        if ((parsed as Record<string, unknown>).sourcePath !== sourcePath) return
+        rmSync(cacheMetaPath, { force: true })
+        rmSync(cacheTextPath, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除小说缓存失败：', err)
+      }
+    },
+
+    sessionFileMtime(sourcePath: string): number | null {
+      if (typeof sourcePath !== 'string') return null
+      try {
+        return statSync(sessionFile(sourcePath)).mtimeMs
+      } catch {
+        return null
+      }
     },
 
     migrateLegacySession(): void {

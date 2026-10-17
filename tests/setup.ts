@@ -33,10 +33,11 @@ const benignApi: WtApi = {
     throw new Error('测试桩：没有实现 openNovelPath，用例应自行提供 window.api')
   },
   resplitNovel: async () => ({ ok: false, reason: '测试桩：没有实现 resplitNovel' }),
+  listNovels: async () => [],
+  deleteNovel: async () => ({ ok: true, value: undefined }),
   initialNovelPath: async () => null,
   loadSession: async () => null,
   saveSession: async () => ({ ok: true, value: undefined }),
-  clearSession: async () => ({ ok: true, value: undefined }),
   loadSettings: async () => defaultSettings(),
   saveSettings: async () => ({ ok: true, value: undefined }),
   onMenuCommand: () => () => {},

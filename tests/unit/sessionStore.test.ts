@@ -54,16 +54,13 @@ const SRC = '/tmp/测试书.txt'
  * 会话文件在磁盘上的位置。
  *
  * 【为什么测试自己算一遍 sha256 而不是从实现里 import】判据要独立：把实现里的算法换掉
- * （比如换成 base64），这些用例必须跟着红，而不是跟着实现一起漂。仓库里已有的会话路径
- * 断言（clearReadingHistory 那条）也是这个姿势。
+ * （比如换成 base64），这些用例必须跟着红，而不是跟着实现一起漂。
  */
 function sessionFile(dir: string, sourcePath: string): string {
   const key = createHash('sha256').update(sourcePath, 'utf8').digest('hex').slice(0, 32)
   return join(dir, 'sessions', `${key}.json`)
 }
 
-// 这两个辅助函数放在模块级而不是第二个 describe 里：clearReadingHistory 那条用例也要用它
-// （此前它一个缓存都没写，于是它的两条 novel-cache 断言在测「两个从未创建的文件的缺失」）。
 function writeSource(content: string): string {
   const p = join(dir, 'src.txt')
   writeFileSync(p, content, 'utf8')
@@ -243,70 +240,6 @@ describe('sessionStore 会话读写', () => {
     } finally {
       spy.mockRestore()
     }
-  })
-
-  it('clearReadingHistory 清掉所有书的进度与缓存，留下设置', () => {
-    const store = createSessionStore(dir)
-    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
-    store.writeSession(makeSession({ sourcePath: '/tmp/B.txt' }))
-    const src = writeSource('第一章 甲\n正文。\n')
-    store.writeNovelCache(makeNovel(src))
-    store.writeSettings({
-      docTitle: '季度汇报',
-      themeSource: 'dark',
-      darkPaper: true,
-      lastSourcePath: '/tmp/A.txt',
-      ratio: 10,
-      // 后加的必填字段；这里给默认值，本用例要钉的是「清除记录不动设置」
-      workDocPath: null,
-      bossFillPercent: 100,
-      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
-      // shortcuts 是后加的必填字段；这里给空表，本用例要钉的是「清除记录不动设置」
-      shortcuts: {}
-    })
-    // 前提：这些东西确实落盘了。少了这几行，下面的断言测的是「几个从未被创建过的文件
-    // 不存在」——无论 clearReadingHistory 做什么都会通过。
-    expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(true)
-    expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
-    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
-    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(true)
-    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
-    // 旧版留下的单槽会话文件（没有 Task 5 的迁移时它就在那儿）：「清除阅读记录」应当把它清掉。
-    writeFileSync(join(dir, 'session.json'), '{"novelTitle":"旧版残留', 'utf8')
-    expect(existsSync(join(dir, 'session.json'))).toBe(true)
-    // 模拟崩溃留在磁盘上的临时文件（写了一半就死掉的那份）：「清除阅读记录」应当把它一起清掉。
-    // 少了下面这一行，删除列表里 `${legacySessionPath}.tmp` 那一项就是**没有任何用例观测**的——
-    // 把它删掉不会有断言变红。
-    writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
-    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
-
-    store.clearReadingHistory()
-
-    // **两本书各一份**：清除要一次清干净，不是只清「最近那本」
-    expect(store.readSession('/tmp/A.txt')).toBeNull()
-    expect(store.readSession('/tmp/B.txt')).toBeNull()
-    expect(existsSync(join(dir, 'sessions'))).toBe(false)
-    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
-    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
-    expect(existsSync(join(dir, 'session.json'))).toBe(false)
-    expect(existsSync(join(dir, 'session.json.tmp'))).toBe(false)
-    // 设置不在此列：它是用户的偏好，与「读到哪」无关
-    expect(store.readSettings()).toEqual({
-      docTitle: '季度汇报',
-      themeSource: 'dark',
-      darkPaper: true,
-      lastSourcePath: '/tmp/A.txt',
-      ratio: 10,
-      workDocPath: null,
-      bossFillPercent: 100,
-      pageFontSize: PAGE_FONT_SIZE_DEFAULT,
-      shortcuts: {}
-    })
-  })
-
-  it('clearReadingHistory 在文件不存在时不抛异常', () => {
-    const store = createSessionStore(dir)
-    expect(() => store.clearReadingHistory()).not.toThrow()
   })
 
   it('chapterRule 写入后能原样读回', () => {
@@ -710,8 +643,8 @@ describe('sessionStore 设置读写', () => {
     }
     const bad = mangle(good)
     // 前提三：完好的那份确实被接受——否则「坏的被拒」可能只是因为它本来就过不了。
-    // 这一条同时钉住 lastSourcePath 允许 null：默认值与「清除阅读记录」之后写回的都是 null，
-    // 而那两处若被误判成非法，症状是这个字段连着的四项设置一起回默认值。
+    // 这一条同时钉住 lastSourcePath 允许 null：默认值里它就是 null，而这个字段若被误判成
+    // 非法，症状是它连着的四项设置一起回默认值。
     writeFileSync(join(dir, 'settings.json'), JSON.stringify(good), 'utf8')
     expect(store.readSettings()).toEqual(good)
     writeFileSync(join(dir, 'settings.json'), JSON.stringify(bad), 'utf8')
@@ -891,8 +824,7 @@ describe('旧版单槽会话的迁移', () => {
     const legacy = makeSession({ sourcePath: '/tmp/旧书.txt', cursor: 77 })
     writeFileSync(join(dir, 'session.json'), JSON.stringify(legacy), 'utf8')
     // 旧版写会话用的是 temp+rename，进程死在中间会留下这个半截文件。迁移要把它一起清掉，
-    // 否则「清除阅读记录」之外的路径永远碰不到它——而它正是 clearReadingHistory 列表里
-    // 那一项想清的东西（那一项由 Task 4 的另一条用例钉住，这里管的是迁移这一句）。
+    // 否则它永远不会再被读到，也没有别的路径会碰它。
     writeFileSync(join(dir, 'session.json.tmp'), '{"novelTitle":"半', 'utf8')
     expect(existsSync(join(dir, 'session.json.tmp'))).toBe(true)
 
@@ -1272,6 +1204,87 @@ describe('shortcuts 字段的向后兼容', () => {
   })
 })
 
+describe('书库用到的会话与缓存操作', () => {
+  it('deleteSession 只删指定书', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/B.txt' }))
+
+    expect(store.deleteSession('/tmp/A.txt').ok).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(false)
+    expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
+  })
+
+  it('deleteSession 对不存在的文件也返回 ok', () => {
+    const store = createSessionStore(dir)
+    expect(store.deleteSession('/tmp/从来没有过.txt').ok).toBe(true)
+  })
+
+  it('deleteSession 收到非字符串路径时返回失败而不是抛', () => {
+    const store = createSessionStore(dir)
+    expect(store.deleteSession(123 as unknown as string).ok).toBe(false)
+  })
+
+  it('copySession 把会话复制到新路径，旧文件仍在', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/原路径.txt', cursor: 42 }))
+
+    expect(store.copySession('/tmp/原路径.txt', '/tmp/库/拷贝.txt')).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/原路径.txt'))).toBe(true)
+
+    const copied = store.readSession('/tmp/库/拷贝.txt')
+    expect(copied?.sourcePath).toBe('/tmp/库/拷贝.txt')
+    expect(copied?.cursor).toBe(42)
+  })
+
+  it('copySession 目标已可读时不覆盖', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/原路径.txt', cursor: 42 }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/库/拷贝.txt', cursor: 99 }))
+
+    expect(store.copySession('/tmp/原路径.txt', '/tmp/库/拷贝.txt')).toBe(true)
+    expect(store.readSession('/tmp/库/拷贝.txt')?.cursor).toBe(99)
+  })
+
+  it('copySession 源不存在时返回 false', () => {
+    const store = createSessionStore(dir)
+    expect(store.copySession('/tmp/没有.txt', '/tmp/库/拷贝.txt')).toBe(false)
+  })
+
+  it('copySession 收到非字符串路径时返回 false 而不是抛', () => {
+    const store = createSessionStore(dir)
+    // 源必须先存在：否则 toSourcePath 那条断言会停在「源读不出来」，根本走不到那个闸。
+    store.writeSession(makeSession({ sourcePath: '/tmp/x.txt' }))
+    expect(store.copySession(123 as unknown as string, '/tmp/x.txt')).toBe(false)
+    expect(store.copySession('/tmp/x.txt', 123 as unknown as string)).toBe(false)
+  })
+
+  it('sessionFileMtime 有会话给数字，没有给 null', () => {
+    const store = createSessionStore(dir)
+    expect(store.sessionFileMtime('/tmp/A.txt')).toBeNull()
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    expect(typeof store.sessionFileMtime('/tmp/A.txt')).toBe('number')
+  })
+
+  it('sessionFileMtime 收到非字符串路径时返回 null 而不是抛', () => {
+    const store = createSessionStore(dir)
+    expect(store.sessionFileMtime(123 as unknown as string)).toBeNull()
+  })
+
+  it('deleteCacheFor 只删属于这本书的缓存', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src), DEFAULT_CHAPTER_RULE)
+
+    store.deleteCacheFor('/tmp/别的书.txt')
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
+
+    store.deleteCacheFor(src)
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
+    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
+  })
+})
+
 describe('写通道先校验再落盘', () => {
   it('writeSettings 拒绝不合法载荷，磁盘上原来那份不被覆盖', () => {
     const store = createSessionStore(dir)
@@ -1290,14 +1303,5 @@ describe('写通道先校验再落盘', () => {
     const result = store.writeSession({ ...good, cursor: Number.NaN })
     expect(result.ok).toBe(false)
     expect(store.readSession('/tmp/测试书.txt')).toEqual(good)
-  })
-
-  it('clearReadingHistory 返回 ok，只清阅读记录、不碰设置', () => {
-    const store = createSessionStore(dir)
-    store.writeSession(makeSession())
-    store.writeSettings(defaultSettings())
-    expect(store.clearReadingHistory().ok).toBe(true)
-    expect(existsSync(join(dir, 'sessions'))).toBe(false)
-    expect(existsSync(join(dir, 'settings.json'))).toBe(true)
   })
 })

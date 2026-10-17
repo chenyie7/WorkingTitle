@@ -1,6 +1,9 @@
 import { dialog, ipcMain, nativeTheme, type BrowserWindow } from 'electron'
 import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
+import { getLibraryStore } from './library'
+import { titleFromFileName } from './libraryStore'
+import { importNovelToLibrary } from './novelImport'
 import { chapterRuleProblem } from '../core/chapters'
 import {
   NovelWorkerExitedError,
@@ -17,7 +20,15 @@ import { loadWorkDocImage } from './workDocImage'
 // 报 TS2304「Cannot find name 'CH'」6 处，全部落在本文件的 ipcMain.handle 调用上。
 import { CH } from './channels'
 import type { IpcResult } from '../core/api'
-import type { AppSettings, Chapter, ChapterRule, Novel, PersistedSession } from '../core/types'
+import type {
+  AppSettings,
+  Chapter,
+  ChapterRule,
+  ImportNovelResult,
+  LibraryEntry,
+  Novel,
+  PersistedSession
+} from '../core/types'
 
 export { CH, MENU_COMMANDS, type MenuCommand } from './channels'
 
@@ -76,7 +87,7 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  ipcMain.handle(CH.importNovel, async (): Promise<IpcResult<Novel>> => {
+  ipcMain.handle(CH.importNovel, async (): Promise<IpcResult<ImportNovelResult>> => {
     const win = deps.getWindow()
     const options: Electron.OpenDialogOptions = {
       title: '导入小说',
@@ -94,10 +105,21 @@ export function registerIpc(deps: IpcDeps): void {
         ? await dialog.showOpenDialog(win, options)
         : await dialog.showOpenDialog(options)
       if (result.canceled || result.filePaths.length === 0) return { ok: false, reason: 'canceled' }
-      return { ok: true, value: await openNovel(result.filePaths[0]) }
+      const selected = result.filePaths[0]
+      if (getLibraryStore().isInsideLibrary(selected)) {
+        return { ok: true, value: { novel: await openNovel(selected), status: 'already-imported' } }
+      }
+      return {
+        ok: true,
+        value: await importNovelToLibrary(selected, {
+          store: getStore(),
+          library: getLibraryStore(),
+          openNovel
+        })
+      }
     } catch (err) {
       console.warn('[wt] 导入小说失败：', err)
-      return { ok: false, reason: `导入失败：${err instanceof Error ? err.message : String(err)}` }
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
 
@@ -152,12 +174,17 @@ export function registerIpc(deps: IpcDeps): void {
     return loadWorkDocImage(src, baseDir)
   })
 
-  ipcMain.handle(CH.openNovelPath, async (_e, filePath: string): Promise<IpcResult<Novel>> => {
+  ipcMain.handle(CH.openNovelPath, async (_e, filePath: unknown): Promise<IpcResult<Novel>> => {
+    if (typeof filePath !== 'string') return { ok: false, reason: '路径不是字符串' }
     try {
-      return { ok: true, value: await openNovel(filePath) }
+      if (getLibraryStore().isInsideLibrary(filePath)) {
+        return { ok: true, value: await openNovel(filePath) }
+      }
+      const deps = { store: getStore(), library: getLibraryStore(), openNovel }
+      return { ok: true, value: (await importNovelToLibrary(filePath, deps)).novel }
     } catch (err) {
       console.warn('[wt] 打开小说失败：', filePath, err)
-      return { ok: false, reason: `打开失败：${err instanceof Error ? err.message : String(err)}` }
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
 
@@ -197,7 +224,41 @@ export function registerIpc(deps: IpcDeps): void {
     getStore().writeSession(session)
   )
 
-  ipcMain.handle(CH.clearSession, (): IpcResult<void> => getStore().clearReadingHistory())
+  ipcMain.handle(CH.listNovels, (): LibraryEntry[] => {
+    const store = getStore()
+    const library = getLibraryStore()
+    return library.listRawEntries().map((raw) => {
+      const sourcePath = raw.copyPath ?? ''
+      const session = sourcePath === '' ? null : store.readSession(sourcePath)
+      return {
+        id: raw.id,
+        title: raw.fileName === null ? '无法读取的条目' : titleFromFileName(raw.fileName),
+        sourcePath,
+        originalPath: raw.meta?.originalPath ?? '',
+        size: raw.meta?.size ?? 0,
+        importedAt: raw.meta?.importedAt ?? 0,
+        charCount: raw.meta?.charCount ?? 0,
+        cursor: session?.cursor ?? 0,
+        lastReadAt: sourcePath === '' ? null : store.sessionFileMtime(sourcePath),
+        broken: raw.broken
+      }
+    })
+  })
+
+  ipcMain.handle(CH.deleteNovel, (_e, id: unknown): IpcResult<void> => {
+    if (typeof id !== 'string') return { ok: false, reason: 'id 不是字符串' }
+    const library = getLibraryStore()
+    const raw = library.listRawEntries().find((entry) => entry.id === id)
+    // 先删拷贝目录：失败就会话不动，书还在。
+    const removed = library.removeEntry(id)
+    if (!removed.ok) return removed
+    if (raw?.copyPath == null) return { ok: true, value: undefined }
+    const store = getStore()
+    const session = store.deleteSession(raw.copyPath)
+    store.deleteCacheFor(raw.copyPath)
+    if (!session.ok) return { ok: false, reason: `${session.reason}：${raw.copyPath}` }
+    return session
+  })
 
   ipcMain.handle(CH.loadSettings, (): AppSettings => getStore().readSettings())
 

@@ -173,30 +173,30 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
 })
 
 /**
- * 四页的面板必须一样大。
+ * 五页的面板必须一样大。
  *
  * 【为什么只有这条判得了】jsdom 没有布局，`getBoundingClientRect()` 恒为 0——这个不变量
  * 在单测里根本不存在。它只能由真机判。
  *
- * 【改动前为什么是红的】面板高度由内容撑（`height: auto` + `max-height`），四页的行数差得远，
+ * 【改动前为什么是红的】面板高度由内容撑（`height: auto` + `max-height`），五页的行数差得远，
  * 而遮罩是垂直居中的，所以换页时面板既变高矮、又上下跳。
  */
-test('设置面板四页大小一致', async () => {
+test('设置面板五页大小一致', async () => {
   await win.locator('[data-testid="tab-文件"]').click()
   await win.locator('[data-testid="btn-settings"]').click()
   await expect(win.locator('[data-testid="settings"]')).toBeVisible()
 
-  const pages = ['reading', 'appearance', 'shortcuts', 'chapters']
+  const pages = ['reading', 'library', 'appearance', 'shortcuts', 'chapters']
   const heights: number[] = []
   const overflows: number[] = []
   for (const id of pages) {
     await win.locator(`[data-testid="settings-tab-${id}"]`).click()
     // 【为什么等它可见再量】`click()` 只保证「点到了」，不保证「切过去了」。少了这一行，
-    // 点击处理器坏掉时四次都会量到同一页的高度——下面那条 `Set.size === 1` 会**假绿**。
+    // 点击处理器坏掉时五次都会量到同一页的高度——下面那条 `Set.size === 1` 会**假绿**。
     // 等的是「被点那一页真的可见」，等价于断言切换确实生效。
     await expect(win.locator(`[data-testid="settings-tabpanel-${id}"]`)).toBeVisible()
-    // 【另三页必须藏着】少了这一条还有一个假绿口子：若有人删掉
-    // `.wt-tabpanel[hidden] { display: none }`，四页会叠在一起、面板每次都是同一个值，
+    // 【另四页必须藏着】少了这一条还有一个假绿口子：若有人删掉
+    // `.wt-tabpanel[hidden] { display: none }`，五页会叠在一起、面板每次都是同一个值，
     // `Set.size === 1` 照样绿（而被点的那块本来就可见，上面那个 settle 点也不会失败）。
     // 那条 CSS 自己的注释就写着「单测只看属性，照样全绿」——这条 e2e 正好补上。
     for (const other of pages.filter((x) => x !== id)) {
@@ -215,11 +215,11 @@ test('设置面板四页大小一致', async () => {
     )
   }
 
-  // 【四者必须**严格**相等，不是「差不多」】四页的行数差得远，高度只要还由内容撑，
+  // 【五者必须**严格**相等，不是「差不多」】五页的行数差得远，高度只要还由内容撑，
   // 这条当场红。
   expect(new Set(heights).size).toBe(1)
 
-  // 【四页一致还不够：还要确认内容没被裁】少了这一条，把固定高度改小之后四页仍然相等，
+  // 【五页一致还不够：还要确认内容没被裁】少了这一条，把固定高度改小之后五页仍然相等，
   // 而阅读设置那页的内容被切掉——上面那条照样绿。
   //
   // 判的是 `scrollHeight <= clientHeight`，**不是某个绝对像素值**：它不依赖字体度量，
@@ -293,10 +293,11 @@ test('preload 暴露的接口与渲染层契约一致（进程边界的运行期
     loadWorkDocImage: 'function',
     openNovelPath: 'function',
     resplitNovel: 'function',
+    listNovels: 'function',
+    deleteNovel: 'function',
     initialNovelPath: 'function',
     loadSession: 'function',
     saveSession: 'function',
-    clearSession: 'function',
     loadSettings: 'function',
     saveSettings: 'function',
     onMenuCommand: 'function',

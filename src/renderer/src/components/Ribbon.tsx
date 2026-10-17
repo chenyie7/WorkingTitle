@@ -3,7 +3,7 @@ import { getApi } from '../api'
 import { defaultShortcut, formatShortcut, platformKind } from '../../../core/shortcuts'
 import { DEFAULT_CHAPTER_RULE, PAGE_FONT_SIZE_DEFAULT } from '../../../core/types'
 import { SettingsDialog } from './SettingsDialog'
-import type { ChapterRule, ThemeSource } from '../../../core/types'
+import type { ChapterRule, LibraryEntry, ThemeSource } from '../../../core/types'
 import type { IpcResult } from '../../../core/api'
 import { Toolbar, type ToolbarGroup } from './Toolbar'
 import {
@@ -1218,6 +1218,13 @@ const ignoreApplyChapterRule = async (): Promise<IpcResult<number>> => ({
   reason: '没有可用的分章功能'
 })
 
+/** 书库那两个动作的默认实现（同一条理由：身份稳定，别每次渲染换新函数）。 */
+const ignoreOpenNovel = async (): Promise<boolean> => false
+const ignoreDeleteNovel = async (): Promise<IpcResult<void>> => ({
+  ok: false,
+  reason: '未接线'
+})
+
 /**
  * 空稀疏表＝一条都没改过。**不要在这里先 `resolveShortcuts` 补齐**：真接上之后 App 传下来
  * 的就是那张稀疏表（缺条目＝用该平台的默认值），而补齐这一步在设置对话框里按当前平台做。
@@ -1259,6 +1266,9 @@ export function Ribbon({
   chapterCount = 0,
   chapterRule = DEFAULT_CHAPTER_RULE,
   onApplyChapterRule = ignoreApplyChapterRule,
+  currentSourcePath = null,
+  onOpenNovel = ignoreOpenNovel,
+  onDeleteNovel = ignoreDeleteNovel,
   settingsShortcut = formatShortcut(defaultShortcut('open-settings', platformKind(platform)), platformKind(platform))
 }: {
   docTitle: string
@@ -1319,6 +1329,10 @@ export function Ribbon({
   chapterCount?: number
   chapterRule?: ChapterRule
   onApplyChapterRule?: (rule: ChapterRule) => Promise<IpcResult<number>>
+  /** 当前书的拷贝路径；null＝没打开。 */
+  currentSourcePath?: string | null
+  onOpenNovel?: (sourcePath: string) => Promise<boolean>
+  onDeleteNovel?: (entry: LibraryEntry) => Promise<IpcResult<void>>
   /**
    * 「设置」那个按钮的 title 里显示的快捷键。**默认值从注册表推**（注册表里那一条的默认
    * 键，按上面那个 `platform` 格式化）——所以调用方不传也是对的，而用户改过键之后要由
@@ -1391,6 +1405,9 @@ export function Ribbon({
         chapterCount={chapterCount}
         chapterRule={chapterRule}
         onApplyChapterRule={onApplyChapterRule}
+        currentSourcePath={currentSourcePath}
+        onOpenNovel={onOpenNovel}
+        onDeleteNovel={onDeleteNovel}
       />
     </div>
   )

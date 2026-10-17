@@ -99,7 +99,9 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 - `src/main/` — 文件 IO、编码检测、设置与会话与缓存落盘、原生菜单（**只有 macOS 建**，见「原生菜单」一节）、IPC handler。
   三个小文件各有分工：`channels.ts` 是**通道名与菜单命令名的唯一出口**（`CH` / `MENU_COMMANDS`），
-  `startup.ts` 是**不 import electron 的纯逻辑**（所以能直接单测），`sessionStore.ts` 是全部落盘逻辑。
+  `startup.ts` 是**不 import electron 的纯逻辑**（所以能直接单测），`sessionStore.ts` 是设置 / 会话 / 缓存三类落盘逻辑。
+  书库目录与 `meta.json` 归 `libraryStore.ts`，导入编排（拷贝、会话迁移、回滚）在 `novelImport.ts`——
+  它同样不 import electron，`library.ts` 只负责 `getLibraryStore()` 单例。
   小说解码（读 → 解码 → 切章 → 缓存）跑在 `novelWorker.ts` 这个 utility process 里，主进程经
   `novelLoader.ts` 转发——9MB 样本约 200ms，放在主进程会让其它 IPC 一起排队。
 - `src/preload/` — 唯一的桥；`contextIsolation: true` / `nodeIntegration: false` / `sandbox: true` 不可放宽
@@ -163,22 +165,24 @@ pnpm dist:dir / dist:mac / dist:win         # electron-builder 打包
 
 ### 持久化
 
-`userData`（可用 `WT_USER_DATA` 环境变量重定向，E2E 与便携模式用）下的几类文件，**每一个的校验方式与
-「为什么这么写」都在 `sessionStore.ts` 里**（`sessionProblem` / `cacheMetaProblem` / `settingsProblem`
-是一套姿势：**逐字段问、返回不合格的那个字段名**，而不是 true/false——静默回退会让「进度莫名其妙没了」
-无从查起）：
+`userData`（可用 `WT_USER_DATA` 环境变量重定向，E2E 与便携模式用）下的几类文件，**设置 / 会话 / 缓存
+三类的校验方式与「为什么这么写」在 `sessionStore.ts` 里**（`sessionProblem` / `cacheMetaProblem` /
+`settingsProblem`），**书库 meta 在 `libraryStore.ts` 的 `libraryMetaProblem`**——同一套姿势：
+**逐字段问、返回不合格的那个字段名**，而不是 true/false——静默回退会让「进度莫名其妙没了」无从查起：
 
 | 文件                                   | 是什么                                                                                                                                                                  | 关键点                                                                                                                                                                                                 |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `settings.json`                        | 文档名 / 外观 / 纸张 / **全局**的阅读替换 `ratio`（新导入的书拿它当起点；**当前书**那份在 `sessions/` 里）/ `lastSourcePath` / `shortcuts`（**稀疏表**，`{}` 即全默认） | 一个字段不合格就**整份退回默认值**；旧版缺字段先按 `FILLED_DEFAULTS` 补齐再校验（判据是**键不存在**，不是值是 undefined），否则升级一次就把用户改过的设置一起抹掉                                      |
-| `sessions/<sha256 前 32 hex>.json`     | **每本书一份**的进度与**分章规则** `chapterRule`（缺字段＝自动识别，旧会话照常有效）                                                                                    | 文件名是 `sourcePath` 的哈希（定长、只含 hex），所以文件**内容**里也带着 `sourcePath`，读回来要**比对是不是同一本**——放过的话会把 B 书的进度套到 A 书上                                                |
+| `settings.json`                        | 文档名 / 外观 / 纸张 / **全局**的阅读替换 `ratio`（新导入的书拿它当起点；**当前书**那份在 `sessions/` 里）/ `lastSourcePath`（指向书库里那份**拷贝件**，不是原文件；升级后首次打开前可能仍是原路径）/ `shortcuts`（**稀疏表**，`{}` 即全默认） | 一个字段不合格就**整份退回默认值**；旧版缺字段先按 `FILLED_DEFAULTS` 补齐再校验（判据是**键不存在**，不是值是 undefined），否则升级一次就把用户改过的设置一起抹掉                                      |
+| `sessions/<sha256 前 32 hex>.json`     | **每本书一份**的进度与**分章规则** `chapterRule`（缺字段＝自动识别，旧会话照常有效）                                                                                    | 文件名是 `sourcePath`（书库拷贝件的路径）的哈希（定长、只含 hex），所以文件**内容**里也带着 `sourcePath`，读回来要**比对是不是同一本**——放过的话会把 B 书的进度套到 A 书上                                                |
 | `novel-cache.json` + `novel-cache.txt` | 解码后的目录与正文，目录上记着是按哪条规则切的、以及切章算法版本 `splitVersion`                                                                                           | 靠 `NovelCacheMeta.textBytes` 当**提交点**自我校验——没有它，进程在两次写之间崩溃会读出「A 书的目录配 B 书的正文」。它只管字节数，两段**等长**的文本仍会被放行（边界写在函数注释里）。`splitVersion` 与当前版本不同时用缓存正文重切，不重读源文件             |
 | `session.json`                         | **旧版**的单槽会话                                                                                                                                                      | 只在升级时被 `migrateLegacySession()` 搬进 `sessions/`。这是**唯一会毁数据的路径**：先确认新位置**读得出来**、再删旧文件，且 `lastSourcePath` 必须排在两条会话写入**之后**（顺序反了会把进度永久锁死） |
+| `library/<id>/` + `meta.json`          | **每本书一份**的拷贝件与元数据（原路径、文件名、导入时间、字节数、总字数）                                                                                              | 目录名是原文件绝对路径的 sha256 前 32 hex；拷贝件丢失或 meta 不合法时列表里是坏条目，只能删（重新导入同一原路径可修复）；同一路径再次导入不再建第二条 |
 
-- 三份写盘（settings / session / cache meta）全部走 **temp + rename**：直接写目标路径的话，进程死在写完之前，
+- 四份写盘（settings / session / cache meta / 书库 meta）全部走 **temp + rename**：直接写目标路径的话，进程死在写完之前，
   留下的是截断甚至空文件，游标、chapterPos、ratio、mode 全部**静默丢失**。
-- 「清除阅读记录」= 删 `sessions/` 整目录 + 小说缓存 + 旧版单槽会话，**刻意不碰 `settings.json`**——
-  偏好与「读到哪」是两件事。
+- 「清除阅读记录」只重置**当前打开那本**的位置（`cursor` / `revealStart` / `chapterPos` /
+  `activeChapter` / `startedAt`），保留比例、输入模式与分章规则；书仍开着，书库与拷贝件都不动。
+  没有打开书时只提示一句。
 
 ### 外观与主题
 

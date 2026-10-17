@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Mock } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
 import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
-import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
+import type { AppSettings, LibraryEntry, Novel, PersistedSession } from '../../src/core/types'
 import type { WtApi } from '../../src/core/api'
 
 /** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
@@ -70,7 +70,9 @@ function installApi(
     // 重复键（TS1117）。
     platform: 'darwin',
     importNovel: vi.fn(async () =>
-      novel ? { ok: true as const, value: novel } : { ok: false as const, reason: 'canceled' }
+      novel
+        ? { ok: true as const, value: { novel, status: 'imported' as const } }
+        : { ok: false as const, reason: 'canceled' }
     ),
     openNovelPath: vi.fn(async () => ({ ok: true as const, value: novel as Novel })),
     resplitNovel: vi.fn(async () => ({ ok: true as const, value: [] })),
@@ -83,7 +85,8 @@ function installApi(
       saved = s
       return { ok: true as const, value: undefined }
     }),
-    clearSession: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    listNovels: vi.fn(async () => []),
+    deleteNovel: vi.fn(async () => ({ ok: true as const, value: undefined })),
     /**
      * 【默认桩刻意不指任何书】`lastSourcePath` 是启动恢复的唯一线索，给成 null 就等于
      * 「用户上次什么都没打开」——启动什么都不开。于是凡是要有书的用例**都必须自己走导入路径**
@@ -171,6 +174,113 @@ describe('App 端到端（单测层）', () => {
     fireEvent.input(capture, { target: { value: 'x' } })
     await waitFor(() => expect(revealedChars()).toBe(10))
     expect(screen.getByTestId('page-text').textContent!.length).toBeGreaterThanOrEqual(10)
+  })
+
+  it('导入已在书库的书：提示已导入过，并照常打开', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'already-imported' as const }
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    expect(screen.getByTestId('toast').textContent).toContain('已经导入过了')
+  })
+
+  it('导入拷贝文件缺失的书：提示已修复，并照常打开', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'repaired' as const }
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    expect(screen.getByTestId('toast').textContent).toContain('拷贝文件已修复')
+  })
+
+  it('导入失败的错误只带一层前缀', async () => {
+    installApi(makeNovel())
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: false as const,
+      reason: '这个文件是空的，换一个'
+    }))
+    render(<App />)
+
+    importViaSettings()
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toBe('导入失败：这个文件是空的，换一个')
+    )
+    expect(screen.getByTestId('toast').textContent).not.toContain('导入失败：导入失败')
+  })
+
+  it('同一本书再导入：不重新读盘，书仍开着', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const loadSession = window.api.loadSession as unknown as { mock: { calls: unknown[][] } }
+    const before = loadSession.mock.calls.length
+    ;(window.api as unknown as { importNovel: unknown }).importNovel = vi.fn(async () => ({
+      ok: true as const,
+      value: { novel, status: 'already-imported' as const }
+    }))
+
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('toast').textContent).toContain('已经导入过了'))
+    expect(loadSession.mock.calls.length).toBe(before)
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+  })
+
+  it('从书库打开另一本书：按它的路径取进度，打开后对话框关闭', async () => {
+    installApi(makeNovel())
+    const other: Novel = { ...makeNovel(), title: '另一本', sourcePath: '/tmp/另一本.txt' }
+    const entries: LibraryEntry[] = [
+      {
+        id: 'f'.repeat(32),
+        title: '另一本',
+        sourcePath: other.sourcePath,
+        originalPath: '/tmp/源/另一本.txt',
+        size: 2048,
+        importedAt: 200,
+        charCount: other.flatText.length,
+        cursor: 0,
+        lastReadAt: 200,
+        broken: false
+      }
+    ]
+    const listNovels = window.api.listNovels as unknown as {
+      mockResolvedValue: (value: LibraryEntry[]) => void
+    }
+    listNovels.mockResolvedValue(entries)
+    const openNovelPath = window.api.openNovelPath as unknown as {
+      mockResolvedValue: (value: unknown) => void
+    }
+    openNovelPath.mockResolvedValue({ ok: true as const, value: other })
+    const loadSession = window.api.loadSession as unknown as { mock: { calls: [string][] } }
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    const before = loadSession.mock.calls.length
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-library'))
+    const row = await screen.findByTestId(`library-row-${'f'.repeat(32)}`)
+    fireEvent.click(within(row).getByText('打开'))
+
+    await waitFor(() => expect(window.api.openNovelPath).toHaveBeenCalledWith(other.sourcePath))
+    await waitFor(() =>
+      expect(loadSession.mock.calls.slice(before).some((c) => c[0] === other.sourcePath)).toBe(true)
+    )
+    await waitFor(() => expect(screen.queryByTestId('settings')).toBeNull())
   })
 
   it('退格回吐显示，但小说内容不变', async () => {
@@ -331,40 +441,119 @@ describe('App 端到端（单测层）', () => {
     expect(screen.queryByTestId('page-empty')).toBeNull()
   })
 
-  it('清除阅读记录后回到空状态', async () => {
+  it('清除阅读记录只重置当前书的进度，书仍开着', async () => {
     const novel = makeNovel()
-    installApi(novel)
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 5,
+      mode: 'key',
+      cursor: 15,
+      revealStart: 0,
+      chapterPos: [15, 0],
+      activeChapter: 0,
+      startedAt: 12345
+    }
+    installApi(novel, session)
     render(<App />)
     importViaSettings()
-    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+    await waitFor(() => expect(revealedChars()).toBe(15))
 
-    // 先把导入那次设置写盘的防抖推过去：不推的话，`lastSourcePath` 从来没有真正落过盘，
-    // 下面「清成 null」那条断言就与「压根没写过」区分不开。
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000)
-    })
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const savesBeforeClear = saveSession.mock.calls.length
 
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
-    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
-    expect(window.api.clearSession).toHaveBeenCalled()
+    // 同步断言：handler 在第一个 await 之前就写回了，不靠 600ms 防抖。
+    expect(saveSession.mock.calls.length).toBe(savesBeforeClear + 1)
+    await waitFor(() => expect(revealedChars()).toBe(0))
 
-    // 【清除要连「上次打开的是哪本」一起清掉】不清的话，用户按下清除再重启，那本书又自己
-    // 开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。清除之后设置那一侧也会防抖写一次，
-    // 推过去再断言（不推的话最后一条载荷还是导入时那条）。
+    // 书没有关掉：章节栏还在，空状态不出现。
+    expect(screen.queryByTestId('page-empty')).toBeNull()
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+
+    const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
+    expect(payload.cursor).toBe(0)
+    expect(payload.revealStart).toBe(0)
+    expect(payload.chapterPos).toEqual([0, 0])
+    expect(payload.activeChapter).toBe(0)
+    expect(payload.startedAt).toBeNull()
+    // 「怎么读」的偏好保留：比例与输入模式不被清零。
+    expect(payload.ratio).toBe(5)
+    expect(payload.mode).toBe('key')
+
+    // 清除不动「上次打开的是哪本」：书仍开着，重启后应当还回到它。
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000)
     })
     const saveSettings = window.api.saveSettings as unknown as {
       mock: { calls: AppSettings[][] }
     }
-    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
-    const payload = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
-    expect(payload.lastSourcePath).toBeNull()
-    // 前提：这本书此前确实被记成了「上次打开的那本」——否则上面那条断言可能只是因为
-    // lastSourcePath 从来就没被写过，「清成 null」与「压根没写过」区分不开。
-    const seen = saveSettings.mock.calls.map((c) => c[0].lastSourcePath)
-    expect(seen).toContain(novel.sourcePath)
+    expect(saveSettings.mock.calls.length).toBeGreaterThan(0)
+    expect(saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0].lastSourcePath).toBe(
+      '/tmp/测试书.txt'
+    )
+  })
+
+  it('没有打开小说时清除只提示，不写任何东西', async () => {
+    installApi(null)
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByTestId('btn-clear-session'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toContain('还没有打开小说')
+    )
+    expect(window.api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('删除当前书：阅读区回到空状态，防抖窗口过后也不会把会话写回来', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    const entries: LibraryEntry[] = [
+      {
+        id: 'a'.repeat(32),
+        title: novel.title,
+        sourcePath: novel.sourcePath,
+        originalPath: '/tmp/源/测试书.txt',
+        size: 1024,
+        importedAt: 100,
+        charCount: novel.flatText.length,
+        cursor: 0,
+        lastReadAt: 100,
+        broken: false
+      }
+    ]
+    const listNovels = window.api.listNovels as unknown as {
+      mockResolvedValue: (value: LibraryEntry[]) => void
+    }
+    listNovels.mockResolvedValue(entries)
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-library'))
+    const row = await screen.findByTestId(`library-row-${'a'.repeat(32)}`)
+    fireEvent.click(within(row).getByText('删除'))
+    fireEvent.click(within(row).getByText('确认删除'))
+
+    await waitFor(() => expect(window.api.deleteNovel).toHaveBeenCalledWith('a'.repeat(32)))
+    // 删的是当前书：状态在发 IPC 之前就清了，阅读区当场回到空状态。
+    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+
+    // 那次 setEngine(null) 会清掉待发的会话防抖写；推过防抖窗口也不许再写回来。
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const before = saveSession.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSession.mock.calls.length).toBe(before)
   })
 
   it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {
@@ -723,7 +912,7 @@ describe('分章规则随书保存', () => {
     })
   })
 
-  it('清除阅读记录后规则回到自动识别', async () => {
+  it('清除阅读记录不影响分章规则', async () => {
     const novel = makeNovel()
     const session: PersistedSession = {
       novelTitle: '测试书',
@@ -742,12 +931,25 @@ describe('分章规则随书保存', () => {
     importViaSettings()
     await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
 
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const savesBeforeClear = saveSession.mock.calls.length
+
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
-    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+    // 同步断言：立即写回，不等防抖。
+    expect(saveSession.mock.calls.length).toBe(savesBeforeClear + 1)
+    await waitFor(() => expect(revealedChars()).toBe(0))
+
     openSettings()
     fireEvent.click(screen.getByTestId('settings-tab-chapters'))
-    expect((screen.getByTestId('chapter-rule-auto') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByTestId('chapter-rule-preset-numbered') as HTMLInputElement).checked).toBe(
+      true
+    )
+
+    const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
+    expect(payload.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
   })
 
   it('在设置里应用规则：光标与已显示正文不动，章节目录换成新的', async () => {

@@ -43,8 +43,10 @@ This app is **not code-signed** (certificates cost money), so:
 
 ## Usage
 
-1. **Import a novel** — press `⌘/Ctrl + ,` to open Settings → "Import novel". You can also pass the
-   path to a `.txt` file as a command-line argument at launch.
+1. **Import a novel** — press `⌘/Ctrl + ,` to open Settings → "Import novel". The file is copied
+   into the app's data directory, so deleting the original does not affect reading. The
+   "Novel Library" page in Settings lets you browse, switch, and delete books. You can also
+   pass the path to a `.txt` file as a command-line argument at launch.
 2. **Type** — any keypress in the document area reveals the next chunk of text. The default is
    10 characters per keystroke, configurable from 1 to 500.
 3. **Jump chapters** — click any chapter in the left sidebar. `⌘/Ctrl + Shift + H` collapses the
@@ -58,6 +60,9 @@ This app is **not code-signed** (certificates cost money), so:
 
 Settings persist across restarts, and **reading progress is kept per book** — importing a second
 novel doesn't lose your place in the first.
+
+Each book can be deleted on its own; deleting removes both the copied file and that book's progress.
+"Clear reading history" only resets the currently open book; the book stays in the library.
 
 ### Two input modes
 
@@ -123,6 +128,9 @@ artifacts under Actions.
   opens the file picker. Cancel it and record again.
 - **Document name and the two reading ratios only take effect when you press Save**, not as you
   type them. Appearance, paper and input mode apply immediately.
+- **The library identifies books by the original file path**: the same file imported through a
+  symlink or a case-variant path becomes a second book, and re-importing the same path never
+  re-reads changed content.
 
 ## Tech stack
 

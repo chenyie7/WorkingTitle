@@ -1,4 +1,13 @@
-import type { AppSettings, Chapter, ChapterRule, Novel, PersistedSession, ThemeSource } from './types'
+import type {
+  AppSettings,
+  Chapter,
+  ChapterRule,
+  ImportNovelResult,
+  LibraryEntry,
+  Novel,
+  PersistedSession,
+  ThemeSource
+} from './types'
 
 /**
  * 跨进程调用的统一结果。
@@ -17,19 +26,20 @@ export type IpcResult<T> = { ok: true; value: T } | { ok: false; reason: string 
 export interface WtApi {
   /** 'darwin' | 'win32' | 'linux' */
   platform: string
-  importNovel: () => Promise<IpcResult<Novel>>
+  importNovel: () => Promise<IpcResult<ImportNovelResult>>
   importWorkDoc: () => Promise<IpcResult<Novel>>
   /** 读不出来是正常路径，返回 null，不抛 */
   loadWorkDoc: (path: string) => Promise<Novel | null>
   /** 取一张工作文档里的图片，回来的是 `data:` URL；失败给 `null` */
   loadWorkDocImage: (src: string) => Promise<string | null>
   openNovelPath: (path: string) => Promise<IpcResult<Novel>>
+  listNovels: () => Promise<LibraryEntry[]>
+  deleteNovel: (id: string) => Promise<IpcResult<void>>
   /** 按新规则重切已打开的书，返回新的章节目录；正文与进度由调用方原样保留。 */
   resplitNovel: (sourcePath: string, rule: ChapterRule) => Promise<IpcResult<Chapter[]>>
   initialNovelPath: () => Promise<string | null>
   loadSession: (sourcePath: string) => Promise<PersistedSession | null>
   saveSession: (session: PersistedSession) => Promise<IpcResult<void>>
-  clearSession: () => Promise<IpcResult<void>>
   loadSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<IpcResult<void>>
   onMenuCommand: (cb: (cmd: string) => void) => () => void
