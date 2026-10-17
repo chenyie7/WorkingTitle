@@ -419,7 +419,7 @@ export function sliceValueByLines(
 ```json
 {
   "name": "working-title",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "伪装成 Word 的打字阅读器",
   "main": "out/main/index.js",
   "license": "MIT",
