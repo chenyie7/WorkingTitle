@@ -1272,6 +1272,69 @@ describe('shortcuts 字段的向后兼容', () => {
   })
 })
 
+describe('书库用到的会话与缓存操作', () => {
+  it('deleteSession 只删指定书', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/B.txt' }))
+
+    expect(store.deleteSession('/tmp/A.txt').ok).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/A.txt'))).toBe(false)
+    expect(existsSync(sessionFile(dir, '/tmp/B.txt'))).toBe(true)
+  })
+
+  it('deleteSession 对不存在的文件也返回 ok', () => {
+    const store = createSessionStore(dir)
+    expect(store.deleteSession('/tmp/从来没有过.txt').ok).toBe(true)
+  })
+
+  it('copySession 把会话复制到新路径，旧文件仍在', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/原路径.txt', cursor: 42 }))
+
+    expect(store.copySession('/tmp/原路径.txt', '/tmp/库/拷贝.txt')).toBe(true)
+    expect(existsSync(sessionFile(dir, '/tmp/原路径.txt'))).toBe(true)
+
+    const copied = store.readSession('/tmp/库/拷贝.txt')
+    expect(copied?.sourcePath).toBe('/tmp/库/拷贝.txt')
+    expect(copied?.cursor).toBe(42)
+  })
+
+  it('copySession 目标已可读时不覆盖', () => {
+    const store = createSessionStore(dir)
+    store.writeSession(makeSession({ sourcePath: '/tmp/原路径.txt', cursor: 42 }))
+    store.writeSession(makeSession({ sourcePath: '/tmp/库/拷贝.txt', cursor: 99 }))
+
+    expect(store.copySession('/tmp/原路径.txt', '/tmp/库/拷贝.txt')).toBe(true)
+    expect(store.readSession('/tmp/库/拷贝.txt')?.cursor).toBe(99)
+  })
+
+  it('copySession 源不存在时返回 false', () => {
+    const store = createSessionStore(dir)
+    expect(store.copySession('/tmp/没有.txt', '/tmp/库/拷贝.txt')).toBe(false)
+  })
+
+  it('sessionFileMtime 有会话给数字，没有给 null', () => {
+    const store = createSessionStore(dir)
+    expect(store.sessionFileMtime('/tmp/A.txt')).toBeNull()
+    store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
+    expect(typeof store.sessionFileMtime('/tmp/A.txt')).toBe('number')
+  })
+
+  it('deleteCacheFor 只删属于这本书的缓存', () => {
+    const store = createSessionStore(dir)
+    const src = writeSource('第一章 甲\n正文。\n')
+    store.writeNovelCache(makeNovel(src), DEFAULT_CHAPTER_RULE)
+
+    store.deleteCacheFor('/tmp/别的书.txt')
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(true)
+
+    store.deleteCacheFor(src)
+    expect(existsSync(join(dir, 'novel-cache.json'))).toBe(false)
+    expect(existsSync(join(dir, 'novel-cache.txt'))).toBe(false)
+  })
+})
+
 describe('写通道先校验再落盘', () => {
   it('writeSettings 拒绝不合法载荷，磁盘上原来那份不被覆盖', () => {
     const store = createSessionStore(dir)

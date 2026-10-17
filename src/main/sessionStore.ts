@@ -32,6 +32,14 @@ export interface SessionStore {
   writeSettings(s: unknown): IpcResult<void>
   readSession(sourcePath: string): PersistedSession | null
   writeSession(s: unknown): IpcResult<void>
+  /** 删掉一本书的进度文件。文件不存在也算成功。 */
+  deleteSession(sourcePath: string): IpcResult<void>
+  /** 把一本书的会话写到另一个路径下，旧文件保留。目标已可读时短路。 */
+  copySession(fromSourcePath: string, toSourcePath: string): boolean
+  /** 单槽缓存属于这本书时，把两个缓存文件一起删掉。 */
+  deleteCacheFor(sourcePath: string): void
+  /** 会话文件的修改时间，用来排「最近阅读」。没有会话给 null。 */
+  sessionFileMtime(sourcePath: string): number | null
   clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
   writeNovelCache(novel: Novel, chapterRule?: ChapterRule): void
@@ -501,6 +509,48 @@ export function createSessionStore(baseDir: string): SessionStore {
       return writeSessionFile(sessionFile(session.sourcePath), session)
         ? { ok: true, value: undefined }
         : { ok: false, reason: '会话写盘失败' }
+    },
+
+    deleteSession(sourcePath: string): IpcResult<void> {
+      if (typeof sourcePath !== 'string') return { ok: false, reason: '路径不是字符串' }
+      try {
+        rmSync(sessionFile(sourcePath), { force: true })
+        return { ok: true, value: undefined }
+      } catch (err) {
+        console.warn('[wt] 删除会话失败：', err)
+        return { ok: false, reason: '删除会话失败' }
+      }
+    },
+
+    copySession(fromSourcePath: string, toSourcePath: string): boolean {
+      const session = readSessionFile(sessionFile(fromSourcePath), fromSourcePath)
+      if (session === null) return false
+      const target = sessionFile(toSourcePath)
+      // 目标已可读时短路：那一份通常更新（同一本书上一次已经迁过）。
+      if (readSessionFile(target, toSourcePath) !== null) return true
+      return writeSessionFile(target, { ...session, sourcePath: toSourcePath })
+    },
+
+    deleteCacheFor(sourcePath: string): void {
+      try {
+        if (!existsSync(cacheMetaPath)) return
+        const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
+        if (typeof parsed !== 'object' || parsed === null) return
+        if ((parsed as Record<string, unknown>).sourcePath !== sourcePath) return
+        rmSync(cacheMetaPath, { force: true })
+        rmSync(cacheTextPath, { force: true })
+      } catch (err) {
+        console.warn('[wt] 删除小说缓存失败：', err)
+      }
+    },
+
+    sessionFileMtime(sourcePath: string): number | null {
+      if (typeof sourcePath !== 'string') return null
+      try {
+        return statSync(sessionFile(sourcePath)).mtimeMs
+      } catch {
+        return null
+      }
     },
 
     clearReadingHistory(): IpcResult<void> {
