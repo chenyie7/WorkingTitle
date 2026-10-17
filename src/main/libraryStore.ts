@@ -197,7 +197,11 @@ export function createLibraryStore(baseDir: string): LibraryStore {
         renameSync(tmp, metaPath(id))
         return { ok: true, value: undefined }
       } catch (err) {
-        rmSync(tmp, { force: true })
+        try {
+          rmSync(tmp, { force: true })
+        } catch (cleanupErr) {
+          console.warn('[wt] 清理书库临时文件失败：', cleanupErr)
+        }
         console.warn('[wt] 写入书库元数据失败：', err)
         return { ok: false, reason: '元数据写盘失败' }
       }

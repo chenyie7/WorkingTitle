@@ -278,6 +278,23 @@ describe('列表与删除', () => {
     expect(readdirSync(entry).filter((n) => n.endsWith('.tmp'))).toEqual([])
   })
 
+  it('条目路径被普通文件占用时 writeMeta 不抛，返回 ok: false', () => {
+    const id = 'd'.repeat(32)
+    mkdirSync(join(dir, 'library'), { recursive: true })
+    writeFileSync(join(dir, 'library', id), 'x', 'utf8')
+    const meta: LibraryMeta = {
+      version: 1,
+      originalPath: '/tmp/书.txt',
+      fileName: '书.txt',
+      importedAt: 1,
+      size: 10,
+      charCount: 9
+    }
+
+    expect(() => library.writeMeta(id, meta)).not.toThrow()
+    expect(library.writeMeta(id, meta).ok).toBe(false)
+  })
+
   it('meta 损坏时回填目录里唯一的书文件', () => {
     const id = 'a'.repeat(32)
     const entry = join(dir, 'library', id)
