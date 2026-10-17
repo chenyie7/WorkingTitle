@@ -147,10 +147,10 @@ const THEME_OPTIONS = [
  * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
  *
  * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
- * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
- * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
- * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
- * 「加一行就完事」。
+ * **手写**的——各页内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而其余面板块的 `hidden` 仍按各自的
+ * `page !== '…'` 判，于是**内容区一片空白，而现有用例全绿**（它们把 id 逐个写死了）。
+ * 所以别把这句话读成「加一行就完事」。
  */
 const PAGES = [
   { id: 'reading', label: '阅读设置', icon: IconBook },
@@ -651,7 +651,7 @@ export function SettingsDialog({
 
           <div className="wt-modal__body">
             {/*
-              三个面板**都渲染**，非当前页加 `hidden`。
+              各面板**都渲染**，非当前页加 `hidden`。
               条件渲染的话，本文件与 ribbon.test.tsx 里 40 多处跨页取元素的断言全都要先切页，
               而且「打开时焦点落在文档名上（autoFocus）」那条会当场坏。
               `hidden` 也是 ARIA tabs 对非当前 tabpanel 的标准做法。
