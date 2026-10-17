@@ -67,6 +67,7 @@ export function libraryMetaProblem(v: unknown): string | null {
   ) {
     return 'fileName 不是合法文件名'
   }
+  if (m.fileName.toLowerCase() === META_NAME) return 'fileName 是保留名'
   for (const key of ['importedAt', 'size', 'charCount']) {
     const n = m[key]
     if (typeof n !== 'number' || !Number.isFinite(n)) return `${key} 不是有限数字`
@@ -82,6 +83,7 @@ export function createLibraryStore(baseDir: string): LibraryStore {
   const tempName = (): string => `.tmp-${process.pid}-${++tempSeq}`
 
   const readMeta = (id: string): LibraryMeta | null => {
+    if (!ID_RE.test(id)) return null
     try {
       const p = metaPath(id)
       if (!existsSync(p)) return null
@@ -101,7 +103,13 @@ export function createLibraryStore(baseDir: string): LibraryStore {
   const firstBookFile = (id: string): string | null => {
     try {
       const files = readdirSync(entryDir(id), { withFileTypes: true })
-        .filter((d) => d.isFile() && d.name !== META_NAME)
+        .filter(
+          (d) =>
+            d.isFile() &&
+            d.name !== META_NAME &&
+            !d.name.startsWith('.tmp-') &&
+            !d.name.endsWith('.tmp')
+        )
         .map((d) => d.name)
       return files.length === 1 ? files[0] : null
     } catch {
@@ -113,15 +121,14 @@ export function createLibraryStore(baseDir: string): LibraryStore {
     dir,
 
     isInsideLibrary(p: string): boolean {
-      const root = resolve(dir)
-      const target = resolve(p)
-      return target === root || target.startsWith(root + sep)
+      return resolve(p).startsWith(resolve(dir) + sep)
     },
 
     planImport(sourcePath: string): ImportPlan {
       const id = libraryId(sourcePath)
       const targetDir = entryDir(id)
-      const fallbackName = basename(sourcePath) || '未命名.txt'
+      const base = basename(sourcePath)
+      const fallbackName = base !== '' && base.toLowerCase() !== META_NAME ? base : '未命名.txt'
       if (!existsSync(targetDir)) {
         return {
           kind: 'fresh',
@@ -183,14 +190,14 @@ export function createLibraryStore(baseDir: string): LibraryStore {
       if (!ID_RE.test(id)) return { ok: false, reason: 'id 不合法' }
       const problem = libraryMetaProblem(meta)
       if (problem !== null) return { ok: false, reason: `元数据不合法：${problem}` }
+      const tmp = `${metaPath(id)}.${process.pid}.${++tempSeq}.tmp`
       try {
         mkdirSync(entryDir(id), { recursive: true })
-        const target = metaPath(id)
-        const tmp = `${target}.${process.pid}.${++tempSeq}.tmp`
         writeFileSync(tmp, JSON.stringify(meta), 'utf8')
-        renameSync(tmp, target)
+        renameSync(tmp, metaPath(id))
         return { ok: true, value: undefined }
       } catch (err) {
+        rmSync(tmp, { force: true })
         console.warn('[wt] 写入书库元数据失败：', err)
         return { ok: false, reason: '元数据写盘失败' }
       }

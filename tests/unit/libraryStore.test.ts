@@ -127,6 +127,34 @@ describe('导入计划', () => {
       : []
     expect(leftovers).toEqual([])
   })
+
+  it('repair 补拷失败时清掉临时文件', () => {
+    const src = makeSource('书.txt')
+    const { id, copyPath } = importFresh(src)
+    rmSync(copyPath)
+
+    const plan = library.planImport(src)
+    expect(plan.kind).toBe('repair')
+    mkdirSync(copyPath)
+    writeFileSync(join(copyPath, '占用'), '', 'utf8')
+    expect(() => library.copyIntoLibrary(src, plan)).toThrow()
+    const leftovers = readdirSync(join(dir, 'library', id)).filter((n) => n.startsWith('.tmp-'))
+    expect(leftovers).toEqual([])
+  })
+})
+
+describe('保留文件名', () => {
+  for (const name of ['meta.json', 'META.JSON']) {
+    it(`源叫 ${name} 时改名拷贝，不会覆盖元数据`, () => {
+      const src = makeSource(name, '第一章 丙\n正文。\n')
+      const { copyPath } = importFresh(src)
+
+      expect(readFileSync(copyPath, 'utf8')).toBe('第一章 丙\n正文。\n')
+      const entries = library.listRawEntries()
+      expect(entries).toHaveLength(1)
+      expect(entries[0].broken).toBe(false)
+    })
+  }
 })
 
 describe('meta 校验', () => {
@@ -151,6 +179,12 @@ describe('meta 校验', () => {
     expect(libraryMetaProblem({ ...ok, importedAt: 'x' })).toContain('importedAt')
     expect(libraryMetaProblem({ ...ok, size: Number.NaN })).toContain('size')
     expect(libraryMetaProblem({ ...ok, charCount: 'x' })).toContain('charCount')
+  })
+
+  it('fileName 拒绝点路径与保留名', () => {
+    for (const fileName of ['.', '..', 'meta.json', 'META.JSON']) {
+      expect(libraryMetaProblem({ ...ok, fileName })).toContain('fileName')
+    }
   })
 })
 
@@ -191,5 +225,84 @@ describe('列表与删除', () => {
     expect(library.isInsideLibrary(join(dir, 'library', 'x', '书.txt'))).toBe(true)
     expect(library.isInsideLibrary(join(dir, '书.txt'))).toBe(false)
     expect(library.isInsideLibrary(join(dir, 'library-evil', '书.txt'))).toBe(false)
+    expect(library.isInsideLibrary(join(dir, 'library'))).toBe(false)
+  })
+
+  it('readMeta 拒绝带路径的 id', () => {
+    const evil = join(dir, 'evil')
+    mkdirSync(evil, { recursive: true })
+    writeFileSync(
+      join(evil, 'meta.json'),
+      JSON.stringify({
+        version: 1,
+        originalPath: '/tmp/书.txt',
+        fileName: '书.txt',
+        importedAt: 1,
+        size: 10,
+        charCount: 9
+      }),
+      'utf8'
+    )
+
+    expect(library.readMeta('../evil')).toBeNull()
+  })
+
+  it('writeMeta 拒绝非法 id 与非法 meta', () => {
+    const meta: LibraryMeta = {
+      version: 1,
+      originalPath: '/tmp/书.txt',
+      fileName: '书.txt',
+      importedAt: 1,
+      size: 10,
+      charCount: 9
+    }
+    expect(library.writeMeta('../x', meta).ok).toBe(false)
+    expect(library.writeMeta('a'.repeat(32), { ...meta, fileName: 'meta.json' }).ok).toBe(false)
+  })
+
+  it('writeMeta 失败时清掉临时文件', () => {
+    const id = 'c'.repeat(32)
+    const entry = join(dir, 'library', id)
+    mkdirSync(join(entry, 'meta.json'), { recursive: true })
+    writeFileSync(join(entry, 'meta.json', '占用'), '', 'utf8')
+
+    const result = library.writeMeta(id, {
+      version: 1,
+      originalPath: '/tmp/书.txt',
+      fileName: '书.txt',
+      importedAt: 1,
+      size: 10,
+      charCount: 9
+    })
+    expect(result.ok).toBe(false)
+    expect(readdirSync(entry).filter((n) => n.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('meta 损坏时回填目录里唯一的书文件', () => {
+    const id = 'a'.repeat(32)
+    const entry = join(dir, 'library', id)
+    mkdirSync(entry, { recursive: true })
+    writeFileSync(join(entry, 'meta.json'), '{坏 json', 'utf8')
+    writeFileSync(join(entry, '书.txt'), '正文', 'utf8')
+
+    const entries = library.listRawEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].fileName).toBe('书.txt')
+    expect(entries[0].copyPath).toBe(join(entry, '书.txt'))
+    expect(entries[0].broken).toBe(true)
+  })
+
+  it('候选书文件忽略临时文件', () => {
+    const id = 'b'.repeat(32)
+    const entry = join(dir, 'library', id)
+    mkdirSync(entry, { recursive: true })
+    writeFileSync(join(entry, 'meta.json'), '{坏 json', 'utf8')
+    writeFileSync(join(entry, '书.txt'), '正文', 'utf8')
+    writeFileSync(join(entry, '.tmp-1-2'), 'tmp', 'utf8')
+    writeFileSync(join(entry, 'meta.json.1.2.tmp'), 'tmp', 'utf8')
+
+    const entries = library.listRawEntries()
+    expect(entries[0].fileName).toBe('书.txt')
+    expect(entries[0].broken).toBe(true)
   })
 })
