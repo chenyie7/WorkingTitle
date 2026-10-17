@@ -411,6 +411,8 @@ export function createSessionStore(baseDir: string): SessionStore {
     mkdirSync(baseDir, { recursive: true })
   }
 
+  // textBytes 是 meta 与缓存文本之间的提交点：只比字节数，两段等长文本仍会被放行；
+  // 崩溃窗口与两道门为什么不能拆的完整说明见 NovelCacheMeta.textBytes。
   const readNovelCacheEntry = (
     filePath: string
   ): { novel: Novel; chapterRule: ChapterRule } | null => {
