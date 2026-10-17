@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,6 +69,34 @@ describe('novelService', () => {
     })
   })
 
+  it('规则不一致时在缓存正文上重切，不重读源文件（开头空白不会回来）', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'blank.txt')
+    const SOURCE = '\n\n第一章 甲\n正文一。\n☆、开端\n正文。\n'
+    writeFileSync(src, SOURCE, 'utf8')
+
+    const auto = openNovelWithRule(store, src)
+    // 前提自检：导入时开头空白已被丢掉，缓存正文不以空行开头
+    expect(auto.flatText.startsWith('\n')).toBe(false)
+
+    writeSessionRule(store, src, { kind: 'preset', id: 'special' })
+    const re = openNovelWithRule(store, src)
+    expect(re.flatText).toBe(auto.flatText)
+    expect(re.chapters.map((c) => c.title)).toEqual(['前言', '☆、开端'])
+  })
+
+  it('规则相同且缓存命中时不重写缓存', () => {
+    const store = createSessionStore(dir)
+    const src = writeBook()
+    const first = openNovelWithRule(store, src)
+
+    const spy = vi.spyOn(store, 'writeNovelCache')
+    const second = openNovelWithRule(store, src)
+    expect(second.flatText).toBe(first.flatText)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
   it('重分章返回新章节目录、写回缓存，正文一字不动', () => {
     const store = createSessionStore(dir)
     const src = writeBook()
@@ -96,6 +124,10 @@ describe('novelService', () => {
     if (r.ok) return
     expect(r.reason).toContain('没有识别出任何章节')
     expect(store.readNovelCacheEntry(src)?.chapterRule).toEqual(DEFAULT_CHAPTER_RULE)
+    expect(store.readNovelCacheEntry(src)?.novel.chapters.map((c) => c.title)).toEqual([
+      '前言',
+      '第一章 甲'
+    ])
   })
 
   it('缓存不存在时拒绝重分章', () => {
