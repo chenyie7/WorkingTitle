@@ -7,6 +7,7 @@ import {
   chapterRuleProblem,
   hasChapterTitles,
   isChapterTitle,
+  isVolumeTitle,
   resplitChapters,
   splitChapters,
   PREAMBLE_TITLE
@@ -234,6 +235,22 @@ describe('splitChapters', () => {
     // 而不是把样本加大。
     expect(flatText).toBe(text)
   })
+})
+
+describe('isVolumeTitle', () => {
+  it.each(['第一卷 起势', '第1卷', '卷一 起势', '上 部 楔子', '第三部 起势', '第 12 篇'])(
+    '卷级标题：%s',
+    (title) => {
+      expect(isVolumeTitle(title)).toBe(true)
+    }
+  )
+
+  it.each(['第1章 开端', '第一章初入江湖', '前言', '序章', '正文', '上部人员名单', '卷'])(
+    '不是卷级标题：%s',
+    (title) => {
+      expect(isVolumeTitle(title)).toBe(false)
+    }
+  )
 })
 
 describe('自动识别的规则选择', () => {

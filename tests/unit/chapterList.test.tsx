@@ -26,6 +26,24 @@ function makeNovel(count: number): Novel {
   }
 }
 
+function makeVolumeNovel(): Novel {
+  const chapters = [
+    { index: 0, title: '前言', start: 0, end: 10, charCount: 10 },
+    { index: 1, title: '第一卷 起势', start: 10, end: 20, charCount: 10 },
+    { index: 2, title: '第1章 开端', start: 20, end: 40, charCount: 20 },
+    { index: 3, title: '第二卷 承接', start: 40, end: 50, charCount: 10 },
+    { index: 4, title: '第2章 相遇', start: 50, end: 70, charCount: 20 }
+  ]
+  return {
+    title: '大书',
+    sourcePath: '/tmp/大书.txt',
+    encoding: 'UTF-8',
+    hadBom: false,
+    flatText: 'x'.repeat(70),
+    chapters
+  }
+}
+
 describe('ChapterList', () => {
   it('未导入时显示引导文案', () => {
     render(<ChapterList novel={null} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
@@ -39,6 +57,30 @@ describe('ChapterList', () => {
     render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
     expect(screen.getByText('大书')).toBeTruthy()
     expect(screen.getByText(/共 5 章/)).toBeTruthy()
+  })
+
+  it('卷标题渲染成分组头，卷下章节缩进，卷头不显示百分比', () => {
+    const onJump = vi.fn()
+    render(
+      <ChapterList novel={makeVolumeNovel()} activeChapter={1} chapterPos={[]} onJump={onJump} />
+    )
+
+    // 第一个卷之前的内容不缩进
+    expect(screen.getByTestId('chapter-item-0').className).not.toContain('chapter-item--volume')
+    expect(screen.getByTestId('chapter-item-0').className).not.toContain('chapter-item--grouped')
+
+    expect(screen.getByTestId('chapter-item-1').className).toContain('chapter-item--volume')
+    expect(screen.getByTestId('chapter-item-1').className).toContain('chapter-item--active')
+    expect(screen.queryByTestId('chapter-pct-1')).toBeNull()
+
+    expect(screen.getByTestId('chapter-item-2').className).toContain('chapter-item--grouped')
+    expect(screen.getByTestId('chapter-item-3').className).toContain('chapter-item--volume')
+    expect(screen.getByTestId('chapter-item-4').className).toContain('chapter-item--grouped')
+    expect(screen.getByTestId('chapter-pct-4')).toBeTruthy()
+
+    // 卷头仍可点击跳转
+    fireEvent.click(screen.getByTestId('chapter-item-1'))
+    expect(onJump).toHaveBeenCalledWith(1)
   })
 
   it('点按钮收起整条左栏，章节列表一起消失；再点一次展开', () => {

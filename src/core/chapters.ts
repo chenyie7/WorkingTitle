@@ -56,6 +56,12 @@ const MARKER_NUMBER_TITLE = new RegExp(
 
 const PART_TITLE = /^[上中下]\s*[部篇卷](?:[\s　:：、.．,，\-—_].{0,30})?$/
 
+/** 卷级标题只用于侧栏分组：第一卷 起势 / 卷一 起势 / 上 部。 */
+const VOLUME_TITLE = new RegExp(
+  `^(?:第\\s*[${NUM}]{1,12}\\s*[卷部篇集]|卷\\s*[${NUM}]{1,8}|[上中下]\\s*[部篇卷])` +
+    `(?:[\\s　:：、.．,，\\-—_].{0,30})?$`
+)
+
 const BRACKETED_CHAPTER = new RegExp(
   `^[【〔〖\\[「『(（]\\s*第\\s*[${NUM}]{1,12}\\s*[章节回卷篇部集][^。！？；，!?;]{0,20}$`
 )
@@ -181,6 +187,12 @@ function makeTextMatcher(
 
 export function isChapterTitle(line: string, rule: ChapterRule = DEFAULT_CHAPTER_RULE): boolean {
   return makeMatcher(rule)(line)
+}
+
+/** 侧栏分组用：这一章的标题是不是「卷」一级。与切章规则无关。 */
+export function isVolumeTitle(title: string): boolean {
+  const t = title.trim()
+  return t !== '' && t.length <= MAX_TITLE_LEN && VOLUME_TITLE.test(t)
 }
 
 /** 返回第一个不合格字段的描述；合格返回 null。 */
