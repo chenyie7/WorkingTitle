@@ -11,8 +11,15 @@ import {
 import { dirname, join } from 'node:path'
 import { SHORTCUTS, shortcutProblem, type ShortcutId } from '../core/shortcuts'
 import type { IpcResult } from '../core/api'
-import { defaultSettings } from '../core/types'
-import type { AppSettings, Novel, NovelCacheMeta, PersistedSession } from '../core/types'
+import { chapterRuleProblem } from '../core/chapters'
+import { DEFAULT_CHAPTER_RULE, defaultSettings } from '../core/types'
+import type {
+  AppSettings,
+  ChapterRule,
+  Novel,
+  NovelCacheMeta,
+  PersistedSession
+} from '../core/types'
 
 /** 磁盘上那个 id 是不是本版本认识的。不认识的照常放行（见 settingsProblem 里的说明）。 */
 function isShortcutId(id: string): id is ShortcutId {
@@ -27,7 +34,8 @@ export interface SessionStore {
   writeSession(s: unknown): IpcResult<void>
   clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
-  writeNovelCache(novel: Novel): void
+  writeNovelCache(novel: Novel, chapterRule?: ChapterRule): void
+  readNovelCacheEntry(filePath: string): { novel: Novel; chapterRule: ChapterRule } | null
   readNovelCache(filePath: string): Novel | null
 }
 
@@ -66,6 +74,10 @@ function sessionProblem(v: unknown): string | null {
   for (const k of ['ratio', 'cursor', 'revealStart', 'activeChapter']) {
     const n = s[k]
     if (typeof n !== 'number' || !Number.isFinite(n)) return `${k} 不是有限数字`
+  }
+  if (s.chapterRule !== undefined) {
+    const problem = chapterRuleProblem(s.chapterRule)
+    if (problem !== null) return problem
   }
   return null
 }
@@ -138,6 +150,10 @@ function cacheMetaProblem(v: unknown): string | null {
   for (let i = 0; i < m.chapters.length; i++) {
     const problem = chapterProblem(m.chapters[i], i)
     if (problem !== null) return problem
+  }
+  if (m.chapterRule !== undefined) {
+    const problem = chapterRuleProblem(m.chapterRule)
+    if (problem !== null) return `chapterRule 不合法（${problem}）`
   }
   return null
 }
@@ -312,6 +328,15 @@ function readSessionFile(file: string, sourcePath: string): PersistedSession | n
   try {
     if (!existsSync(file)) return null
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    // 规则是附加信息：读盘时坏了只丢它，别把整份进度作废。
+    // 写盘仍然整份拒绝（sessionProblem），两处刻意不对称。
+    if (typeof parsed === 'object' && parsed !== null) {
+      const raw = parsed as Record<string, unknown>
+      if (raw.chapterRule !== undefined && chapterRuleProblem(raw.chapterRule) !== null) {
+        console.warn('[wt] 会话里的 chapterRule 不可用，按自动识别处理：', file)
+        delete raw.chapterRule
+      }
+    }
     if (!isPersistedSession(parsed)) {
       // 结构不合法的记录同样要说出来，并且**点出是哪个字段**——静默丢弃是「进度
       // 莫名其妙没了」的成因，而只报「不合法」把定位工作留给了看日志的人。
@@ -384,6 +409,41 @@ export function createSessionStore(baseDir: string): SessionStore {
 
   const ensureDir = (): void => {
     mkdirSync(baseDir, { recursive: true })
+  }
+
+  const readNovelCacheEntry = (
+    filePath: string
+  ): { novel: Novel; chapterRule: ChapterRule } | null => {
+    try {
+      if (!existsSync(cacheMetaPath) || !existsSync(cacheTextPath)) return null
+      const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
+      if (!isNovelCacheMeta(parsed)) {
+        console.warn(
+          `[wt] 缓存元数据结构不合法（${cacheMetaProblem(parsed) ?? '未知'}），按未命中处理：`,
+          cacheMetaPath
+        )
+        return null
+      }
+      const meta = parsed
+      if (meta.sourcePath !== filePath) return null
+      const st = statSync(filePath)
+      if (st.mtimeMs !== meta.mtimeMs || st.size !== meta.size) return null
+      if (statSync(cacheTextPath).size !== meta.textBytes) return null
+      return {
+        novel: {
+          title: meta.title,
+          sourcePath: meta.sourcePath,
+          encoding: meta.encoding,
+          hadBom: meta.hadBom,
+          flatText: readFileSync(cacheTextPath, 'utf8'),
+          chapters: meta.chapters
+        },
+        chapterRule: meta.chapterRule ?? DEFAULT_CHAPTER_RULE
+      }
+    } catch (err) {
+      console.warn('[wt] 读取小说缓存失败，将重新读取源文件：', err)
+      return null
+    }
   }
 
   return {
@@ -521,7 +581,7 @@ export function createSessionStore(baseDir: string): SessionStore {
       }
     },
 
-    writeNovelCache(novel: Novel): void {
+    writeNovelCache(novel: Novel, chapterRule: ChapterRule = DEFAULT_CHAPTER_RULE): void {
       try {
         ensureDir()
         const st = statSync(novel.sourcePath)
@@ -534,6 +594,7 @@ export function createSessionStore(baseDir: string): SessionStore {
           hadBom: novel.hadBom,
           title: novel.title,
           chapters: novel.chapters,
+          chapterRule,
           // 与下面写出的字节数同源：writeFileSync 用 'utf8' 写出的就是这么多字节，
           // 读取时拿 statSync(cacheTextPath).size 与它比对即可自我校验。
           textBytes: Buffer.byteLength(text, 'utf8')
@@ -551,53 +612,10 @@ export function createSessionStore(baseDir: string): SessionStore {
       }
     },
 
+    readNovelCacheEntry,
+
     readNovelCache(filePath: string): Novel | null {
-      try {
-        if (!existsSync(cacheMetaPath) || !existsSync(cacheTextPath)) return null
-        const parsed: unknown = JSON.parse(readFileSync(cacheMetaPath, 'utf8'))
-        if (!isNovelCacheMeta(parsed)) {
-          // 形状不对同样是「未命中」，不是「命中但字段是 undefined」——后者会一路
-          // 送到渲染进程（Task 6 的 openNovel 是 `if (cached) return cached`）。
-          console.warn(
-            `[wt] 缓存元数据结构不合法（${cacheMetaProblem(parsed) ?? '未知'}），按未命中处理：`,
-            cacheMetaPath
-          )
-          return null
-        }
-        const meta = parsed
-        if (meta.sourcePath !== filePath) return null
-        const st = statSync(filePath)
-        if (st.mtimeMs !== meta.mtimeMs || st.size !== meta.size) return null
-        // 提交点校验。少了这一行，「新 text + 旧 meta」这种崩溃残留也能通过上面三项
-        // （meta 记的是自己那本书的 sourcePath/mtime/size，全都自洽），
-        // 于是把 A 书的章节目录配上 B 书的正文交给用户。
-        // 反过来「旧 text + 新 meta」同样在这里被拦下。旧版本写的缓存没有 textBytes
-        // 字段，比较时 undefined 必然不等 → 自动降级为 cache miss 重读源文件。
-        //
-        // 【这一道门同时管住「text 自己写坏」，所以不必拆成两道】text 没有 temp+rename，
-        // 也不需要：半截的 text 会让 meta 里描述【源文件】的 sourcePath/mtimeMs/size 依然
-        // 成立，而 textBytes 描述的是一个更短的文件，于是被同一处比较拒掉。实测：66 字节的
-        // 正文只落盘前 56 字节（确为原文前缀、源文件未变）时 readNovelCache 返回 null。
-        // 一个提交点覆盖「meta 写坏」与「text 写坏」两个方向。
-        //
-        // 【这一门的边界，别当成保证】它比的是字节数，所以两段【等长】的文本仍会被放行：
-        // 实测为 A 书写好缓存后，把 novel-cache.txt 覆写成另一段等长文本而 meta 不动，
-        // readNovelCache(A) 仍返回 A 的章节目录配那段新文本。要彻底关掉这个窗口，
-        // textBytes 得换成内容哈希——那要改动 types.ts 里的 NovelCacheMeta（Task 2 的文件），
-        // 本次不做（见设计文档 §13）。
-        if (statSync(cacheTextPath).size !== meta.textBytes) return null
-        return {
-          title: meta.title,
-          sourcePath: meta.sourcePath,
-          encoding: meta.encoding,
-          hadBom: meta.hadBom,
-          flatText: readFileSync(cacheTextPath, 'utf8'),
-          chapters: meta.chapters
-        }
-      } catch (err) {
-        console.warn('[wt] 读取小说缓存失败，将重新读取源文件：', err)
-        return null
-      }
+      return readNovelCacheEntry(filePath)?.novel ?? null
     }
   }
 }

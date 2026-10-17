@@ -65,6 +65,8 @@ export interface PersistedSession {
   activeChapter: number
   /** 首次打字的时间戳（状态栏计时用）；从未打过字时为 null。 */
   startedAt: number | null
+  /** 这本书的章节识别规则。缺字段＝自动识别（旧会话因此照常有效）。 */
+  chapterRule?: ChapterRule
 }
 
 export interface NovelCacheMeta {
@@ -75,6 +77,8 @@ export interface NovelCacheMeta {
   hadBom: boolean
   title: string
   chapters: readonly Chapter[]
+  /** 这份目录是按哪条规则切的。缺字段＝自动识别。 */
+  chapterRule?: ChapterRule
   /**
    * novel-cache.txt 的 UTF-8 字节数，用作缓存两个文件之间的「提交点」（见 Task 5）：
    * 只有本字段与实际文本文件大小一致时，才承认这对缓存有效。
