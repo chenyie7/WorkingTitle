@@ -400,11 +400,30 @@ describe('resplitChapters', () => {
     // 前提自检：两个输入分别对应「前缀为空」与「前缀非空白」两支。
     expect(text.startsWith('第一章 甲')).toBe(true)
     expect(preambleInput.slice(0, preambleInput.indexOf('第一章 甲')).trim()).not.toBe('')
-    for (const input of [text, preambleInput]) {
-      const a = splitChapters(input, 'x', { kind: 'preset', id: 'cn-chapter' })
-      const b = resplitChapters(input, 'x', { kind: 'preset', id: 'cn-chapter' })
-      expect(b.chapters).toEqual(a.chapters)
+    const rules = [DEFAULT_CHAPTER_RULE, { kind: 'preset', id: 'cn-chapter' } as const]
+    for (const rule of rules) {
+      for (const input of [text, preambleInput]) {
+        const a = splitChapters(input, 'x', rule)
+        const b = resplitChapters(input, 'x', rule)
+        expect(b.chapters).toEqual(a.chapters)
+      }
     }
+  })
+
+  it('规则参数真的生效：special 认得出 auto 认不出的标题', () => {
+    const specialText = '简介\n正文。\n'
+    expect(
+      resplitChapters(specialText, 'x', { kind: 'preset', id: 'special' }).chapters[0].title
+    ).toBe('简介')
+    expect(resplitChapters(specialText, 'x').chapters).toHaveLength(1)
+    expect(hasChapterTitles(specialText, { kind: 'preset', id: 'special' })).toBe(true)
+    expect(hasChapterTitles(specialText)).toBe(false)
+  })
+
+  it('标题取 trim 后的行', () => {
+    const padded = '　第一章 甲　\n正文。\n'
+    const result = resplitChapters(padded, 'x', { kind: 'preset', id: 'cn-chapter' })
+    expect(result.chapters[0].title).toBe('第一章 甲')
   })
 
   it('hasChapterTitles：有标题为真，无标题为假', () => {

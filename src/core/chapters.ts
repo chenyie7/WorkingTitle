@@ -279,7 +279,7 @@ export function resplitChapters(
   return { flatText: text, chapters }
 }
 
-/** 这条规则能不能在这段正文里认出至少一个标题。some 短路，正例通常只看几行。 */
+/** 这条规则能不能在这段正文里认出至少一个标题。 */
 export function hasChapterTitles(text: string, rule: ChapterRule = DEFAULT_CHAPTER_RULE): boolean {
   const matcher = makeMatcher(rule)
   return text.split('\n').some((line) => matcher(line))
