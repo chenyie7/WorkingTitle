@@ -1469,6 +1469,23 @@ describe('设置里的分章规则', () => {
     await waitFor(() =>
       expect(screen.getByTestId('chapter-rule-result').textContent).toContain('3')
     )
+    expect(button.disabled).toBe(false)
+    expect(button.textContent).toContain('应用')
+  })
+
+  it('应用抛错时显示失败提示并恢复按钮', async () => {
+    const onApplyChapterRule = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    setup({ onApplyChapterRule })
+    openChapters()
+    fireEvent.click(screen.getByTestId('chapter-rule-apply'))
+    await waitFor(() =>
+      expect(screen.getByTestId('chapter-rule-result').textContent).toContain('分章失败')
+    )
+    const button = screen.getByTestId('chapter-rule-apply') as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    expect(button.textContent).toContain('应用')
   })
 
   it('改了草稿后旧的「已重新分为」提示消失', async () => {
