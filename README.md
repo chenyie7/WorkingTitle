@@ -45,8 +45,8 @@ This app is **not code-signed** (certificates cost money), so:
 
 1. **Import a novel** — press `⌘/Ctrl + ,` to open Settings → "Import novel". The file is copied
    into the app's data directory, so deleting the original does not affect reading. The
-   "Novel Library" page in Settings lets you browse, switch, and delete books. You can also pass the path to a
-   `.txt` file as a command-line argument at launch.
+   "Novel Library" page in Settings lets you browse, switch, and delete books. You can also
+   pass the path to a `.txt` file as a command-line argument at launch.
 2. **Type** — any keypress in the document area reveals the next chunk of text. The default is
    10 characters per keystroke, configurable from 1 to 500.
 3. **Jump chapters** — click any chapter in the left sidebar. `⌘/Ctrl + Shift + H` collapses the
