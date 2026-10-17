@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
-import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
@@ -1108,5 +1108,256 @@ describe('设置里的工作文档', () => {
     fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
     expect(onRemoveWorkDoc).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+})
+
+/**
+ * 左栏分页。
+ *
+ * 【为什么断言的是 `hidden` 属性而不是「看得见」】jsdom 没有布局，也没有真实的可见性
+ * 语义，而本仓库没装 `@testing-library/jest-dom`——`toBeVisible()` 根本不存在。
+ * 而 `hidden` 是 **DOM 属性**，正是这次用来藏非当前页的机制：断言它等于断言机制本身。
+ *
+ * 【为什么用 `hasAttribute` 而不是 `getAttribute() === ''`】React 对 `hidden` 走的是布尔
+ * 属性，**实测过**（react-dom 19.3.0，`renderToStaticMarkup`）：`hidden={true}` 渲染成
+ * `hidden=""`、`hidden={false}` 是**整条属性不出现**。但别把这个细节写进断言——
+ * `hasAttribute` 对「有/没有」这个我们真正关心的问题成立，而 React 哪天改成
+ * `hidden="true"` 这类形态，`hasAttribute` 仍然是对的。
+ */
+describe('设置对话框的左栏分页', () => {
+  /** 三个面板是不是 hidden 的，按左栏从上到下的顺序 */
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('左栏三项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置」', () => {
+    setup()
+    openViaButton()
+
+    // 【必须按 DOM 顺序取，不能逐个 getByTestId】按 testid 取的话，结果数组的顺序来自左边
+    // 那个字面量数组、**不是 DOM 顺序**——把 `PAGES` 排成「外观 / 阅读 / 快捷键」（左栏真的
+    // 会变成那个顺序、真的违反设计第 1 节拍板的顺序），那一版**照样全绿**：它守的是「每个
+    // 页签各自的文案」，守不住名字里的「顺序」。
+    //
+    // 【还得限定在左栏那个 tablist 里】裸的 `getAllByRole('tab')` 会把功能区那七个页签
+    // （文件/开始/…/视图）一并捞出来——本用例渲染的是整个 App，`Ribbon.tsx` 的 `.wt-tabs`
+    // 同样是 `role="tablist"` + `role="tab"`（实测拿到 10 个）。
+    // 按 `aria-label="设置分类"` 限定到左栏之后，`within` 依旧**按 DOM 顺序**返回，
+    // 一次同时验文案与顺序。
+    expect(
+      within(screen.getByRole('tablist', { name: '设置分类' }))
+        .getAllByRole('tab')
+        .map((el) => el.textContent)
+    ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
+  })
+
+  it('打开时停在「阅读设置」，另两页是 hidden 的', () => {
+    setup()
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('点「外观设置」：两页的 hidden 互换，aria-selected 跟着走', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(screen.getByTestId('settings-tab-appearance').getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId('settings-tab-reading').getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('点「快捷键设置」：那一页才显示', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+
+    expect(hiddenPages()).toEqual([true, true, false])
+  })
+
+  it('行归属：阅读设置收文档名 / 阅读替换 / 输入模式 / 正文字号 / 小说 / 工作文档', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tabpanel-reading')
+
+    for (const id of [
+      'doc-title-input',
+      'global-ratio-input',
+      'ratio-input',
+      'mode-button',
+      'page-font-size-input',
+      'btn-import',
+      'btn-clear-session',
+      'work-doc-status',
+      'btn-import-work-doc'
+    ]) {
+      expect(reading.contains(screen.getByTestId(id))).toBe(true)
+    }
+
+    // 外观与快捷键那几块**不**在这一页
+    expect(reading.contains(screen.getByTestId('theme-dark'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('dark-paper'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('shortcut-import-input'))).toBe(false)
+  })
+
+  it('行归属：外观设置收主题与纸张，快捷键设置收六条快捷键', () => {
+    setup()
+    openViaButton()
+
+    const appearance = screen.getByTestId('settings-tabpanel-appearance')
+    expect(appearance.contains(screen.getByTestId('theme-system'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-light'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-dark'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('dark-paper'))).toBe(true)
+
+    const shortcuts = screen.getByTestId('settings-tabpanel-shortcuts')
+    for (const def of SHORTCUTS) {
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-input`))).toBe(true)
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-reset`))).toBe(true)
+    }
+  })
+
+  it('切页不丢草稿：在阅读设置改字号，切到外观设置后「保存」仍在、点下去照样提交', () => {
+    const { onPageFontSizeChange } = setup()
+    openViaButton()
+
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '20' } })
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
+  })
+
+  it('关掉再打开，回到「阅读设置」（不记住上次那一页）', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
+    // 【这条守的不是「焦点在对话框里」那件老事，而是它的一个**新**破口】`page` 是持久状态、
+    // 组件在 open 为假时不卸载，所以重开的那一次提交里 page 可能还是旧值——非当前页带着
+    // `hidden`，而**对 hidden（display:none）子树里的元素调 focus() 是 no-op**，于是
+    // `autoFocus` 静默失效。
+    //
+    // 【焦点落在哪儿：隐形 textarea，不是 body】**实测**出来的（这条用例第一次跑、
+    // 修还没上时，红灯里 `document.activeElement` 就是 `<textarea data-testid="input-capture">`）：
+    // `SettingsDialog` 自己那条 effect 在**关闭**时把焦点交给了它，重开时 `autoFocus` 失效，
+    // 焦点就原地留在那个 textarea 上。这比「落在 body 上」更糟——落在 body 上还要用户再点
+    // 一下才会被抢回去，而隐形 textarea **本来就是抽字那条路的入口**：`InputCapture` 里那道
+    // `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**，`handleKeyDown` 与
+    // `handleInput` 上**一条都没有**。所以焦点一落在那儿，按键**立刻**开始抽字。
+    //
+    // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见 `SettingsDialog` 里那段渲染期重置）。
+    setup({ capture: true })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
+  })
+})
+
+/**
+ * 左栏的键盘与录制。
+ *
+ * 【这一组里几条为什么单测判得了】
+ * - `hidden` 是 DOM 属性，判得了（上面那一组同理）。
+ * - 方向键换页之后焦点跟不跟过去，判的是 `document.activeElement`——**jsdom 里判得了**，
+ *   因为那是我们自己在 keydown 处理里显式 `focus()` 的，不依赖浏览器的命中测试。
+ * - 「切页取消录制」判的是报给外面的布尔值，与真机行为无关。
+ *
+ * 判不了的（只能真机）：面板实际画出来多宽、滚动条出没出来、深色下页签的底色。
+ * 那几条在文末的验收清单里。
+ */
+describe('设置对话框左栏的键盘与录制', () => {
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('切页会取消正在进行的录制（否则分发器一直哑着，而用户看不出为什么）', () => {
+    const onRecordingChange = vi.fn()
+    setup({ onRecordingChange })
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('↓ / ↑ 在左栏里移动、当场切页，焦点跟着落到新页签上', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    fireEvent.keyDown(reading, { key: 'ArrowDown' })
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowUp' })
+
+    expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(reading)
+  })
+
+  it('↑ 从第一项绕到最后一项，↓ 从最后一项绕回第一项', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'ArrowUp' })
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'ArrowDown' })
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
+    // 【「焦点也跟着」这半句不能省】设计第 8.1 节第 8 条要求的是 ↑/↓/Home/End **都**把焦点
+    // 带过去，而只断言 `hiddenPages` 是不够的——变异实测过：把 `focus()` 限制成只对
+    // ArrowUp / ArrowDown 调，只断言 `hiddenPages` 的那一版**全绿**。也就是说那半句此前
+    // 无人看住。
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
+    expect(hiddenPages()).toEqual([true, true, false])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-shortcuts'))
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
+    expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
+  })
+
+  it('方向键之外的键不动页签（左栏不该吃掉别的按键）', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    // 【逐键断言，绝不能只断言末态】三个键连着按、每键各前进一页的话，3 键 ≡ 0 (mod 3)，
+    // 末态与「一个都没动」**长得一模一样**——变异实测过：把认不出的键也改成前进一页，
+    // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
+    for (const key of ['ArrowLeft', 'a', 'Enter']) {
+      fireEvent.keyDown(reading, { key })
+      expect(hiddenPages()).toEqual([false, true, true])
+    }
   })
 })

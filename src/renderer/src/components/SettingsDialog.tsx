@@ -5,6 +5,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FocusEvent,
   type KeyboardEvent as ReactKeyboardEvent
@@ -122,6 +123,29 @@ const THEME_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
+ * 左栏的页签。数组顺序就是左栏从上到下的顺序。
+ *
+ * 【为什么是表而不是散在 JSX 里】页签按钮上那**九个由表里这一项算出来的属性**
+ * （`key` / `id` / `aria-selected` / `aria-controls` / `tabIndex` / `className` /
+ * `data-testid` / `ref` / `onClick`）——十二个属性里只有 `type` / `role` / `onKeyDown`
+ * 三个与 `p` 无关——以及方向键分发要遍历的 `PAGES` 本身，用的都是同一份清单；
+ * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ *
+ * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
+ * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
+ * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
+ * 「加一行就完事」。
+ */
+const PAGES = [
+  { id: 'reading', label: '阅读设置', icon: IconBook },
+  { id: 'appearance', label: '外观设置', icon: IconDarkTheme },
+  { id: 'shortcuts', label: '快捷键设置', icon: IconKeyboard }
+] as const satisfies ReadonlyArray<{ id: string; label: string; icon: FluentIcon }>
+
+type SettingsPage = (typeof PAGES)[number]['id']
+
+/**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
  *
  * 【为什么要有一个对话框，而不是像原来那样把控件摆在工具栏里】那些控件是伪装的一部分里
@@ -158,6 +182,61 @@ export function SettingsDialog({
     useToolbar()
 
   const kind = platformKind(platform)
+
+  /** 当前显示哪一页。默认「阅读设置」。 */
+  const [page, setPage] = useState<SettingsPage>('reading')
+  /** 上一次渲染时对话框开着没有。只服务于下面那一段「打开」时的就地重置。 */
+  const [wasOpen, setWasOpen] = useState(open)
+
+  /*
+   * 「每次打开都拉回第一页」。**必须写在渲染期，不能放进 effect。**
+   *
+   * `open` 为假时本组件只是 `return null`——**它并不卸载**，`useState` 的初值只在第一次
+   * 挂载时起作用。放进 `[open, reset]` 那条 effect 里的话，effect 跑在**提交之后**，所以
+   * 「打开」的那一次提交里 page 还是上一次的值、阅读设置面板仍带着 `hidden`；而
+   * **对 `hidden`（display:none）子树里的元素调 `focus()` 是 no-op**，`autoFocus` 就此
+   * 静默失效——焦点**原地留在关闭时被交还的那个隐形输入框上**（下面那条 `if (open) return`
+   * 的 effect 在关闭时把焦点交给了它），而那个输入框**本来就是抽字那条路的入口**：
+   * `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的 `focusIfNotTextInput` 上，
+   * `handleKeyDown` / `handleInput` 一条都没有。焦点一落在那儿，按键**立刻**开始抽字。
+   *
+   * 渲染期就地重置（React 官方的「props 变了就地调整 state」写法）会让 React 当场重跑一次
+   * 渲染再提交，于是「打开」那一次提交里第一页**本来就是可见的**，`autoFocus` 落得下去。
+   * 光在事后把 page 拉回去补不回来：input 没有重新挂载，`autoFocus` 不会重跑。
+   */
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setPage('reading')
+  }
+
+  /**
+   * 左栏那几个按钮。方向键换页之后要**显式**把焦点搬过去：roving tabindex 换人时
+   * 浏览器不会自己跟（它只管 Tab 键那一下）。
+   */
+  const tabRefs = useRef<Partial<Record<SettingsPage, HTMLButtonElement | null>>>({})
+
+  /**
+   * 左栏的方向键。↑↓ 移动并**当场切页**（ARIA tabs 的「自动激活」），Home / End 跳首尾。
+   *
+   * 【为什么选自动激活而不是「先移焦点、再按 Enter 确认」】内容区是静态表单，切过去的
+   * 代价只是重画一次，没有需要确认的操作。
+   *
+   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉**这四个键**（↑ ↓ Home End）；
+   * Enter / Space 交给浏览器去点按钮、字母键谁也别拦。
+   */
+  const handleNavKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const i = PAGES.findIndex((p) => p.id === page)
+    let next = -1
+    if (e.key === 'ArrowDown') next = (i + 1) % PAGES.length
+    else if (e.key === 'ArrowUp') next = (i - 1 + PAGES.length) % PAGES.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = PAGES.length - 1
+    if (next < 0) return
+    e.preventDefault()
+    const target = PAGES[next].id
+    setPage(target)
+    tabRefs.current[target]?.focus()
+  }
 
   /**
    * 「导入小说」按钮 title 里那条快捷键的显示文本。
@@ -346,6 +425,16 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
+  /**
+   * 切页＝放弃正在进行的录制。
+   *
+   * 录制框在「快捷键设置」那一页上，切走就再也看不见它了；留着录制态只会让分发器一直
+   * 哑着，而用户完全看不出为什么快捷键忽然失效。这是既有语义（点别处＝放弃录制，见录制
+   * 框的 `onBlur`）的直接延伸。
+   */
+  useEffect(() => {
+    setRecording(null)
+  }, [page])
 
   /**
    * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
@@ -449,305 +538,382 @@ export function SettingsDialog({
           </button>
         </div>
 
-        <div className="wt-modal__body">
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconRename className="wt-modal__label-icon" />
-              文档名
-            </span>
-            <input
-              className="wt-modal__text"
-              data-testid="doc-title-input"
-              aria-label="文档名"
-              // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
-              // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
-              autoFocus
-              value={drafts['doc-title'] ?? docTitle}
-              onChange={(e) => setDraft('doc-title', e.target.value)}
-              // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
-              onBlur={() => blur('doc-title')}
-              // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-              }}
-            />
+        <div className="wt-modal__main">
+          {/*
+            左栏。`role="tablist"` + `aria-orientation="vertical"` 是 ARIA 垂直页签的标准写法。
+            `tabIndex` 是 roving 的：只有选中的那一项在 Tab 顺序里，从它往右一按 Tab 就进内容区。
+          */}
+          <div
+            className="wt-modal__nav"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="设置分类"
+          >
+            {PAGES.map((p) => {
+              const active = page === p.id
+              const PageIcon = p.icon
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  id={`wt-tab-${p.id}`}
+                  aria-selected={active}
+                  aria-controls={`wt-tabpanel-${p.id}`}
+                  tabIndex={active ? 0 : -1}
+                  className={`wt-nav__item${active ? ' wt-nav__item--active' : ''}`}
+                  data-testid={`settings-tab-${p.id}`}
+                  ref={(el) => {
+                    tabRefs.current[p.id] = el
+                  }}
+                  onKeyDown={handleNavKeyDown}
+                  onClick={() => setPage(p.id)}
+                >
+                  {/* 选中时图标换成实心——与功能区那些切换按钮、以及下面外观那组同一套语义 */}
+                  <PageIcon filled={active} className="wt-nav__icon" />
+                  {p.label}
+                </button>
+              )
+            })}
           </div>
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconFontSize className="wt-modal__label-icon" />
-              阅读替换
-            </span>
+          <div className="wt-modal__body">
             {/*
-              两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
-              顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
-              点保存才生效。
-            */}
-            <div className="wt-ratio-pair">
-              <div className="wt-ratio-line">
-                <span className="wt-ratio__caption">全局</span>
-                <span className="wt-ratio__label">1 键显示</span>
-                <input
-                  className="wt-ratio__input"
-                  data-testid="global-ratio-input"
-                  aria-label="全局比例：新导入的书 / 工作文档，输入 1 个字显示多少字"
-                  inputMode="numeric"
-                  value={drafts['global-ratio'] ?? String(globalRatio)}
-                  onChange={(e) => setDraft('global-ratio', e.target.value)}
-                  onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
-                  }}
-                />
-                <span className="wt-ratio__label">字</span>
-                <span className="wt-ratio__note">新导入的书用它</span>
-              </div>
-              <div className="wt-ratio-line">
-                <span className="wt-ratio__caption">当前书</span>
-                <span className="wt-ratio__label">1 键显示</span>
-                <input
-                  className="wt-ratio__input"
-                  data-testid="ratio-input"
-                  aria-label="当前书比例：输入 1 个字显示文档多少字"
-                  inputMode="numeric"
-                  // 没有文档就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
-                  disabled={!novelOpen}
-                  value={drafts['ratio'] ?? String(ratio)}
-                  onChange={(e) => setDraft('ratio', e.target.value)}
-                  onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
-                  }}
-                />
-                <span className="wt-ratio__label">字</span>
-                {!novelOpen && <span className="wt-ratio__note">未打开文档</span>}
-              </div>
-            </div>
-          </div>
+              三个面板**都渲染**，非当前页加 `hidden`。
+              条件渲染的话，本文件与 ribbon.test.tsx 里 40 多处跨页取元素的断言全都要先切页，
+              而且「打开时焦点落在文档名上（autoFocus）」那条会当场坏。
+              `hidden` 也是 ARIA tabs 对非当前 tabpanel 的标准做法。
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconKeyboard className="wt-modal__label-icon" />
-              输入模式
-            </span>
-            <button
-              type="button"
-              className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
-              data-testid="mode-button"
-              title="切换输入模式：输入法友好 / 纯按键"
-              aria-pressed={mode === 'ime'}
-              onClick={() => {
-                const next = mode === 'ime' ? 'key' : 'ime'
-                setMode(next)
-                notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
-              }}
+              【`.wt-tabpanel[hidden] { display: none }` 那条 CSS 不能少】`hidden` 属性
+              本身不带样式，它靠的是 UA 默认样式表里的 `[hidden] { display: none }`；
+              而 `.wt-tabpanel` 自己设了 `display: flex`，会把那条盖掉。见 Task 2。
+            */}
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-reading"
+              aria-labelledby="wt-tab-reading"
+              data-testid="settings-tabpanel-reading"
+              hidden={page !== 'reading'}
             >
-              {mode === 'ime' ? '输入法' : '纯按键'}
-            </button>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconRename className="wt-modal__label-icon" />
+                  文档名
+                </span>
+                <input
+                  className="wt-modal__text"
+                  data-testid="doc-title-input"
+                  aria-label="文档名"
+                  // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
+                  // 里那条 role="dialog" 的闸）。
+                  autoFocus
+                  value={drafts['doc-title'] ?? docTitle}
+                  onChange={(e) => setDraft('doc-title', e.target.value)}
+                  // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
+                  onBlur={() => blur('doc-title')}
+                  // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+              </div>
 
-          <div className="wt-modal__row">
-            {/*
-              外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
-              macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
-            */}
-            <span className="wt-modal__label">
-              <IconDarkTheme className="wt-modal__label-icon" />
-              外观
-            </span>
-            <div className="wt-seg" role="group" aria-label="外观">
-              {THEME_OPTIONS.map((opt) => {
-                const active = themeSource === opt.value
-                const OptIcon = opt.icon
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`wt-btn${active ? ' wt-btn--active' : ''}`}
-                    data-testid={`theme-${opt.value}`}
-                    aria-pressed={active}
-                    onClick={() => onThemeSourceChange(opt.value)}
-                  >
-                    {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
-                    <OptIcon filled={active} className="wt-btn__icon" />
-                    {opt.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconFontSize className="wt-modal__label-icon" />
+                  阅读替换
+                </span>
+                {/*
+                  两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
+                  顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
+                  点保存才生效。
+                */}
+                <div className="wt-ratio-pair">
+                  <div className="wt-ratio-line">
+                    <span className="wt-ratio__caption">全局</span>
+                    <span className="wt-ratio__label">1 键显示</span>
+                    <input
+                      className="wt-ratio__input"
+                      data-testid="global-ratio-input"
+                      aria-label="全局比例：新导入的书 / 工作文档，输入 1 个字显示多少字"
+                      inputMode="numeric"
+                      value={drafts['global-ratio'] ?? String(globalRatio)}
+                      onChange={(e) => setDraft('global-ratio', e.target.value)}
+                      onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSave()
+                      }}
+                    />
+                    <span className="wt-ratio__label">字</span>
+                    <span className="wt-ratio__note">新导入的书用它</span>
+                  </div>
+                  <div className="wt-ratio-line">
+                    <span className="wt-ratio__caption">当前书</span>
+                    <span className="wt-ratio__label">1 键显示</span>
+                    <input
+                      className="wt-ratio__input"
+                      data-testid="ratio-input"
+                      aria-label="当前书比例：输入 1 个字显示文档多少字"
+                      inputMode="numeric"
+                      // 没有文档就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
+                      disabled={!novelOpen}
+                      value={drafts['ratio'] ?? String(ratio)}
+                      onChange={(e) => setDraft('ratio', e.target.value)}
+                      onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSave()
+                      }}
+                    />
+                    <span className="wt-ratio__label">字</span>
+                    {!novelOpen && <span className="wt-ratio__note">未打开文档</span>}
+                  </div>
+                </div>
+              </div>
 
-          <div className="wt-modal__row">
-            {/*
-              默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
-              勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
-              只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
-            */}
-            <span className="wt-modal__label">
-              <IconDocument className="wt-modal__label-icon" />
-              纸张
-            </span>
-            <label className="wt-modal__check">
-              <input
-                type="checkbox"
-                data-testid="dark-paper"
-                checked={darkPaper}
-                onChange={(e) => onDarkPaperChange(e.target.checked)}
-              />
-              深色模式下也变暗
-            </label>
-          </div>
-
-          <div className="wt-modal__row">
-            {/*
-              正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
-              才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
-              写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
-            */}
-            <span className="wt-modal__label">
-              <IconFontSize className="wt-modal__label-icon" />
-              正文字号
-            </span>
-            <input
-              className="wt-ratio__input"
-              data-testid="page-font-size-input"
-              aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
-              inputMode="numeric"
-              value={drafts['page-font-size'] ?? String(pageFontSize)}
-              onChange={(e) => setDraft('page-font-size', e.target.value)}
-              onBlur={blurClamped(
-                'page-font-size',
-                clampPageFontSize,
-                PAGE_FONT_SIZE_MIN,
-                PAGE_FONT_SIZE_MAX,
-                '字号'
-              )}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-              }}
-            />
-            <span className="wt-ratio__label">px</span>
-            <span className="wt-ratio__note">只作用于小说与 .txt</span>
-          </div>
-
-          {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
-          {SHORTCUTS.map((def) => {
-            const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
-            const isRecording = recording === def.id
-            return (
-              <div className="wt-modal__row" key={def.id}>
-                <span className="wt-modal__label">{def.label}</span>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconKeyboard className="wt-modal__label-icon" />
+                  输入模式
+                </span>
                 <button
                   type="button"
-                  className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
-                  data-testid={`shortcut-${def.id}-input`}
-                  aria-label={`${def.label}的快捷键`}
-                  onKeyDown={handleRecordKey(def.id)}
-                  onBlur={() => {
-                    // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
-                    if (recording === def.id) setRecording(null)
+                  className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
+                  data-testid="mode-button"
+                  title="切换输入模式：输入法友好 / 纯按键"
+                  aria-pressed={mode === 'ime'}
+                  onClick={() => {
+                    const next = mode === 'ime' ? 'key' : 'ime'
+                    setMode(next)
+                    notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
                   }}
-                  onClick={() => setRecording(def.id)}
                 >
-                  {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                  {mode === 'ime' ? '输入法' : '纯按键'}
+                </button>
+              </div>
+
+              <div className="wt-modal__row">
+                {/*
+                  正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
+                  才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
+                  写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
+                */}
+                <span className="wt-modal__label">
+                  <IconFontSize className="wt-modal__label-icon" />
+                  正文字号
+                </span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="page-font-size-input"
+                  aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
+                  inputMode="numeric"
+                  value={drafts['page-font-size'] ?? String(pageFontSize)}
+                  onChange={(e) => setDraft('page-font-size', e.target.value)}
+                  onBlur={blurClamped(
+                    'page-font-size',
+                    clampPageFontSize,
+                    PAGE_FONT_SIZE_MIN,
+                    PAGE_FONT_SIZE_MAX,
+                    '字号'
+                  )}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">px</span>
+                <span className="wt-ratio__note">只作用于小说与 .txt</span>
+              </div>
+
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconBook className="wt-modal__label-icon" />
+                  小说
+                </span>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid="btn-import"
+                  title={`导入小说 (${importButtonShortcut})`}
+                  onClick={() => onImport()}
+                >
+                  <IconImport className="wt-btn__icon" />
+                  导入小说
                 </button>
                 <button
                   type="button"
                   className="wt-btn"
-                  data-testid={`shortcut-${def.id}-reset`}
-                  aria-label={`把${def.label}恢复为默认`}
-                  onClick={() => {
-                    setRecording(null)
-                    setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
-                  }}
+                  data-testid="btn-clear-session"
+                  title="清除阅读记录"
+                  onClick={() => onClearSession()}
                 >
-                  ↺
+                  <IconClear className="wt-btn__icon" />
+                  清除阅读记录
                 </button>
               </div>
-            )
-          })}
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconBook className="wt-modal__label-icon" />
-              小说
-            </span>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-import"
-              title={`导入小说 (${importButtonShortcut})`}
-              onClick={() => onImport()}
-            >
-              <IconImport className="wt-btn__icon" />
-              导入小说
-            </button>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-clear-session"
-              title="清除阅读记录"
-              onClick={() => onClearSession()}
-            >
-              <IconClear className="wt-btn__icon" />
-              清除阅读记录
-            </button>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconDocument className="wt-modal__label-icon" />
+                  工作文档
+                </span>
+                {/*
+                  按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
+                  外部动作，做成「选了文件还得再点保存」很别扭。
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconDocument className="wt-modal__label-icon" />
-              工作文档
-            </span>
-            {/*
-              按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
-              外部动作，做成「选了文件还得再点保存」很别扭。
+                  【坏掉那一路没有名字可写】`workDocBroken` 只有一个置位点：boot 里 `loadWorkDoc`
+                  读不出来。而**同一条路上 `workNovel` 必然是 null**，于是 `workDocTitle` 也恒为
+                  null。所以这里不能写成 `⚠ ${workDocTitle ?? ''} 读不出来了`——那会渲染出
+                  「⚠  读不出来了」这种一个永远填不上的名字位加双空格。
+                */}
+                <span
+                  className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
+                  data-testid="work-doc-status"
+                  // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
+                  // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
+                  title={workDocPath ?? undefined}
+                >
+                  {workDocBroken
+                    ? workDocTitle === null
+                      ? '⚠ 工作文档读不出来了'
+                      : `⚠ ${workDocTitle} 读不出来了`
+                    : (workDocTitle ?? '未导入')}
+                </span>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid="btn-import-work-doc"
+                  title="导入工作文档（txt / md）"
+                  onClick={() => onImportWorkDoc()}
+                >
+                  <IconImport className="wt-btn__icon" />
+                  导入工作文档
+                </button>
+                {/*
+                  【判据为什么是「配了路径」而不是「有名字」】坏掉那一路恒无名字（见上），
+                  按名字 gate 的话那个按钮**根本不渲染**——而「文件被移走」正是唯一可达的坏
+                  状态，用户于是没有任何入口清掉那个悬空路径，只能靠导入另一份顶掉它。
+                */}
+                {(workDocTitle !== null || workDocBroken) && (
+                  <button
+                    type="button"
+                    className="wt-btn"
+                    data-testid="btn-remove-work-doc"
+                    title="移除工作文档"
+                    onClick={() => onRemoveWorkDoc()}
+                  >
+                    <IconClear className="wt-btn__icon" />
+                    移除
+                  </button>
+                )}
+              </div>
+            </div>
 
-              【坏掉那一路没有名字可写】`workDocBroken` 只有一个置位点：boot 里 `loadWorkDoc`
-              读不出来。而**同一条路上 `workNovel` 必然是 null**，于是 `workDocTitle` 也恒为
-              null。所以这里不能写成 `⚠ ${workDocTitle ?? ''} 读不出来了`——那会渲染出
-              「⚠  读不出来了」这种一个永远填不上的名字位加双空格。
-            */}
-            <span
-              className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
-              data-testid="work-doc-status"
-              // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
-              // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
-              title={workDocPath ?? undefined}
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-appearance"
+              aria-labelledby="wt-tab-appearance"
+              data-testid="settings-tabpanel-appearance"
+              hidden={page !== 'appearance'}
             >
-              {workDocBroken
-                ? workDocTitle === null
-                  ? '⚠ 工作文档读不出来了'
-                  : `⚠ ${workDocTitle} 读不出来了`
-                : (workDocTitle ?? '未导入')}
-            </span>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-import-work-doc"
-              title="导入工作文档（txt / md）"
-              onClick={() => onImportWorkDoc()}
+              <div className="wt-modal__row">
+                {/*
+                  外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
+                  macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
+                */}
+                <span className="wt-modal__label">
+                  <IconDarkTheme className="wt-modal__label-icon" />
+                  外观
+                </span>
+                <div className="wt-seg" role="group" aria-label="外观">
+                  {THEME_OPTIONS.map((opt) => {
+                    const active = themeSource === opt.value
+                    const OptIcon = opt.icon
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`wt-btn${active ? ' wt-btn--active' : ''}`}
+                        data-testid={`theme-${opt.value}`}
+                        aria-pressed={active}
+                        onClick={() => onThemeSourceChange(opt.value)}
+                      >
+                        {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
+                        <OptIcon filled={active} className="wt-btn__icon" />
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="wt-modal__row">
+                {/*
+                  默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
+                  勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
+                  只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
+                */}
+                <span className="wt-modal__label">
+                  <IconDocument className="wt-modal__label-icon" />
+                  纸张
+                </span>
+                <label className="wt-modal__check">
+                  <input
+                    type="checkbox"
+                    data-testid="dark-paper"
+                    checked={darkPaper}
+                    onChange={(e) => onDarkPaperChange(e.target.checked)}
+                  />
+                  深色模式下也变暗
+                </label>
+              </div>
+            </div>
+
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-shortcuts"
+              aria-labelledby="wt-tab-shortcuts"
+              data-testid="settings-tabpanel-shortcuts"
+              hidden={page !== 'shortcuts'}
             >
-              <IconImport className="wt-btn__icon" />
-              导入工作文档
-            </button>
-            {/*
-              【判据为什么是「配了路径」而不是「有名字」】坏掉那一路恒无名字（见上），
-              按名字 gate 的话那个按钮**根本不渲染**——而「文件被移走」正是唯一可达的坏
-              状态，用户于是没有任何入口清掉那个悬空路径，只能靠导入另一份顶掉它。
-            */}
-            {(workDocTitle !== null || workDocBroken) && (
-              <button
-                type="button"
-                className="wt-btn"
-                data-testid="btn-remove-work-doc"
-                title="移除工作文档"
-                onClick={() => onRemoveWorkDoc()}
-              >
-                <IconClear className="wt-btn__icon" />
-                移除
-              </button>
-            )}
+              {/* 快捷键：一条一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
+              {SHORTCUTS.map((def) => {
+                const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
+                const isRecording = recording === def.id
+                return (
+                  <div className="wt-modal__row" key={def.id}>
+                    <span className="wt-modal__label">{def.label}</span>
+                    <button
+                      type="button"
+                      className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
+                      data-testid={`shortcut-${def.id}-input`}
+                      aria-label={`${def.label}的快捷键`}
+                      onKeyDown={handleRecordKey(def.id)}
+                      onBlur={() => {
+                        // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
+                        if (recording === def.id) setRecording(null)
+                      }}
+                      onClick={() => setRecording(def.id)}
+                    >
+                      {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                    </button>
+                    <button
+                      type="button"
+                      className="wt-btn"
+                      data-testid={`shortcut-${def.id}-reset`}
+                      aria-label={`把${def.label}恢复为默认`}
+                      onClick={() => {
+                        setRecording(null)
+                        setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
+                      }}
+                    >
+                      ↺
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
 

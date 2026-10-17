@@ -500,9 +500,34 @@
   backdrop-filter: blur(1.5px);
 }
 
+/*
+ * 设置面板。680px 是「152px 左栏 + 约 500px 内容区」的宽度；内容区那一侧要放得下
+ * 「当前书 1 键显示 [10] 字」这种整行不折的组合。
+ *
+ * 【为什么是**固定高度**】三页的行数差得远（阅读设置 6 行、外观设置 2 行、快捷键设置 6 行），
+ * 而遮罩是垂直居中的——高度由内容撑的话，换页时面板既变高矮、又上下跳（实测：410 / 198 / 386，
+ * 高矮差 212px、顶边跳 106px）。固定成一个值之后三页完全一致、切换时面板一动不动。
+ *
+ * 【410 是量出来的，不是拍的】它就是最高那页（阅读设置）的自然高度：38（标题条）
+ * + 324（内容区）+ 48（footer）——在真 Electron 里跑 `out/` 构建量的。内容更少的那两页
+ * 底部留白（真 Word 的「选项」对话框就是这个观感：窗口固定，内容少就空着）。
+ *
+ * 【`min()` 不能省】窗口矮或页面缩放时按视口收。**两个实测档别混**：
+ * **最小窗口**（内容高 620）下 200% 缩放是 min(410, 262) = 262、内容区变 176；
+ * **默认窗口**（内容高 860）下 200% 是 min(410, 382) = 382、内容区 296。
+ * 写成裸的 `height: 410px` 会让面板在高缩放下顶出屏幕、footer 够不着——那正是上一批
+ * `max-height` 要修的东西，绕回去等于白改。
+ *
+ * 【原来的 `max-height` 已删】它已经被这个 `height` 包进去了，两份互相重叠的约束只会让人
+ * 将来以为都得改。顺带一个好处：固定 `height` 让面板的高度**恒为确定值**，百分比
+ * flex-basis 不再是「容器主尺寸不确定时解不出来」的情形——上一批「标题条被压扁」那条链的
+ * 根因就此消失（所以下面 `.wt-modal__header` 那条 `flex: 0 0 auto` 从「必需」降为
+ * 「多余但无害」，**保留**）。
+ */
 .wt-modal__panel {
-  width: 440px;
+  width: 680px;
   max-width: calc(100% - 48px);
+  height: min(410px, calc(100vh - 48px));
   background: #ffffff;
   border-radius: 8px;
   box-shadow:
@@ -513,12 +538,28 @@
   overflow: hidden;
 }
 
-/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感。
+ *
+ * 【这条 `flex` 现在是**保险**，不再是必需】它是面板这个 column flex 容器的第一项。
+ * 在面板高度由内容撑（`height: auto` + `max-height`）的年代，夹紧的那一刻 main 的
+ * `flex-basis: 0%` 在**高度不确定**的容器里解不出 0、会退回内容高，于是出现负自由空间、
+ * 进入收缩相，标题条按比例被压扁（当年实测 150% 缩放 → 34.06px；200% → 26px，正好是下面
+ * 那个 26px 的 ✕ 按钮的高度，也就是它自己的自动最小尺寸）。
+ *
+ * 【现在不会发生了】面板改成固定的 `height: min(410px, calc(100vh - 48px))` 之后，高度
+ * **恒为确定值**，收缩相根本不产生。实测：把这条改成允许收缩的 `flex: 0 1 auto`，五档缩放
+ * 下标题条仍是 38；换回旧写法则是 200% → 35.06、250% / 300% → 26。留着 `0 0 auto` 是因为
+ * 它不会错——删掉只会让将来改动重新暴露在同一个坑里。
+ *
+ * 【判据】压缩与不压缩时 `header + main + footer` 都等于面板高度（flex 本来就这样），
+ * 有区分度的只有 `header.offsetHeight === 38`。
+ */
 .wt-modal__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 38px;
+  flex: 0 0 auto;
   padding: 0 8px 0 16px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
@@ -562,11 +603,216 @@
   background: rgba(255, 255, 255, 0.22);
 }
 
+/*
+ * 内容区。`display: flex` / `flex-direction: column` / `gap: 16px` 三条**整体挪去了
+ * `.wt-tabpanel`**（见下）——行间距的来源没变，只是从「body 直接管着行」变成
+ * 「每个页各管自己那一组行」。
+ *
+ * 【min-width: 0 与下面的 overflow-y 是同一个保险的两半】overflow 一旦不是 visible，
+ * flex 子项的自动最小尺寸按规范就是 0，所以本条**在这条规则里是冗余的**——实测把它删掉，
+ * 无论内容多宽（试到 4300px 不可断行）body 宽度都不变。留着是因为它与 `overflow-y: auto`
+ * 互为保险：谁将来把 `overflow-y` 拿掉，它立刻开始承重（实测那种组合下 body 会被顶到 4326px）。
+ *
+ * 【overflow-y: auto】与面板的 `height: min(...)` 配套，见上。反过来，它也是上面那句
+ * 「min-width 冗余」成立的前提——两半拆开都别单删。
+ */
 .wt-modal__body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 18px;
+}
+
+/*
+ * 左栏与内容区并排。
+ * 【min-height: 0 不能省】flex 子项的默认 `min-height: auto` 会让内容把面板撑破，
+ * 而不是让内容区滚动。
+ */
+.wt-modal__main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/*
+ * 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。
+ *
+ * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
+ * main 的高度**、会跟着面板被 `height: min(...)` 夹而变矮；而左栏的内容是固定高的
+ * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
+ * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
+ * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
+ * footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它开始夹紧），
+ * 所以一并认下来。
+ */
+.wt-modal__nav {
+  flex: 0 0 152px;
+  padding: 8px 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--wt-chrome-border);
+}
+
+/*
+ * 页签项：整宽、方角、贴边。选中靠【底色 + 左缘一道竖条】区分。
+ *
+ * 【border-left 常态也要占位】常态是 2px 透明、选中才上色。写成「常态不给 border」的话，
+ * 选中时这一项会整体右移 2px，字与图标跳一下。
+ *
+ * 【过渡】底色 / 左缘竖条 / 文字颜色各 90ms，与 `.wt-btn` 是同一个词汇
+ * （`background-color 90ms ease`、`border-color 90ms ease`）。
+ *
+ * 【`font-weight` 刻意不进 transition】选中态从 400 跳到 600，而本应用用的是系统字体栈、
+ * 不是可变字体——浏览器对非可变字体的字重**不做插值**，写进 transition 只会让
+ * 「颜色在动、字重当场跳」，同一时刻一部分属性在跑、一部分在蹦，反而更乱。
+ * `.wt-seg` 那组选中态也是这么处理的（颜色过渡、`font-weight: 600` 硬跳）。
+ *
+ * 【`border-color` 必须进】选中/未选中之间 `border-left` 从 `transparent` 变到
+ * `--wt-accent`。不写它，那道 2px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
+ * 两者不同步非常明显。
+ */
+.wt-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--wt-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease,
+    color 90ms ease;
+}
+
+.wt-nav__item:hover {
+  background: var(--wt-chrome);
+}
+
+/*
+ * 【悬停**已经选中的**那一项时，要维持它的选中底色】没有这一条会坏在特异度上：
+ * `.wt-nav__item:hover` 是 (0,2,0)，而 `.wt-nav__item--active` 只有 (0,1,0)，前者恒压后者
+ * ——用户点页签的那一瞬间鼠标本来就压在那个按钮上，于是新选中的页签同时命中两者、
+ * **蓝色底色当场消失**（左缘竖条与蓝色粗体还在），看起来像「点了没反应」，得把鼠标挪开
+ * 才出现选中态。两个主题都中；深色下更糟，选中项本来是「比面板亮」，一悬停变成「比面板暗」，
+ * 读起来像个洞。
+ *
+ * 【这不是新问题，本文件里已经为它定过两次性】`.wt-tab--active:hover`（第 83 行起）的注释
+ * 原文就是「没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有
+ * (0,1,0)，前者盖后者」；`.wt-seg .wt-btn--active:hover`（第 1001 行起）则把两个选择器写进
+ * 同一组——而那一组就在同一个对话框的「外观设置」页上。
+ *
+ * 【本条靠源码顺序胜出，别往上挪】它与 `.wt-nav__item:hover` 特异度**相同** (0,2,0)，
+ * 所以必须排在它**之后**。
+ */
+.wt-nav__item--active:hover {
+  background: var(--wt-blue-light);
+}
+
+/*
+ * 选中态**全部走 token**，一个写死的颜色都没有。
+ * `--wt-blue-light` 就是全应用「选中项底色」的既有答案（功能区里已在用），深浅两套
+ * 各有一个值（#eaf1fb / #2b2b34）——所以深色下**不需要**再写一份 `[data-theme='dark']`
+ * 规则。往这儿塞一个写死的浅蓝，深色下就会出现一块刺眼的白。
+ */
+.wt-nav__item--active {
+  background: var(--wt-blue-light);
+  border-left-color: var(--wt-accent);
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+/* 本次给左栏加了方向键导航（Task 3），焦点样式不能缺 */
+.wt-nav__item:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -2px;
+}
+
+.wt-nav__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+/*
+ * 切页时内容淡入。
+ *
+ * 【为什么不需要 key、不需要强制 reflow】非当前页是 `display: none`（见下面那条
+ * `.wt-tabpanel[hidden]`）。按规范，元素从 `display: none` 变成有显示时，它的动画会
+ * **从头开始**——所以切回来时这条自然重跑。任何 JS 都是多余的。
+ *
+ * 【打开对话框时当前页也会淡入一次】这是想要的：它顺带成了「对话框出现了」的提示。
+ *
+ * 【关键帧里只能动 `opacity`，别加 `transform`】`getBoundingClientRect()` 会被
+ * `transform: scale()` 影响，而 e2e 里那条「三页等高」正是在切页之后读高度的——加了缩放，
+ * 它会量到动画的中间态。（`translateY` 不影响高度，但本次连位移都不做。）
+ *
+ * 【`toBeVisible()` 不受这条动画影响，实测过】Playwright 1.63.0 的可见判据是
+ * `element.checkVisibility()`（无参）+ `visibility !== 'hidden'` + 盒子非零，**整条链里
+ * 没有 opacity**；在真 Chromium（Electron 44.5.1 / Chrome 152）里量过：
+ * `opacity: 0` 的元素 `checkVisibility()` 返回 `true`，而显式的
+ * `checkVisibility({ opacityProperty: true })` 才返回 `false`。所以淡入的第一帧
+ * `toBeVisible()` 就返回，不会等动画、不会变慢。
+ */
+@keyframes wt-panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 每个页自己管自己那组行：这三条是从 `.wt-modal__body` 挪过来的 */
+.wt-tabpanel {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px 18px;
+  animation: wt-panel-in 120ms ease;
+}
+
+/*
+ * 【这一条必须写】`hidden` 属性本身不带任何样式，它靠的是 **UA 样式表**里的
+ * `[hidden] { display: none }`。而级联里**来源（origin）**比特异度更优先：任何一条
+ * **作者**样式表里的规则都能盖掉 UA 的那条——上面 `.wt-tabpanel` 的 `display: flex`
+ * 正是如此。少了这一条，三个面板会同时显示、`hidden` 形同虚设（而单测只看属性，照样全绿）。
+ *
+ * 【它为什么赢：靠特异度，不是靠源码顺序】`.wt-tabpanel[hidden]` 是 (0,2,0)、
+ * `.wt-tabpanel` 是 (0,1,0)，**高的恒赢、与先后无关**。所以这条写在前写在后都成立——
+ * 但**不能删**：删了就没有任何作者规则去盖 UA 那条了。
+ */
+.wt-tabpanel[hidden] {
+  display: none;
+}
+
+/*
+ * 关掉上面那两条动效。
+ *
+ * 【注意：本应用里的媒体查询能不能命中，是**没验证过**的】本仓库已知
+ * `@media (prefers-color-scheme: dark)` 在渲染层**恒不命中**（Electron 那条坑，见 CLAUDE.md
+ * 的「外观与主题」一节）。`prefers-reduced-motion` 是否命中**没有量过**。这条不命中时
+ * 完全惰性（不影响任何用户），所以先按标准做法加上。
+ *
+ * 【若将来量出它恒不命中，别删掉这条】正解是走主进程 IPC 把它递过来——与主题
+ * （`wt:get-theme` / `wt:theme-changed`）同一条路。删掉只会让「尊重减动效」这件事静默消失。
+ *
+ * 【必须排在这两个规则之后】`.wt-nav__item` 与 `.wt-tabpanel` 的特异度与本条相同
+ * （都是 (0,1,0)），靠源码顺序胜出。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wt-nav__item {
+    transition: none;
+  }
+
+  .wt-tabpanel {
+    animation: none;
+  }
 }
 
 .wt-modal__row {

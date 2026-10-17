@@ -6565,9 +6565,34 @@ body {
   backdrop-filter: blur(1.5px);
 }
 
+/*
+ * 设置面板。680px 是「152px 左栏 + 约 500px 内容区」的宽度；内容区那一侧要放得下
+ * 「当前书 1 键显示 [10] 字」这种整行不折的组合。
+ *
+ * 【为什么是**固定高度**】三页的行数差得远（阅读设置 6 行、外观设置 2 行、快捷键设置 6 行），
+ * 而遮罩是垂直居中的——高度由内容撑的话，换页时面板既变高矮、又上下跳（实测：410 / 198 / 386，
+ * 高矮差 212px、顶边跳 106px）。固定成一个值之后三页完全一致、切换时面板一动不动。
+ *
+ * 【410 是量出来的，不是拍的】它就是最高那页（阅读设置）的自然高度：38（标题条）
+ * + 324（内容区）+ 48（footer）——在真 Electron 里跑 `out/` 构建量的。内容更少的那两页
+ * 底部留白（真 Word 的「选项」对话框就是这个观感：窗口固定，内容少就空着）。
+ *
+ * 【`min()` 不能省】窗口矮或页面缩放时按视口收。**两个实测档别混**：
+ * **最小窗口**（内容高 620）下 200% 缩放是 min(410, 262) = 262、内容区变 176；
+ * **默认窗口**（内容高 860）下 200% 是 min(410, 382) = 382、内容区 296。
+ * 写成裸的 `height: 410px` 会让面板在高缩放下顶出屏幕、footer 够不着——那正是上一批
+ * `max-height` 要修的东西，绕回去等于白改。
+ *
+ * 【原来的 `max-height` 已删】它已经被这个 `height` 包进去了，两份互相重叠的约束只会让人
+ * 将来以为都得改。顺带一个好处：固定 `height` 让面板的高度**恒为确定值**，百分比
+ * flex-basis 不再是「容器主尺寸不确定时解不出来」的情形——上一批「标题条被压扁」那条链的
+ * 根因就此消失（所以下面 `.wt-modal__header` 那条 `flex: 0 0 auto` 从「必需」降为
+ * 「多余但无害」，**保留**）。
+ */
 .wt-modal__panel {
-  width: 440px;
+  width: 680px;
   max-width: calc(100% - 48px);
+  height: min(410px, calc(100vh - 48px));
   background: #ffffff;
   border-radius: 8px;
   box-shadow:
@@ -6578,12 +6603,28 @@ body {
   overflow: hidden;
 }
 
-/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感 */
+/* 标题条沿用蓝条的配色：Word 的「选项」对话框也是这个观感。
+ *
+ * 【这条 `flex` 现在是**保险**，不再是必需】它是面板这个 column flex 容器的第一项。
+ * 在面板高度由内容撑（`height: auto` + `max-height`）的年代，夹紧的那一刻 main 的
+ * `flex-basis: 0%` 在**高度不确定**的容器里解不出 0、会退回内容高，于是出现负自由空间、
+ * 进入收缩相，标题条按比例被压扁（当年实测 150% 缩放 → 34.06px；200% → 26px，正好是下面
+ * 那个 26px 的 ✕ 按钮的高度，也就是它自己的自动最小尺寸）。
+ *
+ * 【现在不会发生了】面板改成固定的 `height: min(410px, calc(100vh - 48px))` 之后，高度
+ * **恒为确定值**，收缩相根本不产生。实测：把这条改成允许收缩的 `flex: 0 1 auto`，五档缩放
+ * 下标题条仍是 38；换回旧写法则是 200% → 35.06、250% / 300% → 26。留着 `0 0 auto` 是因为
+ * 它不会错——删掉只会让将来改动重新暴露在同一个坑里。
+ *
+ * 【判据】压缩与不压缩时 `header + main + footer` 都等于面板高度（flex 本来就这样），
+ * 有区分度的只有 `header.offsetHeight === 38`。
+ */
 .wt-modal__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 38px;
+  flex: 0 0 auto;
   padding: 0 8px 0 16px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
@@ -6627,11 +6668,216 @@ body {
   background: rgba(255, 255, 255, 0.22);
 }
 
+/*
+ * 内容区。`display: flex` / `flex-direction: column` / `gap: 16px` 三条**整体挪去了
+ * `.wt-tabpanel`**（见下）——行间距的来源没变，只是从「body 直接管着行」变成
+ * 「每个页各管自己那一组行」。
+ *
+ * 【min-width: 0 与下面的 overflow-y 是同一个保险的两半】overflow 一旦不是 visible，
+ * flex 子项的自动最小尺寸按规范就是 0，所以本条**在这条规则里是冗余的**——实测把它删掉，
+ * 无论内容多宽（试到 4300px 不可断行）body 宽度都不变。留着是因为它与 `overflow-y: auto`
+ * 互为保险：谁将来把 `overflow-y` 拿掉，它立刻开始承重（实测那种组合下 body 会被顶到 4326px）。
+ *
+ * 【overflow-y: auto】与面板的 `height: min(...)` 配套，见上。反过来，它也是上面那句
+ * 「min-width 冗余」成立的前提——两半拆开都别单删。
+ */
 .wt-modal__body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 18px;
+}
+
+/*
+ * 左栏与内容区并排。
+ * 【min-height: 0 不能省】flex 子项的默认 `min-height: auto` 会让内容把面板撑破，
+ * 而不是让内容区滚动。
+ */
+.wt-modal__main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/*
+ * 白底 + 一条分隔线，就是真 Word「选项」对话框左栏的样子。分隔线走 token，深浅自动翻。
+ *
+ * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
+ * main 的高度**、会跟着面板被 `height: min(...)` 夹而变矮；而左栏的内容是固定高的
+ * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
+ * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
+ * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
+ * footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它开始夹紧），
+ * 所以一并认下来。
+ */
+.wt-modal__nav {
+  flex: 0 0 152px;
+  padding: 8px 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--wt-chrome-border);
+}
+
+/*
+ * 页签项：整宽、方角、贴边。选中靠【底色 + 左缘一道竖条】区分。
+ *
+ * 【border-left 常态也要占位】常态是 2px 透明、选中才上色。写成「常态不给 border」的话，
+ * 选中时这一项会整体右移 2px，字与图标跳一下。
+ *
+ * 【过渡】底色 / 左缘竖条 / 文字颜色各 90ms，与 `.wt-btn` 是同一个词汇
+ * （`background-color 90ms ease`、`border-color 90ms ease`）。
+ *
+ * 【`font-weight` 刻意不进 transition】选中态从 400 跳到 600，而本应用用的是系统字体栈、
+ * 不是可变字体——浏览器对非可变字体的字重**不做插值**，写进 transition 只会让
+ * 「颜色在动、字重当场跳」，同一时刻一部分属性在跑、一部分在蹦，反而更乱。
+ * `.wt-seg` 那组选中态也是这么处理的（颜色过渡、`font-weight: 600` 硬跳）。
+ *
+ * 【`border-color` 必须进】选中/未选中之间 `border-left` 从 `transparent` 变到
+ * `--wt-accent`。不写它，那道 2px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
+ * 两者不同步非常明显。
+ */
+.wt-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--wt-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease,
+    color 90ms ease;
+}
+
+.wt-nav__item:hover {
+  background: var(--wt-chrome);
+}
+
+/*
+ * 【悬停**已经选中的**那一项时，要维持它的选中底色】没有这一条会坏在特异度上：
+ * `.wt-nav__item:hover` 是 (0,2,0)，而 `.wt-nav__item--active` 只有 (0,1,0)，前者恒压后者
+ * ——用户点页签的那一瞬间鼠标本来就压在那个按钮上，于是新选中的页签同时命中两者、
+ * **蓝色底色当场消失**（左缘竖条与蓝色粗体还在），看起来像「点了没反应」，得把鼠标挪开
+ * 才出现选中态。两个主题都中；深色下更糟，选中项本来是「比面板亮」，一悬停变成「比面板暗」，
+ * 读起来像个洞。
+ *
+ * 【这不是新问题，本文件里已经为它定过两次性】`.wt-tab--active:hover`（第 83 行起）的注释
+ * 原文就是「没有这一条会坏在特异度上：`.wt-tab:hover` 是 (0,2,0)，`.wt-tab--active` 只有
+ * (0,1,0)，前者盖后者」；`.wt-seg .wt-btn--active:hover`（第 1001 行起）则把两个选择器写进
+ * 同一组——而那一组就在同一个对话框的「外观设置」页上。
+ *
+ * 【本条靠源码顺序胜出，别往上挪】它与 `.wt-nav__item:hover` 特异度**相同** (0,2,0)，
+ * 所以必须排在它**之后**。
+ */
+.wt-nav__item--active:hover {
+  background: var(--wt-blue-light);
+}
+
+/*
+ * 选中态**全部走 token**，一个写死的颜色都没有。
+ * `--wt-blue-light` 就是全应用「选中项底色」的既有答案（功能区里已在用），深浅两套
+ * 各有一个值（#eaf1fb / #2b2b34）——所以深色下**不需要**再写一份 `[data-theme='dark']`
+ * 规则。往这儿塞一个写死的浅蓝，深色下就会出现一块刺眼的白。
+ */
+.wt-nav__item--active {
+  background: var(--wt-blue-light);
+  border-left-color: var(--wt-accent);
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+/* 本次给左栏加了方向键导航（Task 3），焦点样式不能缺 */
+.wt-nav__item:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -2px;
+}
+
+.wt-nav__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+/*
+ * 切页时内容淡入。
+ *
+ * 【为什么不需要 key、不需要强制 reflow】非当前页是 `display: none`（见下面那条
+ * `.wt-tabpanel[hidden]`）。按规范，元素从 `display: none` 变成有显示时，它的动画会
+ * **从头开始**——所以切回来时这条自然重跑。任何 JS 都是多余的。
+ *
+ * 【打开对话框时当前页也会淡入一次】这是想要的：它顺带成了「对话框出现了」的提示。
+ *
+ * 【关键帧里只能动 `opacity`，别加 `transform`】`getBoundingClientRect()` 会被
+ * `transform: scale()` 影响，而 e2e 里那条「三页等高」正是在切页之后读高度的——加了缩放，
+ * 它会量到动画的中间态。（`translateY` 不影响高度，但本次连位移都不做。）
+ *
+ * 【`toBeVisible()` 不受这条动画影响，实测过】Playwright 1.63.0 的可见判据是
+ * `element.checkVisibility()`（无参）+ `visibility !== 'hidden'` + 盒子非零，**整条链里
+ * 没有 opacity**；在真 Chromium（Electron 44.5.1 / Chrome 152）里量过：
+ * `opacity: 0` 的元素 `checkVisibility()` 返回 `true`，而显式的
+ * `checkVisibility({ opacityProperty: true })` 才返回 `false`。所以淡入的第一帧
+ * `toBeVisible()` 就返回，不会等动画、不会变慢。
+ */
+@keyframes wt-panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 每个页自己管自己那组行：这三条是从 `.wt-modal__body` 挪过来的 */
+.wt-tabpanel {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px 18px;
+  animation: wt-panel-in 120ms ease;
+}
+
+/*
+ * 【这一条必须写】`hidden` 属性本身不带任何样式，它靠的是 **UA 样式表**里的
+ * `[hidden] { display: none }`。而级联里**来源（origin）**比特异度更优先：任何一条
+ * **作者**样式表里的规则都能盖掉 UA 的那条——上面 `.wt-tabpanel` 的 `display: flex`
+ * 正是如此。少了这一条，三个面板会同时显示、`hidden` 形同虚设（而单测只看属性，照样全绿）。
+ *
+ * 【它为什么赢：靠特异度，不是靠源码顺序】`.wt-tabpanel[hidden]` 是 (0,2,0)、
+ * `.wt-tabpanel` 是 (0,1,0)，**高的恒赢、与先后无关**。所以这条写在前写在后都成立——
+ * 但**不能删**：删了就没有任何作者规则去盖 UA 那条了。
+ */
+.wt-tabpanel[hidden] {
+  display: none;
+}
+
+/*
+ * 关掉上面那两条动效。
+ *
+ * 【注意：本应用里的媒体查询能不能命中，是**没验证过**的】本仓库已知
+ * `@media (prefers-color-scheme: dark)` 在渲染层**恒不命中**（Electron 那条坑，见 CLAUDE.md
+ * 的「外观与主题」一节）。`prefers-reduced-motion` 是否命中**没有量过**。这条不命中时
+ * 完全惰性（不影响任何用户），所以先按标准做法加上。
+ *
+ * 【若将来量出它恒不命中，别删掉这条】正解是走主进程 IPC 把它递过来——与主题
+ * （`wt:get-theme` / `wt:theme-changed`）同一条路。删掉只会让「尊重减动效」这件事静默消失。
+ *
+ * 【必须排在这两个规则之后】`.wt-nav__item` 与 `.wt-tabpanel` 的特异度与本条相同
+ * （都是 (0,1,0)），靠源码顺序胜出。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wt-nav__item {
+    transition: none;
+  }
+
+  .wt-tabpanel {
+    animation: none;
+  }
 }
 
 .wt-modal__row {
@@ -13858,12 +14104,30 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   await win.keyboard.type('aaa')
   await expect.poll(revealed).toBe(0)
 
-  // 点对话框里不可聚焦的空白处（面板左边缘、行标号左侧）：浏览器会把焦点交给 body，
-  // 此后键盘没有焦点宿主，更不该被抢回阅读区
-  await win.locator('[data-testid="settings"] .wt-modal__panel').click({ position: { x: 4, y: 60 } })
+  // 点对话框里不可聚焦的空白处：浏览器会把焦点交给 body，此后键盘没有焦点宿主，
+  // 更不该被抢回阅读区。
+  //
+  // 【坐标为什么从面板挪到 footer】原先点的是 `.wt-modal__panel` 的 (4, 60)，那句话写的
+  // 是「面板左边缘、行标号左侧」。加了 152px 宽的左栏之后，评审用 elementFromPoint 在面板
+  // 坐标系下量过：**(4, 60) 精确命中第一个页签按钮**（`wt-nav__item--active`）。下面那两条
+  // 断言在两个世界里都会绿——也就是说这条用例已经**静默地**不再验它声称要验的东西了。
+  //
+  // 【为什么是 footer 而不是「左栏下方的空白」】面板坐标系下那两个候选（(4,200) 左栏空白、
+  // (156,200) body 空白）在 250% 缩放时会落到 `.wt-modal` 遮罩上——而遮罩的 onClick 正是
+  // 「点它自己就关闭」，那一下会把对话框关掉、用例硬红；300% 时干脆出了视口。footer 的
+  // (4,10) 是**元素相对坐标**、与缩放无关，六档实测全部命中 `.wt-modal__footer`：它高度
+  // 48px 由内容（30px 按钮 + 18px 下内边距）撑住，两个按钮 `justify-content: flex-end`
+  // 靠右排，所以左内边距那一片永远是空的。
+  const panel = win.locator('[data-testid="settings"] .wt-modal__panel')
+  await win.locator('[data-testid="settings"] .wt-modal__footer').click({ position: { x: 4, y: 10 } })
+  // 【这一条是新加的，它让坐标自证】点到不可聚焦的空白处时，浏览器把焦点交给 body。
+  // 少了它，上面那个坐标哪天又落回某个按钮上，这条用例照样绿——而它是本次唯一能在真机里
+  // 判「焦点宿主」的用例。
+  await expect.poll(() => win.evaluate(() => document.activeElement?.tagName ?? '')).toBe('BODY')
   await expect(win.locator('[data-testid="input-capture"]')).not.toBeFocused()
   await win.keyboard.type('bbb')
   await expect.poll(revealed).toBe(0)
+  await expect(panel).toBeVisible()
 
   await win.keyboard.press('Escape')
   await expect(win.locator('[data-testid="settings"]')).toBeHidden()
@@ -13871,6 +14135,88 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   // 快捷键⌘/Ctrl + , 同样能开
   await win.keyboard.press('Meta+Comma')
   await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  // 重开之后焦点必须仍在对话框里——**这一条只有真机判得了**。
+  //
+  // 【为什么要它】Task 1 修过一条 Critical：`page` 是持久状态、组件在 open 为假时不卸载，
+  // 而 `autoFocus` 落在 `hidden`（display:none）子树里的元素上是 no-op，且只在挂载那一次跑。
+  // 修之前，**每一次「切到非首页 → 关闭 → 重开」**都会让焦点原地留在关闭时被交还的那个
+  // 隐形 textarea 上，而 `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的那条路上
+  // ——抽字路径上一条都没有。所以敲的键会在遮罩后面抽进小说，屏幕上完全看不出来。
+  //
+  // 单测已经判到了「jsdom 对 [hidden] 子树的 focus() 是 no-op」与「渲染期重置与 effect 重置
+  // 的差别」，但**「Chromium 会不会同样如此」jsdom 判不了**——就是这一条。
+  await win.locator('[data-testid="settings-tab-shortcuts"]').click()
+  await win.locator('[data-testid="settings-close"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeHidden()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+  await expect(win.locator('[data-testid="doc-title-input"]')).toBeFocused()
+
+  // 【只断言「焦点在文档名上」不够，还要断言**后果】**——这才是修好的真机判据。
+  // 焦点没回来的话，下面这几个字母会在遮罩后面抽进小说，`revealed` 就从 0 变成 3。
+  await win.keyboard.type('xxx')
+  await expect.poll(revealed).toBe(0)
+})
+
+/**
+ * 三页的面板必须一样大。
+ *
+ * 【为什么只有这条判得了】jsdom 没有布局，`getBoundingClientRect()` 恒为 0——这个不变量
+ * 在单测里根本不存在。它只能由真机判。
+ *
+ * 【改动前为什么是红的】面板高度由内容撑（`height: auto` + `max-height`），三页的行数是
+ * 6 / 2 / 6，实测 410 / 198 / 386——而遮罩是垂直居中的，所以换页时面板既变高矮、又上下跳。
+ */
+test('设置面板三页大小一致', async () => {
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  const heights: number[] = []
+  const overflows: number[] = []
+  for (const id of ['reading', 'appearance', 'shortcuts']) {
+    await win.locator(`[data-testid="settings-tab-${id}"]`).click()
+    // 【为什么等它可见再量】`click()` 只保证「点到了」，不保证「切过去了」。少了这一行，
+    // 点击处理器坏掉时三次都会量到同一页的高度——下面那条 `Set.size === 1` 会**假绿**。
+    // 等的是「被点那一页真的可见」，等价于断言切换确实生效。
+    await expect(win.locator(`[data-testid="settings-tabpanel-${id}"]`)).toBeVisible()
+    // 【另两页必须藏着】少了这一条还有一个假绿口子：若有人删掉
+    // `.wt-tabpanel[hidden] { display: none }`，三页会叠在一起、面板每次都是同一个值，
+    // `Set.size === 1` 照样绿（而被点的那块本来就可见，上面那个 settle 点也不会失败）。
+    // 那条 CSS 自己的注释就写着「单测只看属性，照样全绿」——这条 e2e 正好补上。
+    for (const other of ['reading', 'appearance', 'shortcuts'].filter((x) => x !== id)) {
+      await expect(win.locator(`[data-testid="settings-tabpanel-${other}"]`)).toBeHidden()
+    }
+    heights.push(
+      await win
+        .locator('[data-testid="settings"] .wt-modal__panel')
+        .evaluate((el) => el.getBoundingClientRect().height)
+    )
+    overflows.push(
+      await win.evaluate(() => {
+        const body = document.querySelector('.wt-modal__body') as HTMLElement
+        return body.scrollHeight - body.clientHeight
+      })
+    )
+  }
+
+  // 【三者必须**严格**相等，不是「差不多」】三页的行数差得远，高度只要还由内容撑，
+  // 这条当场红。
+  expect(new Set(heights).size).toBe(1)
+
+  // 【三页一致还不够：还要确认内容没被裁】少了这一条，把固定高度改小之后三页仍然相等，
+  // 而阅读设置那页的内容被切掉——上面那条照样绿。
+  //
+  // 判的是 `scrollHeight <= clientHeight`，**不是某个绝对像素值**：它不依赖字体度量，
+  // 直接回答「有没有东西被切掉」。反方向它也管——将来阅读设置页加了一行、自然高度超过
+  // 固定值时，这里会红。
+  //
+  // 【但它**不是**窗口无关的，别把这条红当成回归】面板被 `min()` 夹到低于阅读页的自然高度时，
+  // 内容区必然要滚，这一条就会红——而那是**对的**，内容确实被裁了。当前 e2e 每次都是
+  // 1280×860、100% 缩放的新窗口（`calc(100vh - 48px)` = 812 > 410），所以它绿。
+  // **别在带缩放或更小的窗口上跑 e2e，再把这条红当成回归。**
+  expect(Math.max(...overflows)).toBe(0)
 })
 
 test('点击章节跳到该章，并在读过后回填进度', async () => {
@@ -14172,6 +14518,7 @@ git commit -F /tmp/wt-commit-msg.txt   # 不要用内联 -m：ASCII 引号会静
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FocusEvent,
   type KeyboardEvent as ReactKeyboardEvent
@@ -14289,6 +14636,29 @@ const THEME_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: ThemeSource; label: string; icon: FluentIcon }>
 
 /**
+ * 左栏的页签。数组顺序就是左栏从上到下的顺序。
+ *
+ * 【为什么是表而不是散在 JSX 里】页签按钮上那**九个由表里这一项算出来的属性**
+ * （`key` / `id` / `aria-selected` / `aria-controls` / `tabIndex` / `className` /
+ * `data-testid` / `ref` / `onClick`）——十二个属性里只有 `type` / `role` / `onKeyDown`
+ * 三个与 `p` 无关——以及方向键分发要遍历的 `PAGES` 本身，用的都是同一份清单；
+ * 散着写的话每加一页都要各改一遍。与同一个文件里的 `THEME_OPTIONS` 是同一套写法。
+ *
+ * 【加一页是「加一行 **+** 一个面板块」，别只加一行】`aria-labelledby` 与整个面板块是
+ * **手写**的——三个面板的内容各不相同，推不出来。只往这张表里加一行的话，新页签的
+ * `aria-controls` 会指向一个不存在的 id、而三个面板的 `hidden` 仍全按旧的两个 id 算，
+ * 于是**内容区一片空白，而现有用例全绿**（它们把三个 id 写死了）。所以别把这句话读成
+ * 「加一行就完事」。
+ */
+const PAGES = [
+  { id: 'reading', label: '阅读设置', icon: IconBook },
+  { id: 'appearance', label: '外观设置', icon: IconDarkTheme },
+  { id: 'shortcuts', label: '快捷键设置', icon: IconKeyboard }
+] as const satisfies ReadonlyArray<{ id: string; label: string; icon: FluentIcon }>
+
+type SettingsPage = (typeof PAGES)[number]['id']
+
+/**
  * 设置对话框：应用**真实功能**的唯一去处（文档名 / 比例 / 输入模式 / 导入 / 清除阅读记录）。
  *
  * 【为什么要有一个对话框，而不是像原来那样把控件摆在工具栏里】那些控件是伪装的一部分里
@@ -14325,6 +14695,61 @@ export function SettingsDialog({
     useToolbar()
 
   const kind = platformKind(platform)
+
+  /** 当前显示哪一页。默认「阅读设置」。 */
+  const [page, setPage] = useState<SettingsPage>('reading')
+  /** 上一次渲染时对话框开着没有。只服务于下面那一段「打开」时的就地重置。 */
+  const [wasOpen, setWasOpen] = useState(open)
+
+  /*
+   * 「每次打开都拉回第一页」。**必须写在渲染期，不能放进 effect。**
+   *
+   * `open` 为假时本组件只是 `return null`——**它并不卸载**，`useState` 的初值只在第一次
+   * 挂载时起作用。放进 `[open, reset]` 那条 effect 里的话，effect 跑在**提交之后**，所以
+   * 「打开」的那一次提交里 page 还是上一次的值、阅读设置面板仍带着 `hidden`；而
+   * **对 `hidden`（display:none）子树里的元素调 `focus()` 是 no-op**，`autoFocus` 就此
+   * 静默失效——焦点**原地留在关闭时被交还的那个隐形输入框上**（下面那条 `if (open) return`
+   * 的 effect 在关闭时把焦点交给了它），而那个输入框**本来就是抽字那条路的入口**：
+   * `InputCapture` 里那道 `role="dialog"` 闸只长在抢焦点的 `focusIfNotTextInput` 上，
+   * `handleKeyDown` / `handleInput` 一条都没有。焦点一落在那儿，按键**立刻**开始抽字。
+   *
+   * 渲染期就地重置（React 官方的「props 变了就地调整 state」写法）会让 React 当场重跑一次
+   * 渲染再提交，于是「打开」那一次提交里第一页**本来就是可见的**，`autoFocus` 落得下去。
+   * 光在事后把 page 拉回去补不回来：input 没有重新挂载，`autoFocus` 不会重跑。
+   */
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setPage('reading')
+  }
+
+  /**
+   * 左栏那几个按钮。方向键换页之后要**显式**把焦点搬过去：roving tabindex 换人时
+   * 浏览器不会自己跟（它只管 Tab 键那一下）。
+   */
+  const tabRefs = useRef<Partial<Record<SettingsPage, HTMLButtonElement | null>>>({})
+
+  /**
+   * 左栏的方向键。↑↓ 移动并**当场切页**（ARIA tabs 的「自动激活」），Home / End 跳首尾。
+   *
+   * 【为什么选自动激活而不是「先移焦点、再按 Enter 确认」】内容区是静态表单，切过去的
+   * 代价只是重画一次，没有需要确认的操作。
+   *
+   * 【不认的键直接 return，不做 preventDefault】左栏只该吃掉**这四个键**（↑ ↓ Home End）；
+   * Enter / Space 交给浏览器去点按钮、字母键谁也别拦。
+   */
+  const handleNavKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    const i = PAGES.findIndex((p) => p.id === page)
+    let next = -1
+    if (e.key === 'ArrowDown') next = (i + 1) % PAGES.length
+    else if (e.key === 'ArrowUp') next = (i - 1 + PAGES.length) % PAGES.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = PAGES.length - 1
+    if (next < 0) return
+    e.preventDefault()
+    const target = PAGES[next].id
+    setPage(target)
+    tabRefs.current[target]?.focus()
+  }
 
   /**
    * 「导入小说」按钮 title 里那条快捷键的显示文本。
@@ -14513,6 +14938,16 @@ export function SettingsDialog({
     if (open) reset()
   }, [open, reset])
 
+  /**
+   * 切页＝放弃正在进行的录制。
+   *
+   * 录制框在「快捷键设置」那一页上，切走就再也看不见它了；留着录制态只会让分发器一直
+   * 哑着，而用户完全看不出为什么快捷键忽然失效。这是既有语义（点别处＝放弃录制，见录制
+   * 框的 `onBlur`）的直接延伸。
+   */
+  useEffect(() => {
+    setRecording(null)
+  }, [page])
 
   /**
    * 三个带夹紧的数字格（比例两格 + 正文字号）共用的失焦处理：只归一化、不提交；
@@ -14616,305 +15051,382 @@ export function SettingsDialog({
           </button>
         </div>
 
-        <div className="wt-modal__body">
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconRename className="wt-modal__label-icon" />
-              文档名
-            </span>
-            <input
-              className="wt-modal__text"
-              data-testid="doc-title-input"
-              aria-label="文档名"
-              // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
-              // 里那条 role="dialog" 的闸）。它同时是「第一个输入框」，Tab 顺序从这里开始。
-              autoFocus
-              value={drafts['doc-title'] ?? docTitle}
-              onChange={(e) => setDraft('doc-title', e.target.value)}
-              // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
-              onBlur={() => blur('doc-title')}
-              // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-              }}
-            />
+        <div className="wt-modal__main">
+          {/*
+            左栏。`role="tablist"` + `aria-orientation="vertical"` 是 ARIA 垂直页签的标准写法。
+            `tabIndex` 是 roving 的：只有选中的那一项在 Tab 顺序里，从它往右一按 Tab 就进内容区。
+          */}
+          <div
+            className="wt-modal__nav"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="设置分类"
+          >
+            {PAGES.map((p) => {
+              const active = page === p.id
+              const PageIcon = p.icon
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  id={`wt-tab-${p.id}`}
+                  aria-selected={active}
+                  aria-controls={`wt-tabpanel-${p.id}`}
+                  tabIndex={active ? 0 : -1}
+                  className={`wt-nav__item${active ? ' wt-nav__item--active' : ''}`}
+                  data-testid={`settings-tab-${p.id}`}
+                  ref={(el) => {
+                    tabRefs.current[p.id] = el
+                  }}
+                  onKeyDown={handleNavKeyDown}
+                  onClick={() => setPage(p.id)}
+                >
+                  {/* 选中时图标换成实心——与功能区那些切换按钮、以及下面外观那组同一套语义 */}
+                  <PageIcon filled={active} className="wt-nav__icon" />
+                  {p.label}
+                </button>
+              )
+            })}
           </div>
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconFontSize className="wt-modal__label-icon" />
-              阅读替换
-            </span>
+          <div className="wt-modal__body">
             {/*
-              两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
-              顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
-              点保存才生效。
-            */}
-            <div className="wt-ratio-pair">
-              <div className="wt-ratio-line">
-                <span className="wt-ratio__caption">全局</span>
-                <span className="wt-ratio__label">1 键显示</span>
-                <input
-                  className="wt-ratio__input"
-                  data-testid="global-ratio-input"
-                  aria-label="全局比例：新导入的书 / 工作文档，输入 1 个字显示多少字"
-                  inputMode="numeric"
-                  value={drafts['global-ratio'] ?? String(globalRatio)}
-                  onChange={(e) => setDraft('global-ratio', e.target.value)}
-                  onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
-                  }}
-                />
-                <span className="wt-ratio__label">字</span>
-                <span className="wt-ratio__note">新导入的书用它</span>
-              </div>
-              <div className="wt-ratio-line">
-                <span className="wt-ratio__caption">当前书</span>
-                <span className="wt-ratio__label">1 键显示</span>
-                <input
-                  className="wt-ratio__input"
-                  data-testid="ratio-input"
-                  aria-label="当前书比例：输入 1 个字显示文档多少字"
-                  inputMode="numeric"
-                  // 没有文档就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
-                  disabled={!novelOpen}
-                  value={drafts['ratio'] ?? String(ratio)}
-                  onChange={(e) => setDraft('ratio', e.target.value)}
-                  onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave()
-                  }}
-                />
-                <span className="wt-ratio__label">字</span>
-                {!novelOpen && <span className="wt-ratio__note">未打开文档</span>}
-              </div>
-            </div>
-          </div>
+              三个面板**都渲染**，非当前页加 `hidden`。
+              条件渲染的话，本文件与 ribbon.test.tsx 里 40 多处跨页取元素的断言全都要先切页，
+              而且「打开时焦点落在文档名上（autoFocus）」那条会当场坏。
+              `hidden` 也是 ARIA tabs 对非当前 tabpanel 的标准做法。
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconKeyboard className="wt-modal__label-icon" />
-              输入模式
-            </span>
-            <button
-              type="button"
-              className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
-              data-testid="mode-button"
-              title="切换输入模式：输入法友好 / 纯按键"
-              aria-pressed={mode === 'ime'}
-              onClick={() => {
-                const next = mode === 'ime' ? 'key' : 'ime'
-                setMode(next)
-                notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
-              }}
+              【`.wt-tabpanel[hidden] { display: none }` 那条 CSS 不能少】`hidden` 属性
+              本身不带样式，它靠的是 UA 默认样式表里的 `[hidden] { display: none }`；
+              而 `.wt-tabpanel` 自己设了 `display: flex`，会把那条盖掉。见 Task 2。
+            */}
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-reading"
+              aria-labelledby="wt-tab-reading"
+              data-testid="settings-tabpanel-reading"
+              hidden={page !== 'reading'}
             >
-              {mode === 'ime' ? '输入法' : '纯按键'}
-            </button>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconRename className="wt-modal__label-icon" />
+                  文档名
+                </span>
+                <input
+                  className="wt-modal__text"
+                  data-testid="doc-title-input"
+                  aria-label="文档名"
+                  // 打开即聚焦：焦点留在对话框里，用户随手敲的键就不会漏进小说（见 InputCapture
+                  // 里那条 role="dialog" 的闸）。
+                  autoFocus
+                  value={drafts['doc-title'] ?? docTitle}
+                  onChange={(e) => setDraft('doc-title', e.target.value)}
+                  // 失焦只归一化（去两侧空白），**不提交**——生效要等「保存」
+                  onBlur={() => blur('doc-title')}
+                  // 回车＝保存：原先它触发提交，现在留着这个例外会和「保存」按钮打架
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+              </div>
 
-          <div className="wt-modal__row">
-            {/*
-              外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
-              macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
-            */}
-            <span className="wt-modal__label">
-              <IconDarkTheme className="wt-modal__label-icon" />
-              外观
-            </span>
-            <div className="wt-seg" role="group" aria-label="外观">
-              {THEME_OPTIONS.map((opt) => {
-                const active = themeSource === opt.value
-                const OptIcon = opt.icon
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`wt-btn${active ? ' wt-btn--active' : ''}`}
-                    data-testid={`theme-${opt.value}`}
-                    aria-pressed={active}
-                    onClick={() => onThemeSourceChange(opt.value)}
-                  >
-                    {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
-                    <OptIcon filled={active} className="wt-btn__icon" />
-                    {opt.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconFontSize className="wt-modal__label-icon" />
+                  阅读替换
+                </span>
+                {/*
+                  两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
+                  顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
+                  点保存才生效。
+                */}
+                <div className="wt-ratio-pair">
+                  <div className="wt-ratio-line">
+                    <span className="wt-ratio__caption">全局</span>
+                    <span className="wt-ratio__label">1 键显示</span>
+                    <input
+                      className="wt-ratio__input"
+                      data-testid="global-ratio-input"
+                      aria-label="全局比例：新导入的书 / 工作文档，输入 1 个字显示多少字"
+                      inputMode="numeric"
+                      value={drafts['global-ratio'] ?? String(globalRatio)}
+                      onChange={(e) => setDraft('global-ratio', e.target.value)}
+                      onBlur={blurClamped('global-ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSave()
+                      }}
+                    />
+                    <span className="wt-ratio__label">字</span>
+                    <span className="wt-ratio__note">新导入的书用它</span>
+                  </div>
+                  <div className="wt-ratio-line">
+                    <span className="wt-ratio__caption">当前书</span>
+                    <span className="wt-ratio__label">1 键显示</span>
+                    <input
+                      className="wt-ratio__input"
+                      data-testid="ratio-input"
+                      aria-label="当前书比例：输入 1 个字显示文档多少字"
+                      inputMode="numeric"
+                      // 没有文档就没有「当前书」——禁用而不是藏起来，免得两格一隐一现地跳
+                      disabled={!novelOpen}
+                      value={drafts['ratio'] ?? String(ratio)}
+                      onChange={(e) => setDraft('ratio', e.target.value)}
+                      onBlur={blurClamped('ratio', clampRatioInput, MIN_RATIO, MAX_RATIO, '比例')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSave()
+                      }}
+                    />
+                    <span className="wt-ratio__label">字</span>
+                    {!novelOpen && <span className="wt-ratio__note">未打开文档</span>}
+                  </div>
+                </div>
+              </div>
 
-          <div className="wt-modal__row">
-            {/*
-              默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
-              勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
-              只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
-            */}
-            <span className="wt-modal__label">
-              <IconDocument className="wt-modal__label-icon" />
-              纸张
-            </span>
-            <label className="wt-modal__check">
-              <input
-                type="checkbox"
-                data-testid="dark-paper"
-                checked={darkPaper}
-                onChange={(e) => onDarkPaperChange(e.target.checked)}
-              />
-              深色模式下也变暗
-            </label>
-          </div>
-
-          <div className="wt-modal__row">
-            {/*
-              正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
-              才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
-              写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
-            */}
-            <span className="wt-modal__label">
-              <IconFontSize className="wt-modal__label-icon" />
-              正文字号
-            </span>
-            <input
-              className="wt-ratio__input"
-              data-testid="page-font-size-input"
-              aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
-              inputMode="numeric"
-              value={drafts['page-font-size'] ?? String(pageFontSize)}
-              onChange={(e) => setDraft('page-font-size', e.target.value)}
-              onBlur={blurClamped(
-                'page-font-size',
-                clampPageFontSize,
-                PAGE_FONT_SIZE_MIN,
-                PAGE_FONT_SIZE_MAX,
-                '字号'
-              )}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSave()
-              }}
-            />
-            <span className="wt-ratio__label">px</span>
-            <span className="wt-ratio__note">只作用于小说与 .txt</span>
-          </div>
-
-          {/* 快捷键：三条各一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
-          {SHORTCUTS.map((def) => {
-            const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
-            const isRecording = recording === def.id
-            return (
-              <div className="wt-modal__row" key={def.id}>
-                <span className="wt-modal__label">{def.label}</span>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconKeyboard className="wt-modal__label-icon" />
+                  输入模式
+                </span>
                 <button
                   type="button"
-                  className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
-                  data-testid={`shortcut-${def.id}-input`}
-                  aria-label={`${def.label}的快捷键`}
-                  onKeyDown={handleRecordKey(def.id)}
-                  onBlur={() => {
-                    // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
-                    if (recording === def.id) setRecording(null)
+                  className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
+                  data-testid="mode-button"
+                  title="切换输入模式：输入法友好 / 纯按键"
+                  aria-pressed={mode === 'ime'}
+                  onClick={() => {
+                    const next = mode === 'ime' ? 'key' : 'ime'
+                    setMode(next)
+                    notify(next === 'ime' ? '已切换：输入法友好模式' : '已切换：纯按键模式')
                   }}
-                  onClick={() => setRecording(def.id)}
                 >
-                  {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                  {mode === 'ime' ? '输入法' : '纯按键'}
+                </button>
+              </div>
+
+              <div className="wt-modal__row">
+                {/*
+                  正文字号：**归「手动保存」那一组**，与文档名、阅读替换同一条路——改完点保存
+                  才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
+                  写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
+                */}
+                <span className="wt-modal__label">
+                  <IconFontSize className="wt-modal__label-icon" />
+                  正文字号
+                </span>
+                <input
+                  className="wt-ratio__input"
+                  data-testid="page-font-size-input"
+                  aria-label={`正文字号：${PAGE_FONT_SIZE_MIN}–${PAGE_FONT_SIZE_MAX} 像素`}
+                  inputMode="numeric"
+                  value={drafts['page-font-size'] ?? String(pageFontSize)}
+                  onChange={(e) => setDraft('page-font-size', e.target.value)}
+                  onBlur={blurClamped(
+                    'page-font-size',
+                    clampPageFontSize,
+                    PAGE_FONT_SIZE_MIN,
+                    PAGE_FONT_SIZE_MAX,
+                    '字号'
+                  )}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave()
+                  }}
+                />
+                <span className="wt-ratio__label">px</span>
+                <span className="wt-ratio__note">只作用于小说与 .txt</span>
+              </div>
+
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconBook className="wt-modal__label-icon" />
+                  小说
+                </span>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid="btn-import"
+                  title={`导入小说 (${importButtonShortcut})`}
+                  onClick={() => onImport()}
+                >
+                  <IconImport className="wt-btn__icon" />
+                  导入小说
                 </button>
                 <button
                   type="button"
                   className="wt-btn"
-                  data-testid={`shortcut-${def.id}-reset`}
-                  aria-label={`把${def.label}恢复为默认`}
-                  onClick={() => {
-                    setRecording(null)
-                    setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
-                  }}
+                  data-testid="btn-clear-session"
+                  title="清除阅读记录"
+                  onClick={() => onClearSession()}
                 >
-                  ↺
+                  <IconClear className="wt-btn__icon" />
+                  清除阅读记录
                 </button>
               </div>
-            )
-          })}
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconBook className="wt-modal__label-icon" />
-              小说
-            </span>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-import"
-              title={`导入小说 (${importButtonShortcut})`}
-              onClick={() => onImport()}
-            >
-              <IconImport className="wt-btn__icon" />
-              导入小说
-            </button>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-clear-session"
-              title="清除阅读记录"
-              onClick={() => onClearSession()}
-            >
-              <IconClear className="wt-btn__icon" />
-              清除阅读记录
-            </button>
-          </div>
+              <div className="wt-modal__row">
+                <span className="wt-modal__label">
+                  <IconDocument className="wt-modal__label-icon" />
+                  工作文档
+                </span>
+                {/*
+                  按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
+                  外部动作，做成「选了文件还得再点保存」很别扭。
 
-          <div className="wt-modal__row">
-            <span className="wt-modal__label">
-              <IconDocument className="wt-modal__label-icon" />
-              工作文档
-            </span>
-            {/*
-              按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
-              外部动作，做成「选了文件还得再点保存」很别扭。
+                  【坏掉那一路没有名字可写】`workDocBroken` 只有一个置位点：boot 里 `loadWorkDoc`
+                  读不出来。而**同一条路上 `workNovel` 必然是 null**，于是 `workDocTitle` 也恒为
+                  null。所以这里不能写成 `⚠ ${workDocTitle ?? ''} 读不出来了`——那会渲染出
+                  「⚠  读不出来了」这种一个永远填不上的名字位加双空格。
+                */}
+                <span
+                  className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
+                  data-testid="work-doc-status"
+                  // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
+                  // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
+                  title={workDocPath ?? undefined}
+                >
+                  {workDocBroken
+                    ? workDocTitle === null
+                      ? '⚠ 工作文档读不出来了'
+                      : `⚠ ${workDocTitle} 读不出来了`
+                    : (workDocTitle ?? '未导入')}
+                </span>
+                <button
+                  type="button"
+                  className="wt-btn"
+                  data-testid="btn-import-work-doc"
+                  title="导入工作文档（txt / md）"
+                  onClick={() => onImportWorkDoc()}
+                >
+                  <IconImport className="wt-btn__icon" />
+                  导入工作文档
+                </button>
+                {/*
+                  【判据为什么是「配了路径」而不是「有名字」】坏掉那一路恒无名字（见上），
+                  按名字 gate 的话那个按钮**根本不渲染**——而「文件被移走」正是唯一可达的坏
+                  状态，用户于是没有任何入口清掉那个悬空路径，只能靠导入另一份顶掉它。
+                */}
+                {(workDocTitle !== null || workDocBroken) && (
+                  <button
+                    type="button"
+                    className="wt-btn"
+                    data-testid="btn-remove-work-doc"
+                    title="移除工作文档"
+                    onClick={() => onRemoveWorkDoc()}
+                  >
+                    <IconClear className="wt-btn__icon" />
+                    移除
+                  </button>
+                )}
+              </div>
+            </div>
 
-              【坏掉那一路没有名字可写】`workDocBroken` 只有一个置位点：boot 里 `loadWorkDoc`
-              读不出来。而**同一条路上 `workNovel` 必然是 null**，于是 `workDocTitle` 也恒为
-              null。所以这里不能写成 `⚠ ${workDocTitle ?? ''} 读不出来了`——那会渲染出
-              「⚠  读不出来了」这种一个永远填不上的名字位加双空格。
-            */}
-            <span
-              className={`wt-workdoc__status${workDocBroken ? ' wt-workdoc__status--broken' : ''}`}
-              data-testid="work-doc-status"
-              // 那行会按 CSS 截断（`max-width: 220px` + ellipsis），长路径看不全——悬停给全文。
-              // 没有路径时**不给空 title**（`title=""` 会渲染一个空的小气泡）。
-              title={workDocPath ?? undefined}
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-appearance"
+              aria-labelledby="wt-tab-appearance"
+              data-testid="settings-tabpanel-appearance"
+              hidden={page !== 'appearance'}
             >
-              {workDocBroken
-                ? workDocTitle === null
-                  ? '⚠ 工作文档读不出来了'
-                  : `⚠ ${workDocTitle} 读不出来了`
-                : (workDocTitle ?? '未导入')}
-            </span>
-            <button
-              type="button"
-              className="wt-btn"
-              data-testid="btn-import-work-doc"
-              title="导入工作文档（txt / md）"
-              onClick={() => onImportWorkDoc()}
+              <div className="wt-modal__row">
+                {/*
+                  外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
+                  macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
+                */}
+                <span className="wt-modal__label">
+                  <IconDarkTheme className="wt-modal__label-icon" />
+                  外观
+                </span>
+                <div className="wt-seg" role="group" aria-label="外观">
+                  {THEME_OPTIONS.map((opt) => {
+                    const active = themeSource === opt.value
+                    const OptIcon = opt.icon
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`wt-btn${active ? ' wt-btn--active' : ''}`}
+                        data-testid={`theme-${opt.value}`}
+                        aria-pressed={active}
+                        onClick={() => onThemeSourceChange(opt.value)}
+                      >
+                        {/* 选中时图标也换成实心——与功能区那些切换按钮同一套语义 */}
+                        <OptIcon filled={active} className="wt-btn__icon" />
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="wt-modal__row">
+                {/*
+                  默认【关】：真 Word 的深色模式里纸张仍是白的，保持这一点伪装才完整。
+                  勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
+                  只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
+                */}
+                <span className="wt-modal__label">
+                  <IconDocument className="wt-modal__label-icon" />
+                  纸张
+                </span>
+                <label className="wt-modal__check">
+                  <input
+                    type="checkbox"
+                    data-testid="dark-paper"
+                    checked={darkPaper}
+                    onChange={(e) => onDarkPaperChange(e.target.checked)}
+                  />
+                  深色模式下也变暗
+                </label>
+              </div>
+            </div>
+
+            <div
+              className="wt-tabpanel"
+              role="tabpanel"
+              id="wt-tabpanel-shortcuts"
+              aria-labelledby="wt-tab-shortcuts"
+              data-testid="settings-tabpanel-shortcuts"
+              hidden={page !== 'shortcuts'}
             >
-              <IconImport className="wt-btn__icon" />
-              导入工作文档
-            </button>
-            {/*
-              【判据为什么是「配了路径」而不是「有名字」】坏掉那一路恒无名字（见上），
-              按名字 gate 的话那个按钮**根本不渲染**——而「文件被移走」正是唯一可达的坏
-              状态，用户于是没有任何入口清掉那个悬空路径，只能靠导入另一份顶掉它。
-            */}
-            {(workDocTitle !== null || workDocBroken) && (
-              <button
-                type="button"
-                className="wt-btn"
-                data-testid="btn-remove-work-doc"
-                title="移除工作文档"
-                onClick={() => onRemoveWorkDoc()}
-              >
-                <IconClear className="wt-btn__icon" />
-                移除
-              </button>
-            )}
+              {/* 快捷键：一条一行。加一条只需在 core 的 SHORTCUTS 表里加一行，这里自动跟上。 */}
+              {SHORTCUTS.map((def) => {
+                const draft = drafts[`shortcut-${def.id}`] ?? shortcuts[def.id] ?? defaultShortcut(def.id, kind)
+                const isRecording = recording === def.id
+                return (
+                  <div className="wt-modal__row" key={def.id}>
+                    <span className="wt-modal__label">{def.label}</span>
+                    <button
+                      type="button"
+                      className={`wt-shortcut${isRecording ? ' wt-shortcut--recording' : ''}`}
+                      data-testid={`shortcut-${def.id}-input`}
+                      aria-label={`${def.label}的快捷键`}
+                      onKeyDown={handleRecordKey(def.id)}
+                      onBlur={() => {
+                        // 点到别处＝放弃这次录制。不这样的话录制态会一直挂着，而分发器也就一直哑着。
+                        if (recording === def.id) setRecording(null)
+                      }}
+                      onClick={() => setRecording(def.id)}
+                    >
+                      {isRecording ? '请按下组合键…' : formatShortcut(draft, kind)}
+                    </button>
+                    <button
+                      type="button"
+                      className="wt-btn"
+                      data-testid={`shortcut-${def.id}-reset`}
+                      aria-label={`把${def.label}恢复为默认`}
+                      onClick={() => {
+                        setRecording(null)
+                        setDraft(`shortcut-${def.id}`, defaultShortcut(def.id, kind))
+                      }}
+                    >
+                      ↺
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
 
@@ -14953,13 +15465,13 @@ export function SettingsDialog({
 ```tsx
 import { describe, it, expect, vi } from 'vitest'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { Ribbon } from '../../src/renderer/src/components/Ribbon'
 import { Toast } from '../../src/renderer/src/components/Toast'
 import { InputCapture } from '../../src/renderer/src/input/InputCapture'
 import { ToolbarProvider, useToolbar } from '../../src/renderer/src/state/ToolbarContext'
 import { useShortcutDispatcher } from '../../src/renderer/src/state/shortcuts'
-import { platformKind, resolveShortcuts } from '../../src/core/shortcuts'
+import { SHORTCUTS, platformKind, resolveShortcuts } from '../../src/core/shortcuts'
 import { PAGE_FONT_SIZE_DEFAULT, PAGE_FONT_SIZE_MAX, PAGE_FONT_SIZE_MIN } from '../../src/core/types'
 import type { InputMode } from '../../src/core/types'
 import type { ThemeSource } from '../../src/renderer/src/types/global'
@@ -16061,6 +16573,257 @@ describe('设置里的工作文档', () => {
     fireEvent.click(screen.getByTestId('btn-remove-work-doc'))
     expect(onRemoveWorkDoc).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('settings-save')).toBeNull()
+  })
+})
+
+/**
+ * 左栏分页。
+ *
+ * 【为什么断言的是 `hidden` 属性而不是「看得见」】jsdom 没有布局，也没有真实的可见性
+ * 语义，而本仓库没装 `@testing-library/jest-dom`——`toBeVisible()` 根本不存在。
+ * 而 `hidden` 是 **DOM 属性**，正是这次用来藏非当前页的机制：断言它等于断言机制本身。
+ *
+ * 【为什么用 `hasAttribute` 而不是 `getAttribute() === ''`】React 对 `hidden` 走的是布尔
+ * 属性，**实测过**（react-dom 19.3.0，`renderToStaticMarkup`）：`hidden={true}` 渲染成
+ * `hidden=""`、`hidden={false}` 是**整条属性不出现**。但别把这个细节写进断言——
+ * `hasAttribute` 对「有/没有」这个我们真正关心的问题成立，而 React 哪天改成
+ * `hidden="true"` 这类形态，`hasAttribute` 仍然是对的。
+ */
+describe('设置对话框的左栏分页', () => {
+  /** 三个面板是不是 hidden 的，按左栏从上到下的顺序 */
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('左栏三项的文案与顺序是「阅读设置 / 外观设置 / 快捷键设置」', () => {
+    setup()
+    openViaButton()
+
+    // 【必须按 DOM 顺序取，不能逐个 getByTestId】按 testid 取的话，结果数组的顺序来自左边
+    // 那个字面量数组、**不是 DOM 顺序**——把 `PAGES` 排成「外观 / 阅读 / 快捷键」（左栏真的
+    // 会变成那个顺序、真的违反设计第 1 节拍板的顺序），那一版**照样全绿**：它守的是「每个
+    // 页签各自的文案」，守不住名字里的「顺序」。
+    //
+    // 【还得限定在左栏那个 tablist 里】裸的 `getAllByRole('tab')` 会把功能区那七个页签
+    // （文件/开始/…/视图）一并捞出来——本用例渲染的是整个 App，`Ribbon.tsx` 的 `.wt-tabs`
+    // 同样是 `role="tablist"` + `role="tab"`（实测拿到 10 个）。
+    // 按 `aria-label="设置分类"` 限定到左栏之后，`within` 依旧**按 DOM 顺序**返回，
+    // 一次同时验文案与顺序。
+    expect(
+      within(screen.getByRole('tablist', { name: '设置分类' }))
+        .getAllByRole('tab')
+        .map((el) => el.textContent)
+    ).toEqual(['阅读设置', '外观设置', '快捷键设置'])
+  })
+
+  it('打开时停在「阅读设置」，另两页是 hidden 的', () => {
+    setup()
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('点「外观设置」：两页的 hidden 互换，aria-selected 跟着走', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(screen.getByTestId('settings-tab-appearance').getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId('settings-tab-reading').getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('点「快捷键设置」：那一页才显示', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+
+    expect(hiddenPages()).toEqual([true, true, false])
+  })
+
+  it('行归属：阅读设置收文档名 / 阅读替换 / 输入模式 / 正文字号 / 小说 / 工作文档', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tabpanel-reading')
+
+    for (const id of [
+      'doc-title-input',
+      'global-ratio-input',
+      'ratio-input',
+      'mode-button',
+      'page-font-size-input',
+      'btn-import',
+      'btn-clear-session',
+      'work-doc-status',
+      'btn-import-work-doc'
+    ]) {
+      expect(reading.contains(screen.getByTestId(id))).toBe(true)
+    }
+
+    // 外观与快捷键那几块**不**在这一页
+    expect(reading.contains(screen.getByTestId('theme-dark'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('dark-paper'))).toBe(false)
+    expect(reading.contains(screen.getByTestId('shortcut-import-input'))).toBe(false)
+  })
+
+  it('行归属：外观设置收主题与纸张，快捷键设置收六条快捷键', () => {
+    setup()
+    openViaButton()
+
+    const appearance = screen.getByTestId('settings-tabpanel-appearance')
+    expect(appearance.contains(screen.getByTestId('theme-system'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-light'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('theme-dark'))).toBe(true)
+    expect(appearance.contains(screen.getByTestId('dark-paper'))).toBe(true)
+
+    const shortcuts = screen.getByTestId('settings-tabpanel-shortcuts')
+    for (const def of SHORTCUTS) {
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-input`))).toBe(true)
+      expect(shortcuts.contains(screen.getByTestId(`shortcut-${def.id}-reset`))).toBe(true)
+    }
+  })
+
+  it('切页不丢草稿：在阅读设置改字号，切到外观设置后「保存」仍在、点下去照样提交', () => {
+    const { onPageFontSizeChange } = setup()
+    openViaButton()
+
+    fireEvent.change(screen.getByTestId('page-font-size-input'), { target: { value: '20' } })
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.click(screen.getByTestId('settings-save'))
+
+    expect(onPageFontSizeChange).toHaveBeenCalledWith(20)
+  })
+
+  it('关掉再打开，回到「阅读设置」（不记住上次那一页）', () => {
+    setup()
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
+    // 【这条守的不是「焦点在对话框里」那件老事，而是它的一个**新**破口】`page` 是持久状态、
+    // 组件在 open 为假时不卸载，所以重开的那一次提交里 page 可能还是旧值——非当前页带着
+    // `hidden`，而**对 hidden（display:none）子树里的元素调 focus() 是 no-op**，于是
+    // `autoFocus` 静默失效。
+    //
+    // 【焦点落在哪儿：隐形 textarea，不是 body】**实测**出来的（这条用例第一次跑、
+    // 修还没上时，红灯里 `document.activeElement` 就是 `<textarea data-testid="input-capture">`）：
+    // `SettingsDialog` 自己那条 effect 在**关闭**时把焦点交给了它，重开时 `autoFocus` 失效，
+    // 焦点就原地留在那个 textarea 上。这比「落在 body 上」更糟——落在 body 上还要用户再点
+    // 一下才会被抢回去，而隐形 textarea **本来就是抽字那条路的入口**：`InputCapture` 里那道
+    // `role="dialog"` 闸**只存在于抢焦点的 `focusIfNotTextInput` 里**，`handleKeyDown` 与
+    // `handleInput` 上**一条都没有**。所以焦点一落在那儿，按键**立刻**开始抽字。
+    //
+    // 光把 page 拉回 'reading' **不够**：`autoFocus` 只在挂载那一次跑，input 不会重新挂载。
+    // 所以修法是让「打开」的那一次提交本身就是对的（见 `SettingsDialog` 里那段渲染期重置）。
+    setup({ capture: true })
+    openViaButton()
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('settings-close'))
+    openViaButton()
+
+    expect(document.activeElement).toBe(screen.getByTestId('doc-title-input'))
+  })
+})
+
+/**
+ * 左栏的键盘与录制。
+ *
+ * 【这一组里几条为什么单测判得了】
+ * - `hidden` 是 DOM 属性，判得了（上面那一组同理）。
+ * - 方向键换页之后焦点跟不跟过去，判的是 `document.activeElement`——**jsdom 里判得了**，
+ *   因为那是我们自己在 keydown 处理里显式 `focus()` 的，不依赖浏览器的命中测试。
+ * - 「切页取消录制」判的是报给外面的布尔值，与真机行为无关。
+ *
+ * 判不了的（只能真机）：面板实际画出来多宽、滚动条出没出来、深色下页签的底色。
+ * 那几条在文末的验收清单里。
+ */
+describe('设置对话框左栏的键盘与录制', () => {
+  const hiddenPages = (): boolean[] =>
+    ['reading', 'appearance', 'shortcuts'].map((id) =>
+      screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
+    )
+
+  it('切页会取消正在进行的录制（否则分发器一直哑着，而用户看不出为什么）', () => {
+    const onRecordingChange = vi.fn()
+    setup({ onRecordingChange })
+    openViaButton()
+
+    fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
+    fireEvent.click(screen.getByTestId('shortcut-import-input'))
+    expect(onRecordingChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByTestId('settings-tab-appearance'))
+
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('↓ / ↑ 在左栏里移动、当场切页，焦点跟着落到新页签上', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    fireEvent.keyDown(reading, { key: 'ArrowDown' })
+
+    expect(hiddenPages()).toEqual([true, false, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-appearance'))
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowUp' })
+
+    expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(reading)
+  })
+
+  it('↑ 从第一项绕到最后一项，↓ 从最后一项绕回第一项', () => {
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'ArrowUp' })
+    expect(hiddenPages()).toEqual([true, true, false])
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'ArrowDown' })
+    expect(hiddenPages()).toEqual([false, true, true])
+  })
+
+  it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
+    // 【「焦点也跟着」这半句不能省】设计第 8.1 节第 8 条要求的是 ↑/↓/Home/End **都**把焦点
+    // 带过去，而只断言 `hiddenPages` 是不够的——变异实测过：把 `focus()` 限制成只对
+    // ArrowUp / ArrowDown 调，只断言 `hiddenPages` 的那一版**全绿**。也就是说那半句此前
+    // 无人看住。
+    setup()
+    openViaButton()
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
+    expect(hiddenPages()).toEqual([true, true, false])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-shortcuts'))
+
+    fireEvent.keyDown(screen.getByTestId('settings-tab-shortcuts'), { key: 'Home' })
+    expect(hiddenPages()).toEqual([false, true, true])
+    expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
+  })
+
+  it('方向键之外的键不动页签（左栏不该吃掉别的按键）', () => {
+    setup()
+    openViaButton()
+    const reading = screen.getByTestId('settings-tab-reading')
+
+    // 【逐键断言，绝不能只断言末态】三个键连着按、每键各前进一页的话，3 键 ≡ 0 (mod 3)，
+    // 末态与「一个都没动」**长得一模一样**——变异实测过：把认不出的键也改成前进一页，
+    // 只断言末态的那一版 **80/80 全绿**。这正是「用例声称自身输入时要自检前提」那种形态。
+    for (const key of ['ArrowLeft', 'a', 'Enter']) {
+      fireEvent.keyDown(reading, { key })
+      expect(hiddenPages()).toEqual([false, true, true])
+    }
   })
 })
 ```
