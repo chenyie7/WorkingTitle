@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { Chapter, ChapterRule, Novel } from '../core/types'
 
 /**
- * 小说解码的后台进程客户端。用 utilityProcess 而不是 worker_threads：打包后
+ * 小说后台进程的客户端。用 utilityProcess 而不是 worker_threads：打包后
  * worker_threads 里的 require 读不到 app.asar 内的 node_modules（iconv-lite / jschardet）。
  */
 
@@ -38,7 +38,7 @@ const pending = new Map<number, Pending>()
 function ensureChild(): Electron.UtilityProcess {
   if (child) return child
   const proc = utilityProcess.fork(join(__dirname, 'novelWorker.js'), [], {
-    serviceName: 'WorkingTitle 小说解码',
+    serviceName: 'WorkingTitle 小说后台进程',
     stdio: 'inherit'
   })
   proc.on('message', (msg: Reply) => {
