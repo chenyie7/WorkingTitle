@@ -172,6 +172,47 @@ test('设置对话框：按钮与 ⌘, 都能开，开着时敲键盘不抽字�
   await expect.poll(revealed).toBe(0)
 })
 
+/**
+ * 三页的面板必须一样大。
+ *
+ * 【为什么只有这条判得了】jsdom 没有布局，`getBoundingClientRect()` 恒为 0——这个不变量
+ * 在单测里根本不存在。它只能由真机判。
+ *
+ * 【改动前为什么是红的】面板高度由内容撑（`height: auto` + `max-height`），三页的行数是
+ * 6 / 2 / 6，实测 410 / 198 / 386——而遮罩是垂直居中的，所以换页时面板既变高矮、又上下跳。
+ */
+test('设置面板三页大小一致', async () => {
+  await win.locator('[data-testid="tab-文件"]').click()
+  await win.locator('[data-testid="btn-settings"]').click()
+  await expect(win.locator('[data-testid="settings"]')).toBeVisible()
+
+  const heights: number[] = []
+  for (const id of ['reading', 'appearance', 'shortcuts']) {
+    await win.locator(`[data-testid="settings-tab-${id}"]`).click()
+    // 等那一页真的可见再量：`click()` 只保证点到了，不保证 React 已经重渲染完。
+    // 少了这一行，量到的可能是上一页的高度——而「上一页的高度」恰好会让这条断言
+    // 在「改动前」的世界里**假绿**一次（量到两次同一个数）。
+    await expect(win.locator(`[data-testid="settings-tabpanel-${id}"]`)).toBeVisible()
+    heights.push(
+      await win
+        .locator('[data-testid="settings"] .wt-modal__panel')
+        .evaluate((el) => el.getBoundingClientRect().height)
+    )
+  }
+
+  // 【三者必须**严格**相等，不是「差不多」】三页的行数差得远，高度只要还由内容撑，
+  // 这条当场红。
+  expect(new Set(heights).size).toBe(1)
+
+  // 【这一条防的是「三页一致了但内容被裁」】有人把 `min()` 的第一项改小，三页仍然相等，
+  // 但阅读设置那页会被裁。410 是它**实测的自然高度**（38 + 324 + 48）。
+  //
+  // 【它依赖窗口够高】应用窗口是 1280×860（`src/main/index.ts`），`calc(100vh - 48px)` = 812 > 410。
+  // 窗口被改矮时三页**仍然相等**（一起被夹成同一个值）——那时红的是这一条，该改的是这个数，
+  // **不是断言**。
+  expect(heights[0]).toBeGreaterThanOrEqual(410)
+})
+
 test('点击章节跳到该章，并在读过后回填进度', async () => {
   await win.locator('[data-testid="chapter-item-1"]').click()
   // 状态栏现在写的是页码形状的 `2 / 3`（真 Word 左下角就是页码），不再是「第 2 章 / 共 3 章」
