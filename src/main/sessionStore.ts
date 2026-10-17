@@ -523,6 +523,7 @@ export function createSessionStore(baseDir: string): SessionStore {
     },
 
     copySession(fromSourcePath: string, toSourcePath: string): boolean {
+      if (typeof fromSourcePath !== 'string' || typeof toSourcePath !== 'string') return false
       const session = readSessionFile(sessionFile(fromSourcePath), fromSourcePath)
       if (session === null) return false
       const target = sessionFile(toSourcePath)

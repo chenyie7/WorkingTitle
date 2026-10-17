@@ -1288,6 +1288,11 @@ describe('书库用到的会话与缓存操作', () => {
     expect(store.deleteSession('/tmp/从来没有过.txt').ok).toBe(true)
   })
 
+  it('deleteSession 收到非字符串路径时返回失败而不是抛', () => {
+    const store = createSessionStore(dir)
+    expect(store.deleteSession(123 as unknown as string).ok).toBe(false)
+  })
+
   it('copySession 把会话复制到新路径，旧文件仍在', () => {
     const store = createSessionStore(dir)
     store.writeSession(makeSession({ sourcePath: '/tmp/原路径.txt', cursor: 42 }))
@@ -1314,11 +1319,22 @@ describe('书库用到的会话与缓存操作', () => {
     expect(store.copySession('/tmp/没有.txt', '/tmp/库/拷贝.txt')).toBe(false)
   })
 
+  it('copySession 收到非字符串路径时返回 false 而不是抛', () => {
+    const store = createSessionStore(dir)
+    expect(store.copySession(123 as unknown as string, '/tmp/x.txt')).toBe(false)
+    expect(store.copySession('/tmp/x.txt', 123 as unknown as string)).toBe(false)
+  })
+
   it('sessionFileMtime 有会话给数字，没有给 null', () => {
     const store = createSessionStore(dir)
     expect(store.sessionFileMtime('/tmp/A.txt')).toBeNull()
     store.writeSession(makeSession({ sourcePath: '/tmp/A.txt' }))
     expect(typeof store.sessionFileMtime('/tmp/A.txt')).toBe('number')
+  })
+
+  it('sessionFileMtime 收到非字符串路径时返回 null 而不是抛', () => {
+    const store = createSessionStore(dir)
+    expect(store.sessionFileMtime(123 as unknown as string)).toBeNull()
   })
 
   it('deleteCacheFor 只删属于这本书的缓存', () => {
