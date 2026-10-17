@@ -288,6 +288,7 @@ export default function App() {
       setChapterRule(rule)
       chapterRuleRef.current = rule
 
+      // 立即写一次：防抖 effect 也会写，但关窗/换书可能正好落在 600ms 窗口里。
       const savedSession = await api.saveSession({
         ...nextEngine.toSession(),
         chapterRule: rule

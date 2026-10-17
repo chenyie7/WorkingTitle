@@ -661,6 +661,39 @@ describe('分章规则随书保存', () => {
     await waitFor(() => expect(saved).not.toBeNull())
     expect(saved!.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
   })
+
+  it('关窗落盘（flushSession）也带着分章规则', async () => {
+    const novel = makeNovel()
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: novel.sourcePath,
+      ratio: 10,
+      mode: 'ime',
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: [0, 0],
+      activeChapter: 0,
+      startedAt: null,
+      chapterRule: { kind: 'preset', id: 'numbered' }
+    }
+    installApi(novel, session)
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: [PersistedSession][] }
+    }
+    const before = saveSession.mock.calls.length
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    expect(saveSession.mock.calls.length).toBe(before + 1)
+    expect(saveSession.mock.calls[before][0].chapterRule).toEqual({
+      kind: 'preset',
+      id: 'numbered'
+    })
+  })
 })
 
 describe('快捷键接线', () => {
