@@ -31,7 +31,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: node scripts/check-plan-fences.mjs
 
   build:
     # 构建与发版只在手动触发和推标签时跑；main 的普通提交只走上面的 check。

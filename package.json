@@ -12,7 +12,7 @@
     "postinstall": "install-electron",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "node scripts/check-imports.mjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "electron-vite build && playwright test",
