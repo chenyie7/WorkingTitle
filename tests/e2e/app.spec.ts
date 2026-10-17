@@ -298,7 +298,6 @@ test('preload 暴露的接口与渲染层契约一致（进程边界的运行期
     initialNovelPath: 'function',
     loadSession: 'function',
     saveSession: 'function',
-    clearSession: 'function',
     loadSettings: 'function',
     saveSettings: 'function',
     onMenuCommand: 'function',

@@ -280,23 +280,32 @@ export default function App() {
 
   const handleClearSession = useCallback(async () => {
     const api = getApi()
-    if (!api) return
-    // 【作废在飞的 open】导入已发起、`loadSession` 还没回来时按下清除，那次 open 回来后照样
-    // 能通过 `openNovel` 里的 seq 检查，把书放回界面、600ms 后还重写进度与 lastSourcePath
-    // ——清除等于没清。递增一次就等于把它标记成过期的。
-    openSeqRef.current++
-    // 【状态清空排在 await 之前】待发的会话写是靠 `setEngine(null)` 那次提交的 effect cleanup
-    // 取消的；排在 await 之后的话，一个已排上队的防抖写可能落在 IPC 删除之后，把记录又写回来。
-    setNovel(null)
-    setEngine(null)
-    setChapterRule(DEFAULT_CHAPTER_RULE)
-    chapterRuleRef.current = DEFAULT_CHAPTER_RULE
-    // 「上次打开的是哪本」也是阅读记录的一部分：不清掉的话，用户按下「清除阅读记录」再重启，
-    // 那本书又自己开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。
-    patchSettings({ lastSourcePath: null })
-    const result = await api.clearSession()
+    const currentNovel = novel
+    const currentEngine = engine
+    if (!api || !currentNovel || !currentEngine) {
+      notify('还没有打开小说')
+      return
+    }
+
+    const snap = currentEngine.toSession()
+    const fresh = TypingEngine.fromSession(currentNovel, {
+      ...snap,
+      cursor: 0,
+      revealStart: 0,
+      chapterPos: currentNovel.chapters.map(() => 0),
+      activeChapter: 0,
+      startedAt: null
+    })
+    setEngine(fresh)
+    setExpanded(false)
+
+    // 不删会话文件：删了分章规则会跟着丢。立刻写回零进度才是「清了位置、留下偏好」。
+    const result = await api.saveSession({
+      ...fresh.toSession(),
+      chapterRule: chapterRuleRef.current
+    })
     if (!result.ok) notify(`清除阅读记录失败：${result.reason}`)
-  }, [notify, patchSettings])
+  }, [engine, novel, notify])
 
   const handleApplyChapterRule = useCallback(
     async (rule: ChapterRule): Promise<IpcResult<number>> => {

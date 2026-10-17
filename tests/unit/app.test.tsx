@@ -85,7 +85,6 @@ function installApi(
       saved = s
       return { ok: true as const, value: undefined }
     }),
-    clearSession: vi.fn(async () => ({ ok: true as const, value: undefined })),
     listNovels: vi.fn(async () => []),
     deleteNovel: vi.fn(async () => ({ ok: true as const, value: undefined })),
     /**
@@ -363,40 +362,56 @@ describe('App 端到端（单测层）', () => {
     expect(screen.queryByTestId('page-empty')).toBeNull()
   })
 
-  it('清除阅读记录后回到空状态', async () => {
+  it('清除阅读记录只重置当前书的进度，书仍开着', async () => {
     const novel = makeNovel()
-    installApi(novel)
+    const session: PersistedSession = {
+      novelTitle: '测试书',
+      sourcePath: '/tmp/测试书.txt',
+      ratio: 5,
+      mode: 'key',
+      cursor: 15,
+      revealStart: 0,
+      chapterPos: [15, 0],
+      activeChapter: 0,
+      startedAt: null
+    }
+    installApi(novel, session)
     render(<App />)
     importViaSettings()
-    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
-
-    // 先把导入那次设置写盘的防抖推过去：不推的话，`lastSourcePath` 从来没有真正落过盘，
-    // 下面「清成 null」那条断言就与「压根没写过」区分不开。
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000)
-    })
+    await waitFor(() => expect(revealedChars()).toBe(15))
 
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
-    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
-    expect(window.api.clearSession).toHaveBeenCalled()
+    await waitFor(() => expect(revealedChars()).toBe(0))
 
-    // 【清除要连「上次打开的是哪本」一起清掉】不清的话，用户按下清除再重启，那本书又自己
-    // 开回来了——而设置（文档名 / 外观 / 纸张）照旧留着。清除之后设置那一侧也会防抖写一次，
-    // 推过去再断言（不推的话最后一条载荷还是导入时那条）。
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000)
-    })
-    const saveSettings = window.api.saveSettings as unknown as {
-      mock: { calls: AppSettings[][] }
+    // 书没有关掉：章节栏还在，空状态不出现。
+    expect(screen.queryByTestId('page-empty')).toBeNull()
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
     }
-    await waitFor(() => expect(saveSettings.mock.calls.length).toBeGreaterThan(0))
-    const payload = saveSettings.mock.calls[saveSettings.mock.calls.length - 1][0]
-    expect(payload.lastSourcePath).toBeNull()
-    // 前提：这本书此前确实被记成了「上次打开的那本」——否则上面那条断言可能只是因为
-    // lastSourcePath 从来就没被写过，「清成 null」与「压根没写过」区分不开。
-    const seen = saveSettings.mock.calls.map((c) => c[0].lastSourcePath)
-    expect(seen).toContain(novel.sourcePath)
+    await waitFor(() => expect(saveSession.mock.calls.length).toBeGreaterThan(0))
+    const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
+    expect(payload.cursor).toBe(0)
+    expect(payload.revealStart).toBe(0)
+    expect(payload.chapterPos).toEqual([0, 0])
+    expect(payload.activeChapter).toBe(0)
+    // 「怎么读」的偏好保留：比例与输入模式不被清零。
+    expect(payload.ratio).toBe(5)
+    expect(payload.mode).toBe('key')
+  })
+
+  it('没有打开小说时清除只提示，不写任何东西', async () => {
+    installApi(null)
+    render(<App />)
+    openSettings()
+    fireEvent.click(screen.getByTestId('btn-clear-session'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('toast').textContent).toContain('还没有打开小说')
+    )
+    expect(window.api.saveSession).not.toHaveBeenCalled()
   })
 
   it('删除当前书：阅读区回到空状态，防抖窗口过后也不会把会话写回来', async () => {
@@ -802,7 +817,7 @@ describe('分章规则随书保存', () => {
     })
   })
 
-  it('清除阅读记录后规则回到自动识别', async () => {
+  it('清除阅读记录不影响分章规则', async () => {
     const novel = makeNovel()
     const session: PersistedSession = {
       novelTitle: '测试书',
@@ -823,10 +838,20 @@ describe('分章规则随书保存', () => {
 
     openSettings()
     fireEvent.click(screen.getByTestId('btn-clear-session'))
-    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+    await waitFor(() => expect(revealedChars()).toBe(0))
+
     openSettings()
     fireEvent.click(screen.getByTestId('settings-tab-chapters'))
-    expect((screen.getByTestId('chapter-rule-auto') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByTestId('chapter-rule-preset-numbered') as HTMLInputElement).checked).toBe(
+      true
+    )
+
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    await waitFor(() => expect(saveSession.mock.calls.length).toBeGreaterThan(0))
+    const payload = saveSession.mock.calls[saveSession.mock.calls.length - 1][0]
+    expect(payload.chapterRule).toEqual({ kind: 'preset', id: 'numbered' })
   })
 
   it('在设置里应用规则：光标与已显示正文不动，章节目录换成新的', async () => {

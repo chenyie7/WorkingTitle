@@ -40,7 +40,6 @@ export interface SessionStore {
   deleteCacheFor(sourcePath: string): void
   /** 会话文件的修改时间，用来排「最近阅读」。没有会话给 null。 */
   sessionFileMtime(sourcePath: string): number | null
-  clearReadingHistory(): IpcResult<void>
   migrateLegacySession(): void
   writeNovelCache(novel: Novel, chapterRule?: ChapterRule): void
   readNovelCacheEntry(
@@ -556,35 +555,6 @@ export function createSessionStore(baseDir: string): SessionStore {
       } catch {
         return null
       }
-    },
-
-    clearReadingHistory(): IpcResult<void> {
-      // 「清除阅读记录」= 回到「从未导入」：所有书的进度、小说缓存、以及旧版留下的那一份
-      // 单槽会话文件。**settings.json 刻意不在此列**——文档名 / 外观 / 纸张是用户的偏好，
-      // 与「读到哪」无关；把它们一起清掉正是本次改动要修的那个语义。
-      const failed: string[] = []
-      for (const p of [legacySessionPath, `${legacySessionPath}.tmp`, cacheMetaPath, cacheTextPath]) {
-        try {
-          // force: true 而不是先 existsSync 再删——分开写的话，「文件本来就不存在」这条
-          // 正常路径会走进 catch 打出一行「删除失败」。一条在成功时也会响的告警，比没有
-          // 告警更糟：它教会看日志的人忽略这一行。
-          rmSync(p, { force: true })
-        } catch (err) {
-          failed.push(p)
-          console.warn('[wt] 删除持久化文件失败：', p, err)
-        }
-      }
-      // 整个目录一起删，而不是先 readdir 再逐个删：少一次「列目录时多出来一个新文件」的
-      // 竞态，也不用维护「哪些文件算会话」这份名单。
-      try {
-        rmSync(sessionsDir, { recursive: true, force: true })
-      } catch (err) {
-        failed.push(sessionsDir)
-        console.warn('[wt] 删除会话目录失败：', sessionsDir, err)
-      }
-      return failed.length === 0
-        ? { ok: true, value: undefined }
-        : { ok: false, reason: `删除失败：${failed.join('、')}` }
     },
 
     migrateLegacySession(): void {

@@ -9,7 +9,6 @@ export const CH = {
   resplitNovel: 'wt:resplit-novel',
   loadSession: 'wt:load-session',
   saveSession: 'wt:save-session',
-  clearSession: 'wt:clear-session',
   loadSettings: 'wt:load-settings',
   saveSettings: 'wt:save-settings',
   initialNovelPath: 'wt:initial-novel-path',

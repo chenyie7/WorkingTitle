@@ -81,7 +81,6 @@ function installApi(overrides: Partial<WtApi> = {}): void {
     initialNovelPath: async () => null,
     loadSession: async () => null,
     saveSession: async () => ({ ok: true, value: undefined }),
-    clearSession: async () => ({ ok: true, value: undefined }),
     loadSettings: async () => defaultSettings(),
     saveSettings: async () => ({ ok: true, value: undefined }),
     onMenuCommand: () => () => {},

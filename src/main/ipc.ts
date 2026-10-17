@@ -224,8 +224,6 @@ export function registerIpc(deps: IpcDeps): void {
     getStore().writeSession(session)
   )
 
-  ipcMain.handle(CH.clearSession, (): IpcResult<void> => getStore().clearReadingHistory())
-
   ipcMain.handle(CH.listNovels, (): LibraryEntry[] => {
     const store = getStore()
     const library = getLibraryStore()

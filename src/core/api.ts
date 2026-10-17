@@ -40,7 +40,6 @@ export interface WtApi {
   initialNovelPath: () => Promise<string | null>
   loadSession: (sourcePath: string) => Promise<PersistedSession | null>
   saveSession: (session: PersistedSession) => Promise<IpcResult<void>>
-  clearSession: () => Promise<IpcResult<void>>
   loadSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<IpcResult<void>>
   onMenuCommand: (cb: (cmd: string) => void) => () => void

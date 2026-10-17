@@ -32,7 +32,6 @@ const api: WtApi = {
   loadSession: (sourcePath: string) => ipcRenderer.invoke(CH.loadSession, sourcePath),
   // 写通道的参数在 main 侧会再校验一遍；这里不做任何「看起来安全」的裁剪。
   saveSession: (session) => call<void>(CH.saveSession, session),
-  clearSession: () => call<void>(CH.clearSession),
   loadSettings: () => ipcRenderer.invoke(CH.loadSettings),
   saveSettings: (settings) => call<void>(CH.saveSettings, settings),
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
