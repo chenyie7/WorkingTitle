@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Mock } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import App from '../../src/renderer/src/App'
 import { fillCharsFor } from '../../src/core/bossKey'
 import { splitChapters } from '../../src/core/chapters'
 import { defaultSettings } from '../../src/core/types'
-import type { AppSettings, Novel, PersistedSession } from '../../src/core/types'
+import type { AppSettings, LibraryEntry, Novel, PersistedSession } from '../../src/core/types'
 import type { WtApi } from '../../src/core/api'
 
 /** 默认铺满 100% 时该铺多少字，来自 core 的 CHARS_PER_SHEET */
@@ -397,6 +397,53 @@ describe('App 端到端（单测层）', () => {
     // lastSourcePath 从来就没被写过，「清成 null」与「压根没写过」区分不开。
     const seen = saveSettings.mock.calls.map((c) => c[0].lastSourcePath)
     expect(seen).toContain(novel.sourcePath)
+  })
+
+  it('删除当前书：阅读区回到空状态，防抖窗口过后也不会把会话写回来', async () => {
+    const novel = makeNovel()
+    installApi(novel)
+    const entries: LibraryEntry[] = [
+      {
+        id: 'a'.repeat(32),
+        title: novel.title,
+        sourcePath: novel.sourcePath,
+        originalPath: '/tmp/源/测试书.txt',
+        size: 1024,
+        importedAt: 100,
+        charCount: novel.flatText.length,
+        cursor: 0,
+        lastReadAt: 100,
+        broken: false
+      }
+    ]
+    const listNovels = window.api.listNovels as unknown as {
+      mockResolvedValue: (value: LibraryEntry[]) => void
+    }
+    listNovels.mockResolvedValue(entries)
+
+    render(<App />)
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-item-0')).toBeTruthy())
+
+    openSettings()
+    fireEvent.click(screen.getByTestId('settings-tab-library'))
+    const row = await screen.findByTestId(`library-row-${'a'.repeat(32)}`)
+    fireEvent.click(within(row).getByText('删除'))
+    fireEvent.click(within(row).getByText('确认删除'))
+
+    await waitFor(() => expect(window.api.deleteNovel).toHaveBeenCalledWith('a'.repeat(32)))
+    // 删的是当前书：状态在发 IPC 之前就清了，阅读区当场回到空状态。
+    await waitFor(() => expect(screen.getByTestId('page-empty')).toBeTruthy())
+
+    // 那次 setEngine(null) 会清掉待发的会话防抖写；推过防抖窗口也不许再写回来。
+    const saveSession = window.api.saveSession as unknown as {
+      mock: { calls: PersistedSession[][] }
+    }
+    const before = saveSession.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(saveSession.mock.calls.length).toBe(before)
   })
 
   it('在设置里改文档名，关掉之后蓝条上的字跟着变', async () => {

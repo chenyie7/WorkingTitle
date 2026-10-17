@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { IpcResult } from '../../../core/api'
 import type { LibraryEntry } from '../../../core/types'
 import { getApi } from '../api'
@@ -42,17 +42,21 @@ export function LibraryPanel({
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  /** 请求代际：只有最后一次 refresh 的结果才准落地，旧响应不许覆盖新列表。 */
+  const refreshSeqRef = useRef(0)
 
   const refresh = useCallback(async (): Promise<void> => {
+    const seq = ++refreshSeqRef.current
     const api = getApi()
     if (!api) {
       setEntries([])
       return
     }
     try {
-      setEntries(await api.listNovels())
+      const next = await api.listNovels()
+      if (seq === refreshSeqRef.current) setEntries(next)
     } catch {
-      setEntries([])
+      if (seq === refreshSeqRef.current) setEntries([])
     }
   }, [])
 
@@ -65,6 +69,8 @@ export function LibraryPanel({
     try {
       await onImport()
       await refresh()
+    } catch {
+      notify('导入失败')
     } finally {
       setPending(false)
     }
@@ -74,6 +80,8 @@ export function LibraryPanel({
     setPending(true)
     try {
       if (await onOpenNovel(entry.sourcePath)) onClose()
+    } catch {
+      notify('打开失败')
     } finally {
       setPending(false)
     }
@@ -84,11 +92,13 @@ export function LibraryPanel({
     try {
       const result = await onDeleteNovel(entry)
       if (!result.ok) notify(`删除失败：${result.reason}`)
-      setConfirmId(null)
-      await refresh()
+    } catch {
+      notify('删除失败')
     } finally {
+      setConfirmId(null)
       setPending(false)
     }
+    await refresh()
   }
 
   const sorted = [...(entries ?? [])].sort(

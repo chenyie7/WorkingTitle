@@ -1071,6 +1071,17 @@
   gap: 12px;
 }
 
+.wt-library__head .wt-btn--primary {
+  background: var(--wt-primary);
+  border-color: var(--wt-primary);
+  color: var(--wt-primary-text);
+}
+
+.wt-library__head .wt-btn--primary:hover {
+  background: var(--wt-primary-hover);
+  border-color: var(--wt-primary-hover);
+}
+
 .wt-library__title {
   display: inline-flex;
   align-items: center;
@@ -1142,7 +1153,7 @@
 
 .wt-library__badge {
   font-size: 11px;
-  color: var(--wt-primary);
+  color: var(--wt-accent);
 }
 
 .wt-library__confirm {

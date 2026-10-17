@@ -249,7 +249,7 @@ export interface LibraryEntry {
 
 - 顶部：「导入小说」按钮，与阅读设置页那个走同一个动作。
 - 列表行：书名、进度百分比、「2.3 MB · 导入于 2026-10-18」、行尾「打开」/「删除」。
-- 当前正在读的那本高亮，标「正在阅读」，「打开」置灰。
+- 当前正在读的那本高亮，标「正在阅读」，不显示「打开」按钮。
 - 坏条目：书名 + 标红的「文件丢失」，只能删除。
 - 空书库：「书库里还没有小说」+ 导入按钮。
 - 读取失败（目录不存在等）：按空态显示，不弹错。
@@ -274,8 +274,9 @@ export interface LibraryEntry {
 - 导入完成、删除完成后各重拉一次。
 
 为此 `ToolbarContext` 的 `onImport` 返回 `Promise<void>`，面板可以等导入结束再刷新。
-从 App 经 Ribbon 传一条 `onOpenNovel(sourcePath): Promise<void>`，与
-`onApplyChapterRule` 走同一条 prop 链。
+从 App 经 Ribbon 传一条 `onOpenNovel(sourcePath): Promise<boolean>`，与
+`onApplyChapterRule` 走同一条 prop 链。返回是否成功——成功才关对话框，失败时留在书库
+让用户换一本再试。
 
 ## 9. IPC、类型与文件分工
 

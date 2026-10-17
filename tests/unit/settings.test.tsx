@@ -1145,9 +1145,9 @@ describe('设置里的工作文档', () => {
  * `hidden="true"` 这类形态，`hasAttribute` 仍然是对的。
  */
 describe('设置对话框的左栏分页', () => {
-  /** 四个面板是不是 hidden 的，按左栏从上到下的顺序 */
+  /** 五个面板是不是 hidden 的，按左栏从上到下的顺序 */
   const hiddenPages = (): boolean[] =>
-    ['reading', 'appearance', 'shortcuts', 'chapters'].map((id) =>
+    ['reading', 'library', 'appearance', 'shortcuts', 'chapters'].map((id) =>
       screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
     )
 
@@ -1176,7 +1176,7 @@ describe('设置对话框的左栏分页', () => {
     setup()
     openViaButton()
 
-    expect(hiddenPages()).toEqual([false, true, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true, true])
   })
 
   it('点「外观设置」：两页的 hidden 互换，aria-selected 跟着走', () => {
@@ -1185,7 +1185,7 @@ describe('设置对话框的左栏分页', () => {
 
     fireEvent.click(screen.getByTestId('settings-tab-appearance'))
 
-    expect(hiddenPages()).toEqual([true, false, true, true])
+    expect(hiddenPages()).toEqual([true, true, false, true, true])
     expect(screen.getByTestId('settings-tab-appearance').getAttribute('aria-selected')).toBe('true')
     expect(screen.getByTestId('settings-tab-reading').getAttribute('aria-selected')).toBe('false')
   })
@@ -1196,7 +1196,7 @@ describe('设置对话框的左栏分页', () => {
 
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
 
-    expect(hiddenPages()).toEqual([true, true, false, true])
+    expect(hiddenPages()).toEqual([true, true, true, false, true])
   })
 
   it('行归属：阅读设置收文档名 / 阅读替换 / 输入模式 / 正文字号 / 小说 / 工作文档', () => {
@@ -1257,12 +1257,12 @@ describe('设置对话框的左栏分页', () => {
     setup()
     openViaButton()
     fireEvent.click(screen.getByTestId('settings-tab-shortcuts'))
-    expect(hiddenPages()).toEqual([true, true, false, true])
+    expect(hiddenPages()).toEqual([true, true, true, false, true])
 
     fireEvent.click(screen.getByTestId('settings-close'))
     openViaButton()
 
-    expect(hiddenPages()).toEqual([false, true, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true, true])
   })
 
   it('关掉再打开，焦点仍在文档名上（回到第一页还不够）', () => {
@@ -1305,7 +1305,7 @@ describe('设置对话框的左栏分页', () => {
  */
 describe('设置对话框左栏的键盘与录制', () => {
   const hiddenPages = (): boolean[] =>
-    ['reading', 'appearance', 'shortcuts', 'chapters'].map((id) =>
+    ['reading', 'library', 'appearance', 'shortcuts', 'chapters'].map((id) =>
       screen.getByTestId(`settings-tabpanel-${id}`).hasAttribute('hidden')
     )
 
@@ -1330,12 +1330,12 @@ describe('设置对话框左栏的键盘与录制', () => {
 
     fireEvent.keyDown(reading, { key: 'ArrowDown' })
 
-    expect(hiddenPages()).toEqual([true, true, true, true])
+    expect(hiddenPages()).toEqual([true, false, true, true, true])
     expect(document.activeElement).toBe(screen.getByTestId('settings-tab-library'))
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-library'), { key: 'ArrowUp' })
 
-    expect(hiddenPages()).toEqual([false, true, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true, true])
     expect(document.activeElement).toBe(reading)
   })
 
@@ -1344,10 +1344,10 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'ArrowUp' })
-    expect(hiddenPages()).toEqual([true, true, true, false])
+    expect(hiddenPages()).toEqual([true, true, true, true, false])
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-chapters'), { key: 'ArrowDown' })
-    expect(hiddenPages()).toEqual([false, true, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true, true])
   })
 
   it('Home / End 跳到第一页 / 最后一页，焦点也跟着落过去', () => {
@@ -1359,11 +1359,11 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-reading'), { key: 'End' })
-    expect(hiddenPages()).toEqual([true, true, true, false])
+    expect(hiddenPages()).toEqual([true, true, true, true, false])
     expect(document.activeElement).toBe(screen.getByTestId('settings-tab-chapters'))
 
     fireEvent.keyDown(screen.getByTestId('settings-tab-chapters'), { key: 'Home' })
-    expect(hiddenPages()).toEqual([false, true, true, true])
+    expect(hiddenPages()).toEqual([false, true, true, true, true])
     expect(document.activeElement).toBe(screen.getByTestId('settings-tab-reading'))
   })
 
@@ -1372,12 +1372,12 @@ describe('设置对话框左栏的键盘与录制', () => {
     openViaButton()
     const reading = screen.getByTestId('settings-tab-reading')
 
-    // 【逐键断言，绝不能只断言末态】四页下每键各前进一页时，三个键会把页面推到分章设置；
+    // 【逐键断言，绝不能只断言末态】五页下每键各前进一页时，三个键会把页面推到快捷键设置；
     // 而「哪一个键被误认」在场次之间可能落到同一页，末态看不出是哪一下动的。
     // 这正是「用例声称自身输入时要自检前提」那种形态。
     for (const key of ['ArrowLeft', 'a', 'Enter']) {
       fireEvent.keyDown(reading, { key })
-      expect(hiddenPages()).toEqual([false, true, true, true])
+      expect(hiddenPages()).toEqual([false, true, true, true, true])
     }
   })
 })
