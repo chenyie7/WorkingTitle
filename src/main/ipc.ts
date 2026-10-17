@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { loadNovelFromFile } from './loadNovel'
 import { chapterRuleProblem } from '../core/chapters'
 import {
+  NovelWorkerExitedError,
   NovelWorkerTimeoutError,
   NovelWorkerUnavailableError,
   openNovelInBackground,
@@ -30,7 +31,8 @@ export async function openNovel(filePath: string): Promise<Novel> {
   try {
     return await openNovelInBackground(filePath)
   } catch (err) {
-    if (!(err instanceof NovelWorkerUnavailableError)) throw err
+    // 只有「起不来」才回退：请求进行中退出时主进程会重跑用户规则，正则可能把界面卡死。
+    if (!(err instanceof NovelWorkerUnavailableError) || err instanceof NovelWorkerExitedError) throw err
     console.warn('[wt] 后台解码不可用，回退到主进程同步读取：', err)
   }
   const store = getStore()
@@ -171,6 +173,9 @@ export function registerIpc(deps: IpcDeps): void {
       } catch (err) {
         if (err instanceof NovelWorkerTimeoutError) {
           return { ok: false, reason: '规则执行超时，目录未改动' }
+        }
+        if (err instanceof NovelWorkerExitedError) {
+          return { ok: false, reason: '后台进程意外退出，目录未改动' }
         }
         if (!(err instanceof NovelWorkerUnavailableError)) {
           // 预期内的失败（例如 0 章匹配）原样交给界面，不加前缀。

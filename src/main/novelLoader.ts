@@ -7,8 +7,11 @@ import type { Chapter, ChapterRule, Novel } from '../core/types'
  * worker_threads 里的 require 读不到 app.asar 内的 node_modules（iconv-lite / jschardet）。
  */
 
-/** 后台进程本身不可用（退出、启动失败）。文件读不出来的错误不走这个类型。 */
+/** 后台进程起不来（启动失败）。请求中途退出用 NovelWorkerExitedError。 */
 export class NovelWorkerUnavailableError extends Error {}
+
+/** 后台进程在请求进行中退出。不能退回主进程重跑，否则自定义正则可能卡死主进程。 */
+export class NovelWorkerExitedError extends NovelWorkerUnavailableError {}
 
 /** 重新分章超时：自定义正则灾难性回溯时后台进程卡死，只能杀掉重来。 */
 export class NovelWorkerTimeoutError extends Error {}
@@ -46,7 +49,7 @@ function ensureChild(): Electron.UtilityProcess {
     waiter.resolve(msg)
   })
   proc.on('exit', (code) => {
-    const err = new NovelWorkerUnavailableError(`小说解码进程退出（${code}）`)
+    const err = new NovelWorkerExitedError(`小说解码进程退出（${code}）`)
     for (const waiter of pending.values()) {
       if (waiter.timer) clearTimeout(waiter.timer)
       waiter.reject(err)
