@@ -43,7 +43,8 @@ export function resplitNovelWithRule(
   if (!entry) {
     return { ok: false, reason: '找不到这本书的缓存，请重新导入' }
   }
-  if (!hasChapterTitles(entry.novel.flatText, rule)) {
+  // auto 的 0 匹配就是单章目录，是用户选回自动识别时要回到的状态
+  if (rule.kind !== 'auto' && !hasChapterTitles(entry.novel.flatText, rule)) {
     return { ok: false, reason: '这条规则没有识别出任何章节，目录未改动' }
   }
 

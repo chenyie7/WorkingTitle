@@ -130,6 +130,28 @@ describe('novelService', () => {
     ])
   })
 
+  it('选回自动识别时，即使 0 章也允许（回到最初的单章目录）', () => {
+    const store = createSessionStore(dir)
+    const src = join(dir, 'no-auto-titles.txt')
+    const SOURCE = '☆、开端\n正文一。\n☆、终局\n正文三。\n'
+    writeFileSync(src, SOURCE, 'utf8')
+
+    // 自动识别在这本书上一条标题都认不出 → 单章
+    const auto = openNovelWithRule(store, src)
+    expect(auto.chapters).toHaveLength(1)
+
+    // 先用特殊符号规则切成两章
+    const special = resplitNovelWithRule(store, src, { kind: 'preset', id: 'special' })
+    expect(special.ok).toBe(true)
+
+    // 再选回自动识别：0 匹配也必须允许，目录回到单章
+    const back = resplitNovelWithRule(store, src, DEFAULT_CHAPTER_RULE)
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    expect(back.value).toHaveLength(1)
+    expect(store.readNovelCacheEntry(src)?.chapterRule).toEqual(DEFAULT_CHAPTER_RULE)
+  })
+
   it('缓存不存在时拒绝重分章', () => {
     const store = createSessionStore(dir)
     const src = writeBook()
