@@ -29,7 +29,11 @@ import {
   PAGE_FONT_SIZE_MIN,
   clampPageFontSize
 } from '../../../core/types'
-import { CHAPTER_PRESETS, chapterRuleProblem } from '../../../core/chapters'
+import {
+  CHAPTER_PRESETS,
+  chapterRuleEqual,
+  chapterRuleProblem
+} from '../../../core/chapters'
 import { toChord } from '../state/shortcuts'
 import { useDeferredSettings, type DeferredField } from '../state/deferredSettings'
 import { clampRatioInput, useToolbar } from '../state/ToolbarContext'
@@ -244,7 +248,7 @@ export function SettingsDialog({
    */
   const lastChapterRuleRef = useRef(chapterRule)
   useEffect(() => {
-    if (lastChapterRuleRef.current === chapterRule) return
+    if (chapterRuleEqual(lastChapterRuleRef.current, chapterRule)) return
     lastChapterRuleRef.current = chapterRule
     setChapterDraft(chapterRule)
     setCustomPattern(chapterRule.kind === 'custom' ? chapterRule.pattern : '')
