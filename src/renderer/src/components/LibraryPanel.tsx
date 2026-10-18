@@ -3,7 +3,7 @@ import type { IpcResult } from '../../../core/api'
 import type { LibraryEntry } from '../../../core/types'
 import { getApi } from '../api'
 import { useToolbar } from '../state/ToolbarContext'
-import { IconBibliography, IconImport } from './icons'
+import { IconImport } from './icons'
 
 export interface LibraryPanelProps {
   /** 当前页是不是「小说管理」。面板始终挂载，靠这个值判断何时拉数据。 */
@@ -108,10 +108,7 @@ export function LibraryPanel({
   return (
     <div className="wt-library">
       <div className="wt-library__head">
-        <span className="wt-library__title">
-          <IconBibliography className="wt-modal__label-icon" />
-          书库
-        </span>
+        <span className="wt-library__title">书库</span>
         <button
           type="button"
           className="wt-btn wt-btn--primary"

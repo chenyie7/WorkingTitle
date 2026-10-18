@@ -1541,5 +1541,6 @@ describe('设置行标签', () => {
     const label = screen.getByText('文档名').closest('.wt-modal__label')
     expect(label).toBeTruthy()
     expect(label?.querySelector('svg')).toBeNull()
+    expect(document.querySelectorAll('.wt-modal__label-icon')).toHaveLength(0)
   })
 })
