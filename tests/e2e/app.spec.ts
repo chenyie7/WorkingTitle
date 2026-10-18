@@ -310,3 +310,21 @@ test('preload 暴露的接口与渲染层契约一致（进程边界的运行期
     expect(surface![key]).toBe(kind)
   }
 })
+
+test('开始页在 1280 宽下不横向溢出、组标题同一基线', async () => {
+  await win.locator('[data-testid="tab-开始"]').click()
+
+  await expect
+    .poll(() => win.locator('.wt-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth))
+    .toBe(0)
+
+  const tops = await win
+    .locator('.wt-group__label')
+    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
+  expect(new Set(tops).size).toBe(1)
+
+  const clipped = await win
+    .locator('[data-testid="combo-font-size"] .wt-combo__value')
+    .evaluate((el) => el.scrollWidth > el.clientWidth)
+  expect(clipped).toBe(false)
+})

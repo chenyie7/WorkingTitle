@@ -1,5 +1,5 @@
 /* 标题条 + 选项卡 + 功能区 + 设置对话框。
-   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 92px，
+   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 84px，
    切换按钮用「未按下线框 / 按下实心」的图标对（见 icons.tsx）。 */
 
 .wt-ribbon {
@@ -93,23 +93,35 @@
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 6px 8px 4px;
-  min-height: 92px;
+  height: 84px;
+  padding: 4px 8px 3px;
   background: var(--wt-surface);
   border-bottom: 1px solid var(--wt-chrome-border);
   overflow-x: auto;
 }
 
 .wt-group {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 12px;
-  border-right: 1px solid var(--wt-chrome-border);
+  justify-content: flex-start;
+  height: 100%;
+  padding: 0 8px;
 }
 
-.wt-group:last-child {
-  border-right: none;
+.wt-group::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 0;
+  width: 1px;
+  height: 54px;
+  background: var(--wt-chrome-border);
+}
+
+.wt-group:last-child::after {
+  display: none;
 }
 
 /* 组内的排布：**两行、按列填充**。
@@ -126,7 +138,7 @@
 .wt-group__body {
   display: grid;
   grid-auto-flow: column;
-  grid-template-rows: repeat(2, auto);
+  grid-template-rows: 26px 26px;
   align-items: center;
   justify-items: center;
   gap: 2px;
@@ -141,21 +153,22 @@
 }
 
 .wt-group__label {
-  font-size: 10.5px;
+  margin-top: 4px;
+  font-size: var(--wt-fs-xs);
+  line-height: 13px;
   color: var(--wt-text-muted);
-  margin-top: 5px;
   white-space: nowrap;
 }
 
 .wt-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 7px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
   border: 1px solid transparent;
   border-radius: var(--wt-radius);
   background: transparent;
   color: var(--wt-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   cursor: pointer;
   display: inline-flex;
@@ -192,15 +205,15 @@
 /* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
 .wt-btn--large {
   flex-direction: column;
-  gap: 4px;
-  width: 62px;
-  height: 64px;
-  padding: 8px 4px 6px;
+  gap: 3px;
+  width: 58px;
+  height: 54px;
+  padding: 5px 2px 4px;
 }
 
 .wt-btn--large .wt-btn__icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 .wt-btn__icon {
@@ -210,14 +223,14 @@
 }
 
 .wt-btn__label {
-  font-size: 11px;
+  font-size: var(--wt-fs-sm);
   line-height: 1;
 }
 
 /* 有图标的小按钮只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
    标签用「视觉隐藏」而不是 display:none —— 后者会把它从无障碍树里也拿掉。 */
 .wt-btn--icon-only {
-  width: 28px;
+  width: 26px;
   padding: 0;
 }
 
@@ -257,14 +270,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  height: 28px;
-  padding: 0 6px 0 10px;
+  align-self: start;
+  gap: 5px;
+  height: 26px;
+  padding: 0 5px 0 9px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
   background: var(--wt-control);
   color: var(--wt-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   cursor: pointer;
 }
@@ -429,8 +443,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 13px;
-  height: 28px;
+  width: 14px;
+  height: 26px;
   padding: 0;
   border: 1px solid transparent;
   border-left: none;
@@ -453,9 +467,9 @@
 
 .wt-sep {
   width: 1px;
-  height: 22px;
+  height: 20px;
   background: var(--wt-chrome-border);
-  margin: 0 5px;
+  margin: 0 4px;
 }
 
 .wt-ratio {

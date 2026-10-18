@@ -199,3 +199,23 @@ describe('锚点弹层', () => {
     spy.mockRestore()
   })
 })
+
+describe('插入页收组', () => {
+  it('被收掉的占位项不再渲染', () => {
+    setup()
+    fireEvent.click(screen.getByTestId('tab-插入'))
+    expect(screen.getByTestId('btn-table')).toBeTruthy()
+    expect(screen.getByTestId('btn-picture')).toBeTruthy()
+    expect(screen.getByTestId('btn-formula')).toBeTruthy()
+    expect(screen.queryByTestId('btn-model3d')).toBeNull()
+    expect(screen.queryByTestId('btn-smartart')).toBeNull()
+    expect(screen.queryByTestId('btn-screenshot')).toBeNull()
+    expect(screen.queryByTestId('btn-bookmark')).toBeNull()
+    expect(screen.queryByTestId('btn-crossref')).toBeNull()
+    expect(screen.queryByTestId('btn-signature')).toBeNull()
+    expect(screen.queryByTestId('btn-object')).toBeNull()
+    expect(screen.queryByTestId('btn-addin')).toBeNull()
+    expect(screen.queryByTestId('btn-video')).toBeNull()
+    expect(screen.queryByTestId('btn-audio')).toBeNull()
+  })
+})
