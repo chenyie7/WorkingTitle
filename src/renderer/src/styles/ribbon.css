@@ -17,7 +17,7 @@
   padding: 0 14px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   letter-spacing: 0.01em;
 }
 
@@ -55,7 +55,7 @@
   border: none;
   background: transparent;
   padding: 6px 14px 7px;
-  font-size: 12.5px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   /* 蓝底上写白字。用 --wt-titlebar-text 而不是写死 #fff：深色下标签条是近黑，
      这个 token 也跟着翻成浅色。 */
