@@ -312,6 +312,15 @@ test('preload 暴露的接口与渲染层契约一致（进程边界的运行期
 })
 
 test('开始页在 1280 宽下不横向溢出、组标题同一基线', async () => {
+  expect(await win.evaluate(() => innerWidth)).toBe(1280)
+
+  for (const name of ['文件', '开始', '插入', '布局', '引用', '审阅', '视图']) {
+    await win.locator(`[data-testid="tab-${name}"]`).click()
+    await expect
+      .poll(() => win.locator('.wt-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth))
+      .toBe(0)
+  }
+
   await win.locator('[data-testid="tab-开始"]').click()
 
   await expect
@@ -327,4 +336,35 @@ test('开始页在 1280 宽下不横向溢出、组标题同一基线', async ()
     .locator('[data-testid="combo-font-size"] .wt-combo__value')
     .evaluate((el) => el.scrollWidth > el.clientWidth)
   expect(clipped).toBe(false)
+
+  await win.locator('[data-testid="combo-font-family"]').click()
+  await win
+    .locator('[data-testid="combo-font-family-panel"] .wt-combo__option', {
+      hasText: 'Times New Roman'
+    })
+    .click()
+  const clippedFamily = await win
+    .locator('[data-testid="combo-font-family"] .wt-combo__value')
+    .evaluate((el) => el.scrollWidth > el.clientWidth)
+  expect(clippedFamily).toBe(false)
+})
+
+test('功能区在 940 宽下不裁掉组标题', async () => {
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setContentSize(940, 860)
+  })
+  await expect.poll(() => win.evaluate(() => innerWidth)).toBe(940)
+  await win.locator('[data-testid="tab-开始"]').click()
+
+  const result = await win.evaluate(() => {
+    const toolbar = document.querySelector('.wt-toolbar') as HTMLElement
+    const labels = Array.from(toolbar.querySelectorAll('.wt-group__label')) as HTMLElement[]
+    const bottom = toolbar.getBoundingClientRect().bottom
+    return {
+      verticalOverflow: toolbar.scrollHeight - toolbar.clientHeight,
+      clipped: labels.some((label) => label.getBoundingClientRect().bottom > bottom + 0.5)
+    }
+  })
+  expect(result.verticalOverflow).toBe(0)
+  expect(result.clipped).toBe(false)
 })

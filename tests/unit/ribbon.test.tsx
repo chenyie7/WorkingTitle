@@ -217,5 +217,7 @@ describe('插入页收组', () => {
     expect(screen.queryByTestId('btn-addin')).toBeNull()
     expect(screen.queryByTestId('btn-video')).toBeNull()
     expect(screen.queryByTestId('btn-audio')).toBeNull()
+    expect(document.querySelectorAll('.wt-group')).toHaveLength(7)
+    expect(document.querySelectorAll('.wt-btn--large')).toHaveLength(18)
   })
 })

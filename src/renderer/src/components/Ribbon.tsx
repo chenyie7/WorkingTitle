@@ -197,7 +197,7 @@ const FONT_GROUP: ToolbarGroup = {
   items: [
     // 字体名与字号在真 Word 里就是**下拉框**（combo），不再是文字按钮。
     // 宽度照真 Word 那两栏的观感给：字体名宽、字号窄。
-    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 128 },
+    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 144 },
     { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 64 },
     // 【下面的顺序是被排布方式决定的，别按“重要性”重排】组内是两行按列填充，
     // **相邻两项自然成上下两格**。所以要成对地写：增大/减小、加粗/斜体、下划线/删除线…
@@ -770,7 +770,6 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           large: true
         },
         {
-          // 与「插入」页那个交叉引用是同一个命令，共用 id。
           kind: 'placeholder',
           id: 'crossref',
           label: '交叉引用',
