@@ -2,8 +2,22 @@ import { isVolumeTitle } from '../../../core/chapters'
 import type { Chapter } from '../../../core/types'
 
 export type TreeRow =
-  | { kind: 'book'; key: string; depth: 0; title: string; chapterIndex: null }
-  | { kind: 'volume'; key: string; depth: 1; title: string; chapterIndex: number }
+  | {
+      kind: 'book'
+      key: string
+      depth: 0
+      title: string
+      chapterIndex: null
+      hasChildren: boolean
+    }
+  | {
+      kind: 'volume'
+      key: string
+      depth: 1
+      title: string
+      chapterIndex: number
+      hasChildren: boolean
+    }
   | { kind: 'chapter'; key: string; depth: 1 | 2; title: string; chapterIndex: number }
 
 export interface TreeOptions {
@@ -39,7 +53,8 @@ export function buildTreeRows(
     key: 'book',
     depth: 0,
     title: options.bookTitle,
-    chapterIndex: null
+    chapterIndex: null,
+    hasChildren: chapters.length > 0
   }
   const query = options.query.trim().toLowerCase()
   const searching = query !== ''
@@ -72,7 +87,8 @@ export function buildTreeRows(
       key: `v-${group.volume.index}`,
       depth: 1,
       title: group.volume.title,
-      chapterIndex: group.volume.index
+      chapterIndex: group.volume.index,
+      hasChildren: group.chapters.length > 0
     })
 
     if (!searching && options.collapsedVolumes.has(group.volume.index)) continue
@@ -90,6 +106,7 @@ export function buildTreeRows(
   return rows
 }
 
+// 卷行自带 chapterIndex，传卷的下标会命中卷行本身而非 -1。
 export function findChapterRow(rows: readonly TreeRow[], chapterIndex: number): number {
   return rows.findIndex((row) => row.chapterIndex === chapterIndex)
 }

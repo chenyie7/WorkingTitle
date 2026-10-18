@@ -52,6 +52,9 @@ describe('buildTreeRows', () => {
     ])
     expect(rows[1].depth).toBe(1)
     expect(rows[3].depth).toBe(2)
+    expect(rows[1]).toMatchObject({ chapterIndex: 0, key: 'c-0' })
+    expect(rows[3]).toMatchObject({ chapterIndex: 2, key: 'c-2' })
+    expect(rows[5]).toMatchObject({ chapterIndex: 4, key: 'c-4' })
   })
 
   it('收起的卷不展开子章节', () => {
@@ -89,6 +92,45 @@ describe('buildTreeRows', () => {
     })
     expect(rows.map((r) => r.title)).toEqual(['B', 'Chapter Alpha'])
   })
+
+  it('搜索不匹配卷标题', () => {
+    const rows = build({ query: '承接' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('book')
+  })
+
+  it('搜索时忽略收起的书名', () => {
+    const rows = build({ bookCollapsed: true, query: '开端' })
+    expect(rows.map((r) => r.title)).toEqual(['大书', '第一卷 起势', '第1章 开端'])
+  })
+
+  it('连续两个卷都没有子章节时标记为不可展开', () => {
+    const consecutive: Chapter[] = [
+      { index: 0, title: '第一卷 甲', start: 0, end: 1, charCount: 1 },
+      { index: 1, title: '第二卷 乙', start: 1, end: 2, charCount: 1 }
+    ]
+    const rows = buildTreeRows(consecutive, {
+      bookTitle: '大书',
+      query: '',
+      bookCollapsed: false,
+      collapsedVolumes: new Set()
+    })
+    expect(rows.map((r) => r.kind)).toEqual(['book', 'volume', 'volume'])
+    expect(rows[1]).toMatchObject({ hasChildren: false })
+    expect(rows[2]).toMatchObject({ hasChildren: false })
+  })
+
+  it('空章节时书名行不可展开', () => {
+    const rows = buildTreeRows([], {
+      bookTitle: '大书',
+      query: '',
+      bookCollapsed: false,
+      collapsedVolumes: new Set()
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('book')
+    expect(rows[0]).toMatchObject({ hasChildren: false })
+  })
 })
 
 describe('findChapterRow', () => {
@@ -100,6 +142,11 @@ describe('findChapterRow', () => {
   it('章节被卷收起时返回 -1', () => {
     const rows = build({ collapsedVolumes: new Set([1]) })
     expect(findChapterRow(rows, 2)).toBe(-1)
+  })
+
+  it('传入卷的下标时命中卷行', () => {
+    const rows = build()
+    expect(findChapterRow(rows, 1)).toBe(2)
   })
 })
 
