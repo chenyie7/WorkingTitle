@@ -63,12 +63,8 @@ import {
   IconWordCount,
   /* 「插入 / 布局 / 文件」三页补密度时新增的。上面那批是按名字排的，这批按用途聚在一起，
      不再跟着排——它们只在这三页用，混进去反而更难读。 */
-  Icon3DModel,
-  IconAddin,
   IconAlignObjects,
-  IconAudio,
   IconBlankPage,
-  IconBookmark,
   IconBringForward,
   IconChart,
   IconClose,
@@ -85,23 +81,18 @@ import {
   IconIcons,
   IconImport,
   IconLineNumbers,
-  IconObject,
   IconPageNumber,
   IconPaperSize,
   IconPosition,
   IconRotate,
   IconSaveAs,
-  IconScreenshot,
   IconSelectionPane,
   IconSendBackward,
   IconShare,
-  IconSignature,
-  IconSmartArt,
   IconSpaceAfter,
   IconSpaceBefore,
   IconSymbols,
   IconTextbox,
-  IconVideo,
   IconWrapText,
   /* 「引用 / 审阅 / 视图」三页补密度时新增的。 */
   IconAccessibility,
@@ -206,8 +197,8 @@ const FONT_GROUP: ToolbarGroup = {
   items: [
     // 字体名与字号在真 Word 里就是**下拉框**（combo），不再是文字按钮。
     // 宽度照真 Word 那两栏的观感给：字体名宽、字号窄。
-    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 118 },
-    { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 58 },
+    { kind: 'combo', id: 'font-family', title: '字体', options: FONT_FAMILIES, width: 144 },
+    { kind: 'combo', id: 'font-size', title: '字号', options: FONT_SIZES, width: 64 },
     // 【下面的顺序是被排布方式决定的，别按“重要性”重排】组内是两行按列填充，
     // **相邻两项自然成上下两格**。所以要成对地写：增大/减小、加粗/斜体、下划线/删除线…
     // 乱序的话会排出「清除格式 压在 加粗 上面」这种没道理的配对。
@@ -424,30 +415,14 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         { kind: 'placeholder', id: 'picture', label: '图片', title: '图片', icon: IconPicture, large: true },
         { kind: 'placeholder', id: 'shape', label: '形状', title: '形状', icon: IconShape, large: true },
         { kind: 'placeholder', id: 'icons', label: '图标', title: '图标', icon: IconIcons, large: true },
-        { kind: 'placeholder', id: 'model3d', label: '3D 模型', title: '3D 模型', icon: Icon3DModel, large: true },
-        { kind: 'placeholder', id: 'smartart', label: 'SmartArt', title: 'SmartArt', icon: IconSmartArt, large: true },
-        { kind: 'placeholder', id: 'chart', label: '图表', title: '图表', icon: IconChart, large: true },
         {
           kind: 'placeholder',
-          id: 'screenshot',
-          label: '屏幕截图',
-          title: '屏幕截图',
-          icon: IconScreenshot,
+          id: 'chart',
+          label: '图表',
+          title: '图表',
+          icon: IconChart,
           large: true
         }
-      ]
-    },
-    {
-      label: '加载项',
-      items: [
-        { kind: 'placeholder', id: 'addin', label: '加载项', title: '加载项', icon: IconAddin, large: true }
-      ]
-    },
-    {
-      label: '媒体',
-      items: [
-        { kind: 'placeholder', id: 'video', label: '视频', title: '视频', icon: IconVideo, large: true },
-        { kind: 'placeholder', id: 'audio', label: '音频', title: '音频', icon: IconAudio, large: true }
       ]
     },
     {
@@ -460,29 +435,7 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           title: '链接',
           icon: IconHyperlink,
           large: true
-        },
-        {
-          kind: 'placeholder',
-          id: 'bookmark',
-          label: '书签',
-          title: '书签',
-          icon: IconBookmark,
-          large: true
-        },
-        {
-          kind: 'placeholder',
-          id: 'crossref',
-          label: '交叉引用',
-          title: '交叉引用',
-          icon: IconCrossRef,
-          large: true
         }
-      ]
-    },
-    {
-      label: '批注',
-      items: [
-        { kind: 'placeholder', id: 'comment', label: '批注', title: '批注', icon: IconComment, large: true }
       ]
     },
     {
@@ -529,26 +482,10 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
         },
         {
           kind: 'placeholder',
-          id: 'signature',
-          label: '签名行',
-          title: '签名行',
-          icon: IconSignature,
-          large: true
-        },
-        {
-          kind: 'placeholder',
           id: 'datetime',
           label: '日期和时间',
           title: '日期和时间',
           icon: IconDateTime,
-          large: true
-        },
-        {
-          kind: 'placeholder',
-          id: 'object',
-          label: '对象',
-          title: '对象',
-          icon: IconObject,
           large: true
         }
       ]
@@ -558,7 +495,7 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
       items: [
         {
           kind: 'placeholder',
-          id: 'equation',
+          id: 'formula',
           label: '公式',
           title: '公式',
           icon: IconFormula,
@@ -833,7 +770,6 @@ const TABS: Record<RibbonTab, ToolbarGroup[]> = {
           large: true
         },
         {
-          // 与「插入」页那个交叉引用是同一个命令，共用 id。
           kind: 'placeholder',
           id: 'crossref',
           label: '交叉引用',

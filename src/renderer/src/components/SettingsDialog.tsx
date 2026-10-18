@@ -52,12 +52,9 @@ import {
   IconClose,
   IconDarkTheme,
   IconDesktop,
-  IconDocument,
-  IconFontSize,
   IconImport,
   IconKeyboard,
   IconMoon,
-  IconRename,
   IconSettings,
   IconSun,
   IconToc
@@ -686,10 +683,7 @@ export function SettingsDialog({
               hidden={page !== 'reading'}
             >
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconRename className="wt-modal__label-icon" />
-                  文档名
-                </span>
+                <span className="wt-modal__label">文档名</span>
                 <input
                   className="wt-modal__text"
                   data-testid="doc-title-input"
@@ -710,10 +704,7 @@ export function SettingsDialog({
               </div>
 
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconFontSize className="wt-modal__label-icon" />
-                  阅读替换
-                </span>
+                <span className="wt-modal__label">阅读替换</span>
                 {/*
                   两格：**全局**（新导入的书取它当起点）与**当前书**（真正生效的那个）。
                   顺序刻意是全局在前——它是兜底，当前书才是引擎在用的。两格都归「手动保存」，
@@ -762,10 +753,7 @@ export function SettingsDialog({
               </div>
 
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconKeyboard className="wt-modal__label-icon" />
-                  输入模式
-                </span>
+                <span className="wt-modal__label">输入模式</span>
                 <button
                   type="button"
                   className={`wt-btn ${mode === 'ime' ? 'wt-btn--active' : ''}`}
@@ -788,10 +776,7 @@ export function SettingsDialog({
                   才生效。只作用于小说与 .txt 工作文档；md 那条路的字号是照着 Word 的标题层级
                   写死的，跟着缩会把层级弄散（见 page.css 里 .wt-page__novel 那段说明）。
                 */}
-                <span className="wt-modal__label">
-                  <IconFontSize className="wt-modal__label-icon" />
-                  正文字号
-                </span>
+                <span className="wt-modal__label">正文字号</span>
                 <input
                   className="wt-ratio__input"
                   data-testid="page-font-size-input"
@@ -816,10 +801,7 @@ export function SettingsDialog({
               </div>
 
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconBook className="wt-modal__label-icon" />
-                  小说
-                </span>
+                <span className="wt-modal__label">小说</span>
                 <button
                   type="button"
                   className="wt-btn"
@@ -843,10 +825,7 @@ export function SettingsDialog({
               </div>
 
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconDocument className="wt-modal__label-icon" />
-                  工作文档
-                </span>
+                <span className="wt-modal__label">工作文档</span>
                 {/*
                   按老板键时**不显示小说、显示这一份**。与上面那组一样是立即动作：文件选择框是
                   外部动作，做成「选了文件还得再点保存」很别扭。
@@ -929,10 +908,7 @@ export function SettingsDialog({
                   外观的三选一。**必须走主进程**（见 ipc.ts 里的说明）：只翻页面的 class 的话，
                   macOS 的红绿灯不会跟着变，又会回到「两块颜色对不上」。
                 */}
-                <span className="wt-modal__label">
-                  <IconDarkTheme className="wt-modal__label-icon" />
-                  外观
-                </span>
+                <span className="wt-modal__label">外观</span>
                 <div className="wt-seg" role="group" aria-label="外观">
                   {THEME_OPTIONS.map((opt) => {
                     const active = themeSource === opt.value
@@ -961,10 +937,7 @@ export function SettingsDialog({
                   勾上之后阅读区整块也跟着暗下来——夜里看书不刺眼，代价是不再像 Word。
                   只在系统是深色外观下才有意义；浅色外观下勾了也不动（CSS 按组合选择器处理）。
                 */}
-                <span className="wt-modal__label">
-                  <IconDocument className="wt-modal__label-icon" />
-                  纸张
-                </span>
+                <span className="wt-modal__label">纸张</span>
                 <label className="wt-modal__check">
                   <input
                     type="checkbox"
@@ -1032,10 +1005,7 @@ export function SettingsDialog({
               hidden={page !== 'chapters'}
             >
               <div className="wt-modal__row">
-                <span className="wt-modal__label">
-                  <IconToc className="wt-modal__label-icon" />
-                  当前小说
-                </span>
+                <span className="wt-modal__label">当前小说</span>
                 <span className="wt-chapter-current" data-testid="chapter-current">
                   {novelTitle === null
                     ? '未导入小说（先到「阅读设置」导入）'

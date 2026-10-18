@@ -1060,7 +1060,7 @@ describe('快捷键接线', () => {
     await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
 
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
-    // 收起：整条 aside 不渲染，只剩那条 12px 的细缝按钮
+    // 收起：整条 aside 不渲染，只剩那条 10px 的细缝按钮
     expect(screen.queryByTestId('chapter-list')).toBeNull()
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
 
@@ -1082,11 +1082,11 @@ describe('快捷键接线', () => {
    * 受控是坏的**（`controlled` 为真、切换却落到一个 `undefined` 上）。
    */
   it('点章节栏那个按钮也真的收起、又展开', async () => {
-    installApi(null)
+    installApi(makeNovel())
     setPlatformWin32()
     render(<App />)
-    await act(async () => {})
-    expect(screen.getByTestId('chapter-list')).toBeTruthy()
+    importViaSettings()
+    await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
 
     fireEvent.click(screen.getByTestId('sidebar-toggle'))
     expect(screen.queryByTestId('chapter-list')).toBeNull()

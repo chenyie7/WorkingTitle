@@ -1,5 +1,5 @@
 /* 标题条 + 选项卡 + 功能区 + 设置对话框。
-   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 92px，
+   尺寸与层级按今天的 Word 调过：标题条 32px、选项卡 34px、功能区 84px，
    切换按钮用「未按下线框 / 按下实心」的图标对（见 icons.tsx）。 */
 
 .wt-ribbon {
@@ -17,7 +17,7 @@
   padding: 0 14px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   letter-spacing: 0.01em;
 }
 
@@ -55,7 +55,7 @@
   border: none;
   background: transparent;
   padding: 6px 14px 7px;
-  font-size: 12.5px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   /* 蓝底上写白字。用 --wt-titlebar-text 而不是写死 #fff：深色下标签条是近黑，
      这个 token 也跟着翻成浅色。 */
@@ -93,23 +93,36 @@
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 6px 8px 4px;
-  min-height: 92px;
+  min-height: 84px;
+  padding: 4px 8px 3px;
   background: var(--wt-surface);
   border-bottom: 1px solid var(--wt-chrome-border);
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .wt-group {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 12px;
-  border-right: 1px solid var(--wt-chrome-border);
+  justify-content: flex-start;
+  height: 100%;
+  padding: 0 8px;
 }
 
-.wt-group:last-child {
-  border-right: none;
+.wt-group::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 54px;
+  background: var(--wt-chrome-border);
+}
+
+.wt-group:last-child::after {
+  display: none;
 }
 
 /* 组内的排布：**两行、按列填充**。
@@ -126,7 +139,7 @@
 .wt-group__body {
   display: grid;
   grid-auto-flow: column;
-  grid-template-rows: repeat(2, auto);
+  grid-template-rows: 26px 26px;
   align-items: center;
   justify-items: center;
   gap: 2px;
@@ -141,21 +154,22 @@
 }
 
 .wt-group__label {
-  font-size: 10.5px;
+  margin-top: 4px;
+  font-size: var(--wt-fs-xs);
+  line-height: 13px;
   color: var(--wt-text-muted);
-  margin-top: 5px;
   white-space: nowrap;
 }
 
 .wt-btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 7px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
   border: 1px solid transparent;
   border-radius: var(--wt-radius);
   background: transparent;
   color: var(--wt-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   cursor: pointer;
   display: inline-flex;
@@ -189,18 +203,25 @@
   border-color: var(--wt-control-active-border);
 }
 
-/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
+/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。
+   标签允许折成两行：「Web 版式视图」「检查辅助功能」在 58px 里一行放不下。 */
 .wt-btn--large {
   flex-direction: column;
-  gap: 4px;
-  width: 62px;
-  height: 64px;
-  padding: 8px 4px 6px;
+  gap: 2px;
+  width: 58px;
+  height: 54px;
+  padding: 3px 2px 2px;
+  white-space: normal;
+}
+
+.wt-btn--large .wt-btn__label {
+  text-align: center;
+  line-height: 1.05;
 }
 
 .wt-btn--large .wt-btn__icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 .wt-btn__icon {
@@ -210,14 +231,14 @@
 }
 
 .wt-btn__label {
-  font-size: 11px;
+  font-size: var(--wt-fs-sm);
   line-height: 1;
 }
 
 /* 有图标的小按钮只显示图标（Word 的 B/I/U 那一排就没有可见文字）。
    标签用「视觉隐藏」而不是 display:none —— 后者会把它从无障碍树里也拿掉。 */
 .wt-btn--icon-only {
-  width: 28px;
+  width: 26px;
   padding: 0;
 }
 
@@ -257,14 +278,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  height: 28px;
-  padding: 0 6px 0 10px;
+  align-self: start;
+  gap: 5px;
+  height: 26px;
+  padding: 0 5px 0 9px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
   background: var(--wt-control);
   color: var(--wt-text);
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   font-family: inherit;
   cursor: pointer;
 }
@@ -325,11 +347,12 @@
 }
 
 /* ---- 样式库 ----
- * 与下拉框不同，展开就是全部选项，所以直接在流内排开、不需要弹层，
- * 也就不涉及焦点问题——每一项本身是 `<button>`。
+ * 只露四项 + 展开箭头；完整列表走 `.wt-gallery__panel`（复用 combo 弹层的样式）。
  */
 .wt-gallery {
   display: flex;
+  align-items: stretch;
+  align-self: stretch;
   gap: 2px;
 }
 
@@ -337,9 +360,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  width: 58px;
-  padding: 5px 2px 4px;
+  justify-content: center;
+  gap: 2px;
+  width: 56px;
+  padding: 4px 2px 3px;
   border: 1px solid transparent;
   border-radius: var(--wt-radius);
   background: transparent;
@@ -365,10 +389,48 @@
 }
 
 .wt-gallery__name {
-  font-size: 10.5px;
+  font-size: var(--wt-fs-xs);
   line-height: 1;
   color: var(--wt-text-muted);
   white-space: nowrap;
+}
+
+.wt-gallery__more {
+  width: 22px;
+  height: 54px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--wt-chrome-border);
+  border-radius: 0 var(--wt-radius) var(--wt-radius) 0;
+  background: transparent;
+  color: var(--wt-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wt-gallery__more:hover {
+  background: var(--wt-blue-light);
+}
+
+.wt-gallery__more--active {
+  background: var(--wt-control-active);
+  color: var(--wt-text);
+}
+
+.wt-gallery__more--active:hover {
+  background: var(--wt-control-active);
+  color: var(--wt-text);
+}
+
+.wt-gallery__more-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.wt-gallery__panel {
+  min-width: 150px;
 }
 
 /* ---- 分割按钮（下划线 / 项目符号 / 编号）----
@@ -389,8 +451,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 13px;
-  height: 28px;
+  width: 14px;
+  height: 26px;
   padding: 0;
   border: 1px solid transparent;
   border-left: none;
@@ -409,19 +471,6 @@
 .wt-split__caret {
   width: 10px;
   height: 10px;
-}
-
-.wt-sep {
-  width: 1px;
-  height: 22px;
-  background: var(--wt-chrome-border);
-  margin: 0 5px;
-}
-
-.wt-ratio {
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
 /* 「阅读替换」的两格（全局 / 当前书）：一行一个，竖着排。
@@ -473,14 +522,14 @@
 }
 
 .wt-ratio__input {
-  width: 58px;
-  height: 26px;
+  width: 64px;
+  height: 30px;
   padding: 0 6px;
   border: 1px solid var(--wt-chrome-border-strong);
   border-radius: var(--wt-radius);
   background: var(--wt-input-bg);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   text-align: center;
 }
 
@@ -513,14 +562,14 @@
  * 而遮罩是垂直居中的——高度由内容撑的话，换页时面板既变高矮、又上下跳（实测：410 / 198 / 386，
  * 高矮差 212px、顶边跳 106px）。固定成一个值之后各页完全一致、切换时面板一动不动。
  *
- * 【410 是量出来的，不是拍的】它就是最高那页（阅读设置）的自然高度：38（标题条）
- * + 324（内容区）+ 48（footer）——在真 Electron 里跑 `out/` 构建量的。内容更少的其余各页
+ * 【424 是量出来的，不是拍的】它就是最高那页（阅读设置）的自然高度：38（标题条）
+ * + 338（内容区）+ 48（footer）。内容更少的其余各页
  * 底部留白（真 Word 的「选项」对话框就是这个观感：窗口固定，内容少就空着）。
  *
  * 【`min()` 不能省】窗口矮或页面缩放时按视口收。**两个实测档别混**：
- * **最小窗口**（内容高 620）下 200% 缩放是 min(410, 262) = 262、内容区变 176；
- * **默认窗口**（内容高 860）下 200% 是 min(410, 382) = 382、内容区 296。
- * 写成裸的 `height: 410px` 会让面板在高缩放下顶出屏幕、footer 够不着——那正是上一批
+ * **最小窗口**（内容高 620）下 200% 缩放是 min(424, 262) = 262、内容区变 176；
+ * **默认窗口**（内容高 860）下 200% 是 min(424, 382) = 382、内容区 296。
+ * 写成裸的 `height: 424px` 会让面板在高缩放下顶出屏幕、footer 够不着——那正是上一批
  * `max-height` 要修的东西，绕回去等于白改。
  *
  * 【原来的 `max-height` 已删】它已经被这个 `height` 包进去了，两份互相重叠的约束只会让人
@@ -532,7 +581,7 @@
 .wt-modal__panel {
   width: 680px;
   max-width: calc(100% - 48px);
-  height: min(410px, calc(100vh - 48px));
+  height: min(424px, calc(100vh - 48px));
   background: var(--wt-panel-bg);
   border-radius: 8px;
   box-shadow:
@@ -551,7 +600,7 @@
  * 进入收缩相，标题条按比例被压扁（当年实测 150% 缩放 → 34.06px；200% → 26px，正好是下面
  * 那个 26px 的 ✕ 按钮的高度，也就是它自己的自动最小尺寸）。
  *
- * 【现在不会发生了】面板改成固定的 `height: min(410px, calc(100vh - 48px))` 之后，高度
+ * 【现在不会发生了】面板改成固定的 `height: min(424px, calc(100vh - 48px))` 之后，高度
  * **恒为确定值**，收缩相根本不产生。实测：把这条改成允许收缩的 `flex: 0 1 auto`，五档缩放
  * 下标题条仍是 38；换回旧写法则是 200% → 35.06、250% / 300% → 26。留着 `0 0 auto` 是因为
  * 它不会错——删掉只会让将来改动重新暴露在同一个坑里。
@@ -568,7 +617,7 @@
   padding: 0 8px 0 16px;
   background: var(--wt-titlebar);
   color: var(--wt-titlebar-text);
-  font-size: 13px;
+  font-size: var(--wt-fs-lg);
 }
 
 .wt-modal__title {
@@ -579,8 +628,8 @@
 }
 
 .wt-modal__title-icon {
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
 }
 
@@ -625,7 +674,7 @@
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 20px 18px;
+  padding: 20px;
 }
 
 /*
@@ -644,11 +693,11 @@
  *
  * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
  * main 的高度**、会跟着面板被 `height: min(...)` 夹而变矮；而左栏的内容是固定高的
- * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
- * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
- * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
- * footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它开始夹紧），
- * 所以一并认下来。
+ * `8 + 34×5 + 8 = 186px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 只剩 176px
+ * （首次溢出），250% 约 114px（看得见约 3 项），**300% 约 72px → 只剩约 2 项**。面板的
+ * `overflow: hidden` 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项
+ * 会继续往下画进 footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它
+ * 开始夹紧），所以一并认下来。
  */
 .wt-modal__nav {
   flex: 0 0 152px;
@@ -660,8 +709,8 @@
 /*
  * 页签项：整宽、方角、贴边。选中靠【底色 + 左缘一道竖条】区分。
  *
- * 【border-left 常态也要占位】常态是 2px 透明、选中才上色。写成「常态不给 border」的话，
- * 选中时这一项会整体右移 2px，字与图标跳一下。
+ * 【border-left 常态也要占位】常态是 3px 透明、选中才上色。写成「常态不给 border」的话，
+ * 选中时这一项会整体右移 3px，字与图标跳一下。
  *
  * 【过渡】底色 / 左缘竖条 / 文字颜色各 90ms，与 `.wt-btn` 是同一个词汇
  * （`background-color 90ms ease`、`border-color 90ms ease`）。
@@ -672,7 +721,7 @@
  * `.wt-seg` 那组选中态也是这么处理的（颜色过渡、`font-weight: 600` 硬跳）。
  *
  * 【`border-color` 必须进】选中/未选中之间 `border-left` 从 `transparent` 变到
- * `--wt-accent`。不写它，那道 2px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
+ * `--wt-accent`。不写它，那道 3px 竖条会瞬间出现、而底色在 90ms 里慢慢变，
  * 两者不同步非常明显。
  */
 .wt-nav__item {
@@ -680,14 +729,14 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 32px;
+  height: 34px;
   padding: 0 12px;
   border: none;
-  border-left: 2px solid transparent;
+  border-left: 3px solid transparent;
   background: transparent;
   color: var(--wt-text-muted);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   text-align: left;
   cursor: pointer;
   transition:
@@ -826,22 +875,13 @@
   gap: 10px;
 }
 
-/* 每行的标签：一个小图标 + 文字。加了图标之后基准宽度要放宽，
-   否则「阅读替换」这种四字标签会把右边的控件推歪。 */
 .wt-modal__label {
   flex: 0 0 96px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
   color: var(--wt-text-muted);
-}
-
-.wt-modal__label-icon {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  color: var(--wt-accent);
+  white-space: nowrap;
 }
 
 /* 工作文档那行的状态文本：文件名可能很长，撑破一行会把右边两个按钮挤出面板 */
@@ -869,7 +909,7 @@
   border-radius: var(--wt-radius);
   background: var(--wt-input-bg);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--wt-fs-md);
 }
 
 .wt-modal__text:focus {
@@ -880,9 +920,13 @@
 
 .wt-modal__footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0 18px 18px;
+  height: 48px;
+  flex: 0 0 48px;
+  padding: 0 20px;
+  border-top: 1px solid var(--wt-chrome-border);
 }
 
 /* 面板里的按钮要有实边框：`.wt-btn` 在工具栏里靠 hover 才有轮廓，放到白底上会像纯文本 */
@@ -1013,6 +1057,7 @@
   overflow: hidden;
 }
 
+/* 分段控件外框自带 1px 边框，按钮用 28px，整个控件才是 30px */
 .wt-seg .wt-btn {
   border: none;
   border-radius: 0;
@@ -1038,8 +1083,10 @@
    而录制要自己接管 keydown——做成 input 的话那一下会同时被当作「在输入框里打字」。 */
 .wt-shortcut {
   min-width: 148px;
-  padding: 4px 10px;
+  height: 30px;
+  padding: 0 10px;
   font: inherit;
+  font-size: var(--wt-fs-md);
   font-variant-numeric: tabular-nums;
   text-align: center;
   color: var(--wt-text);
@@ -1090,8 +1137,7 @@
 .wt-library__title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  font-size: var(--wt-fs-md);
   font-weight: 600;
 }
 
@@ -1116,14 +1162,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 10px;
+  height: 44px;
+  padding: 0 10px;
   border: 1px solid var(--wt-chrome-border);
   border-radius: var(--wt-radius);
 }
 
 .wt-library__row--current {
-  border-color: var(--wt-primary);
-  background: var(--wt-chrome);
+  border-color: var(--wt-chrome-border);
+  background: var(--wt-blue-light);
+  box-shadow: inset 3px 0 0 var(--wt-accent);
 }
 
 .wt-library__main {
@@ -1135,13 +1183,14 @@
 }
 
 .wt-library__name {
+  font-size: var(--wt-fs-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .wt-library__meta {
-  font-size: 11px;
+  font-size: var(--wt-fs-sm);
   color: var(--wt-text-muted);
 }
 

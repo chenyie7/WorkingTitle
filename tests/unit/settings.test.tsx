@@ -1531,3 +1531,19 @@ describe('设置里的分章规则', () => {
     expect((screen.getByTestId('chapter-rule-apply') as HTMLButtonElement).disabled).toBe(true)
   })
 })
+
+describe('设置行标签', () => {
+  it('不再挂装饰图标', () => {
+    setup()
+    fireEvent.click(screen.getByTestId('tab-文件'))
+    fireEvent.click(screen.getByTestId('btn-settings'))
+
+    const label = screen.getByText('文档名').closest('.wt-modal__label')
+    expect(label).toBeTruthy()
+    expect(label?.querySelector('svg')).toBeNull()
+    expect(document.querySelectorAll('.wt-modal__label-icon')).toHaveLength(0)
+    document.querySelectorAll('.wt-modal__label').forEach((el) => {
+      expect(el.children).toHaveLength(0)
+    })
+  })
+})

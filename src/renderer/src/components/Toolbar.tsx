@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { FluentIcon } from '@fluentui/react-icons'
 import { useToolbar } from '../state/ToolbarContext'
+import { useAnchoredPanel } from './useAnchoredPanel'
 import { IconSettings, IconCaretDown } from './icons'
 
 /**
@@ -75,50 +76,13 @@ function Combo({
   width?: number
 }) {
   const { choices, choose } = useToolbar()
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  // 没选过就退回第一项，而不是在 Provider 里预填一遍所有控件——那样得先知道有哪些控件。
+  const { anchorRef, open, pos, toggle, close } = useAnchoredPanel<HTMLButtonElement>()
   const value = choices[id] ?? options[0]
-
-  const place = useCallback((): void => {
-    const r = btnRef.current?.getBoundingClientRect()
-    // jsdom 没有布局，rect 全是 0；那不是错误路径，面板照样要挂出来（测试靠这个断言）。
-    setPos({ left: r?.left ?? 0, top: (r?.bottom ?? 0) + 2, width: r?.width ?? 0 })
-  }, [])
-
-  const openPanel = (): void => {
-    place()
-    setOpen(true)
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent): void => {
-      const t = e.target
-      if (!(t instanceof Element)) return
-      if (btnRef.current?.contains(t)) return
-      if (t.closest('.wt-combo__panel')) return
-      setOpen(false)
-    }
-    // 面板是 fixed 定位、坐标只在打开时算一次；窗口缩放或功能区横向滚动都会让按钮离开它。
-    // scroll 不冒泡，所以监听捕获阶段。
-    const onMove = (): void => place()
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('resize', onMove)
-    window.addEventListener('scroll', onMove, true)
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('resize', onMove)
-      window.removeEventListener('scroll', onMove, true)
-    }
-  }, [open, place])
 
   return (
     <>
       <button
-        ref={btnRef}
+        ref={anchorRef}
         type="button"
         className="wt-combo"
         data-testid={`combo-${id}`}
@@ -127,7 +91,7 @@ function Combo({
         aria-haspopup="listbox"
         aria-expanded={open}
         style={width === undefined ? undefined : { width }}
-        onClick={() => (open ? setOpen(false) : openPanel())}
+        onClick={toggle}
       >
         <span className="wt-combo__value">{value}</span>
         <IconCaretDown className="wt-combo__caret" />
@@ -136,6 +100,7 @@ function Combo({
         ? createPortal(
             <div
               className="wt-combo__panel"
+              data-wt-popup
               role="listbox"
               aria-label={title}
               data-testid={`combo-${id}-panel`}
@@ -150,7 +115,7 @@ function Combo({
                   className={`wt-combo__option${o === value ? ' wt-combo__option--active' : ''}`}
                   onClick={() => {
                     choose(id, o)
-                    setOpen(false)
+                    close()
                   }}
                 >
                   {o}
@@ -164,11 +129,13 @@ function Combo({
   )
 }
 
+const VISIBLE_COUNT = 4
+
 /**
  * 样式库。真 Word 的「样式」组就是几个白色小方块，每块里是 `AaBbCc` 加样式名。
  *
- * 与 `Combo` 不同，这里展开就是全部选项，所以直接在流内排开、不需要弹层，
- * 也就不涉及焦点问题——每一项本身是 `<button>`。
+ * 【只露四项 + 展开面板】1280px 下排不下七项，面板里给全量。选中项落在后端时，
+ * 把最后一项替成选中项，否则「当前用的是哪个样式」在界面上看不见。
  */
 function Gallery({
   id,
@@ -180,11 +147,18 @@ function Gallery({
   entries: readonly string[]
 }) {
   const { choices, choose } = useToolbar()
+  const { anchorRef, open, pos, toggle, close } = useAnchoredPanel<HTMLButtonElement>()
   const value = choices[id] ?? entries[0]
+  const activeIndex = entries.indexOf(value)
+  const visibleEntries =
+    activeIndex >= VISIBLE_COUNT
+      ? [...entries.slice(0, VISIBLE_COUNT - 1), entries[activeIndex]]
+      : entries.slice(0, VISIBLE_COUNT)
+  const hiddenActive = activeIndex >= VISIBLE_COUNT
 
   return (
     <div className="wt-gallery" role="group" aria-label={title} data-testid={`gallery-${id}`}>
-      {entries.map((name) => {
+      {visibleEntries.map((name) => {
         const active = name === value
         return (
           <button
@@ -196,7 +170,6 @@ function Gallery({
             title={`${title}：${name}`}
             onClick={() => choose(id, name)}
           >
-            {/* 预览那行 `AaBbCc` 只是形状，读屏念出来是噪音，所以 aria-hidden */}
             <span className="wt-gallery__preview" aria-hidden="true">
               AaBbCc
             </span>
@@ -204,6 +177,49 @@ function Gallery({
           </button>
         )
       })}
+      <button
+        ref={anchorRef}
+        type="button"
+        className={`wt-gallery__more${hiddenActive ? ' wt-gallery__more--active' : ''}`}
+        data-testid={`gallery-${id}-more`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`${title}（更多）`}
+        title={`${title}（更多）`}
+        onClick={toggle}
+      >
+        <IconCaretDown className="wt-gallery__more-icon" />
+      </button>
+      {open && pos
+        ? createPortal(
+            <div
+              className="wt-combo__panel wt-gallery__panel"
+              data-wt-popup
+              role="listbox"
+              aria-label={title}
+              data-testid={`gallery-${id}-panel`}
+              style={{ left: pos.left, top: pos.top }}
+            >
+              {entries.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="option"
+                  aria-selected={name === value}
+                  className={`wt-combo__option${name === value ? ' wt-combo__option--active' : ''}`}
+                  data-testid={`gallery-${id}-option-${name}`}
+                  onClick={() => {
+                    choose(id, name)
+                    close()
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }

@@ -245,9 +245,20 @@ macOS 用 `hiddenInset`（红绿灯浮在网页上），Windows 用 `hidden` + `
 2. **下拉面板必须 portal 到 body。** `.wt-toolbar` 有 `overflow-x: auto`（窄窗口横向滚动）；
    按 CSS 规则，一个轴不是 `visible` 时另一个轴也会变成 `auto`，绝对定位的面板会被**裁掉**。
 3. **组内是「两行按列填充」，所以数组顺序必须按对写。** `.wt-group__body` 是
-   `grid-auto-flow: column` + `grid-template-rows: repeat(2, auto)`，大按钮 / combo / gallery
+   `grid-auto-flow: column` + `grid-template-rows: 26px 26px`，大按钮 / combo / gallery
    加 `grid-row: span 2` 占满整列。于是**相邻两项自然成上下两格**——顺序按「重要性」乱排会排出
    「清除格式压在加粗上面」这种没道理的配对（第一版就是这么翻车的）。两组的注释里都写了别重排。
+
+功能区是 **`min-height: 84px`，不是固定高度**：窄窗口出现横向滚动条时它要能长高，否则组标题会被裁掉。
+
+### 左侧导航窗格
+
+`ChapterList.tsx` 已改成 Word 的「导航窗格」：书名 / 卷 / 章三级树、搜索、展开状态与当前章高亮。
+树模型在 `chapterTree.ts`（纯函数，单独单测），行高 28px，样式在 `word.css`（不在 `page.css`）。
+
+- 搜索只匹配章节标题；搜索时卷显示为展开，但**不改写**用户原来的收起状态。
+- 箭头显不显示看 `row.hasChildren`，**别用 `kind === 'volume'` 判断**——空卷会画出一个点不动的箭头。
+- 点击箭头不能 `stopPropagation`：window 上的抢焦点处理器要收到那一下，否则焦点留在按钮上、键盘不再抽字。
 
 ### 原生菜单
 

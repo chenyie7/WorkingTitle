@@ -228,7 +228,7 @@ test('设置面板五页大小一致', async () => {
   //
   // 【但它**不是**窗口无关的，别把这条红当成回归】面板被 `min()` 夹到低于阅读页的自然高度时，
   // 内容区必然要滚，这一条就会红——而那是**对的**，内容确实被裁了。当前 e2e 每次都是
-  // 1280×860、100% 缩放的新窗口（`calc(100vh - 48px)` = 812 > 410），所以它绿。
+  // 1280×860、100% 缩放的新窗口（`calc(100vh - 48px)` = 812 > 424），所以它绿。
   // **别在带缩放或更小的窗口上跑 e2e，再把这条红当成回归。**
   expect(Math.max(...overflows)).toBe(0)
 })
@@ -309,4 +309,93 @@ test('preload 暴露的接口与渲染层契约一致（进程边界的运行期
   for (const [key, kind] of Object.entries(expected)) {
     expect(surface![key]).toBe(kind)
   }
+})
+
+test('开始页在 1280 宽下不横向溢出、组标题同一基线', async () => {
+  expect(await win.evaluate(() => innerWidth)).toBe(1280)
+
+  for (const name of ['文件', '开始', '插入', '布局', '引用', '审阅', '视图']) {
+    await win.locator(`[data-testid="tab-${name}"]`).click()
+    await expect
+      .poll(() => win.locator('.wt-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth))
+      .toBe(0)
+    const overflowLabels = await win.locator('.wt-btn--large').evaluateAll((buttons) =>
+      buttons.flatMap((button) => {
+        const label = button.querySelector('.wt-btn__label') as HTMLElement | null
+        if (!label) return []
+        const b = button.getBoundingClientRect()
+        const l = label.getBoundingClientRect()
+        const outside =
+          l.left < b.left - 0.5 ||
+          l.right > b.right + 0.5 ||
+          l.top < b.top - 0.5 ||
+          l.bottom > b.bottom + 0.5
+        return outside ? [(button.textContent ?? '').trim()] : []
+      })
+    )
+    expect(overflowLabels).toEqual([])
+  }
+
+  await win.locator('[data-testid="tab-开始"]').click()
+
+  await expect
+    .poll(() => win.locator('.wt-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth))
+    .toBe(0)
+
+  const tops = await win
+    .locator('.wt-group__label')
+    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
+  expect(new Set(tops).size).toBe(1)
+
+  const clipped = await win
+    .locator('[data-testid="combo-font-size"] .wt-combo__value')
+    .evaluate((el) => el.scrollWidth > el.clientWidth)
+  expect(clipped).toBe(false)
+
+  await win.locator('[data-testid="combo-font-family"]').click()
+  await win
+    .locator('[data-testid="combo-font-family-panel"] .wt-combo__option', {
+      hasText: 'Times New Roman'
+    })
+    .click()
+  const clippedFamily = await win
+    .locator('[data-testid="combo-font-family"] .wt-combo__value')
+    .evaluate((el) => el.scrollWidth > el.clientWidth)
+  expect(clippedFamily).toBe(false)
+})
+
+test('功能区在 940 宽下不裁掉组标题', async () => {
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setContentSize(940, 620)
+  })
+  await expect.poll(() => win.evaluate(() => innerWidth)).toBe(940)
+  await win.locator('[data-testid="tab-开始"]').click()
+
+  const result = await win.evaluate(() => {
+    const toolbar = document.querySelector('.wt-toolbar') as HTMLElement
+    const labels = Array.from(toolbar.querySelectorAll('.wt-group__label')) as HTMLElement[]
+    const bottom = toolbar.getBoundingClientRect().bottom
+    return {
+      verticalOverflow: toolbar.scrollHeight - toolbar.clientHeight,
+      clipped: labels.some((label) => label.getBoundingClientRect().bottom > bottom + 0.5)
+    }
+  })
+  expect(result.verticalOverflow).toBe(0)
+  expect(result.clipped).toBe(false)
+})
+
+test('导航窗格：清空保留焦点，搜索跳章后点结果能继续打字', async () => {
+  const input = win.locator('[data-testid="nav-search"]')
+  await input.fill('第二章')
+  await win.locator('[data-testid="nav-search-clear"]').click()
+  await expect(input).toBeFocused()
+  await expect(win.locator('[data-testid="chapter-item-0"]')).toBeVisible()
+
+  await input.fill('第二章')
+  await input.press('Enter')
+  await expect(win.locator('[data-testid="status-chapter"]')).toHaveText('2 / 3')
+
+  await win.locator('[data-testid="chapter-item-1"]').click()
+  await win.keyboard.type('a')
+  await expect.poll(revealed).toBe(10)
 })
