@@ -129,6 +129,8 @@ function Combo({
   )
 }
 
+const VISIBLE_COUNT = 4
+
 /**
  * 样式库。真 Word 的「样式」组就是几个白色小方块，每块里是 `AaBbCc` 加样式名。
  *
@@ -149,8 +151,10 @@ function Gallery({
   const value = choices[id] ?? entries[0]
   const activeIndex = entries.indexOf(value)
   const visibleEntries =
-    activeIndex >= 4 ? [...entries.slice(0, 3), entries[activeIndex]] : entries.slice(0, 4)
-  const hiddenActive = activeIndex >= 4
+    activeIndex >= VISIBLE_COUNT
+      ? [...entries.slice(0, VISIBLE_COUNT - 1), entries[activeIndex]]
+      : entries.slice(0, VISIBLE_COUNT)
+  const hiddenActive = activeIndex >= VISIBLE_COUNT
 
   return (
     <div className="wt-gallery" role="group" aria-label={title} data-testid={`gallery-${id}`}>
@@ -194,7 +198,7 @@ function Gallery({
               role="listbox"
               aria-label={title}
               data-testid={`gallery-${id}-panel`}
-              style={{ left: pos.left, top: pos.top, minWidth: Math.max(pos.width, 150) }}
+              style={{ left: pos.left, top: pos.top }}
             >
               {entries.map((name) => (
                 <button

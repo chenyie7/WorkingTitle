@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Ribbon, RIBBON_TABS } from '../../src/renderer/src/components/Ribbon'
@@ -136,5 +136,66 @@ describe('样式库', () => {
     expect(screen.getByTestId('gallery-style-more').className).toContain('wt-gallery__more--active')
     expect(screen.queryByTestId('gallery-style-标题 3')).toBeNull()
     expect(screen.queryByTestId('gallery-style-panel')).toBeNull()
+  })
+})
+
+describe('锚点弹层', () => {
+  it('点面板外面关闭面板', () => {
+    setup()
+    fireEvent.click(screen.getByTestId('gallery-style-more'))
+    expect(screen.getByTestId('gallery-style-panel')).toBeTruthy()
+
+    fireEvent.mouseDown(document.body)
+
+    expect(screen.queryByTestId('gallery-style-panel')).toBeNull()
+  })
+
+  it('点面板内部不关闭面板', () => {
+    setup()
+    fireEvent.click(screen.getByTestId('gallery-style-more'))
+
+    fireEvent.mouseDown(screen.getByTestId('gallery-style-panel'))
+
+    expect(screen.getByTestId('gallery-style-panel')).toBeTruthy()
+  })
+
+  it('再点一次锚点按钮关闭面板', () => {
+    setup()
+    const more = screen.getByTestId('gallery-style-more')
+    fireEvent.click(more)
+    expect(screen.getByTestId('gallery-style-panel')).toBeTruthy()
+
+    fireEvent.click(more)
+
+    expect(screen.queryByTestId('gallery-style-panel')).toBeNull()
+  })
+
+  it('窗口缩放时重新定位面板', () => {
+    setup()
+    const more = screen.getByTestId('gallery-style-more')
+    const rect = (bottom: number): DOMRect =>
+      ({
+        left: 10,
+        top: 20,
+        bottom,
+        right: 32,
+        width: 22,
+        height: 10,
+        x: 10,
+        y: 20,
+        toJSON: () => ({})
+      }) as DOMRect
+    const spy = vi.spyOn(more, 'getBoundingClientRect').mockReturnValue(rect(30))
+
+    fireEvent.click(more)
+    const panel = screen.getByTestId('gallery-style-panel')
+    expect(panel.style.left).toBe('10px')
+    expect(panel.style.top).toBe('32px')
+
+    spy.mockReturnValue(rect(50))
+    fireEvent(window, new Event('resize'))
+    expect(screen.getByTestId('gallery-style-panel').style.top).toBe('52px')
+
+    spy.mockRestore()
   })
 })

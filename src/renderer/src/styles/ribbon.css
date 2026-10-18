@@ -397,6 +397,11 @@
   color: var(--wt-text);
 }
 
+.wt-gallery__more--active:hover {
+  background: var(--wt-control-active);
+  color: var(--wt-text);
+}
+
 .wt-gallery__more-icon {
   width: 10px;
   height: 10px;

@@ -6,6 +6,9 @@ export interface PanelPosition {
   width: number
 }
 
+/** 面板必须带 `data-wt-popup`，否则点面板内部会被当成点外面、把面板关掉。 */
+export const POPUP_SELECTOR = '[data-wt-popup]'
+
 export function useAnchoredPanel<T extends HTMLElement>() {
   const anchorRef = useRef<T>(null)
   const [open, setOpen] = useState(false)
@@ -33,7 +36,7 @@ export function useAnchoredPanel<T extends HTMLElement>() {
       const target = e.target
       if (!(target instanceof Element)) return
       if (anchorRef.current?.contains(target)) return
-      if (target.closest('[data-wt-popup]')) return
+      if (target.closest(POPUP_SELECTOR)) return
       setOpen(false)
     }
     const onMove = (): void => place()
