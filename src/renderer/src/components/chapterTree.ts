@@ -106,7 +106,7 @@ export function buildTreeRows(
   return rows
 }
 
-// 卷行自带 chapterIndex，传卷的下标会命中卷行本身而非 -1。
+// 非搜索态下卷索引会命中卷行本身；搜索把该卷过滤掉时返回 -1。
 export function findChapterRow(rows: readonly TreeRow[], chapterIndex: number): number {
   return rows.findIndex((row) => row.chapterIndex === chapterIndex)
 }

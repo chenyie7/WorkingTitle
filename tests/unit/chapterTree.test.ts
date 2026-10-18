@@ -52,6 +52,7 @@ describe('buildTreeRows', () => {
     ])
     expect(rows[1].depth).toBe(1)
     expect(rows[3].depth).toBe(2)
+    expect(rows[2]).toMatchObject({ hasChildren: true })
     expect(rows[1]).toMatchObject({ chapterIndex: 0, key: 'c-0' })
     expect(rows[3]).toMatchObject({ chapterIndex: 2, key: 'c-2' })
     expect(rows[5]).toMatchObject({ chapterIndex: 4, key: 'c-4' })

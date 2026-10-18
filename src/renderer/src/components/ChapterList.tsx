@@ -1,47 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { isVolumeTitle } from '../../../core/chapters'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode
+} from 'react'
 import type { Novel } from '../../../core/types'
 import { defaultShortcutText } from '../state/shortcuts'
-import { IconCollapse, IconExpand } from './icons'
+import { buildTreeRows, chapterPercent, findChapterRow, type TreeRow } from './chapterTree'
+import { IconCaretDown, IconClose, IconExpand, IconSearch } from './icons'
 
-export const ROW_HEIGHT = 32
+export const ROW_HEIGHT = 28
 const OVERSCAN = 6
 
 export interface ChapterListProps {
   novel: Novel | null
   activeChapter: number
-  // 与 EngineState.chapterPos 同型：快照是冻结的只读数组，这里照抄类型，
-  // 别在组件里写回它（写了在严格模式下抛 TypeError，非严格模式下被静默丢弃）。
   chapterPos: readonly number[]
   onJump: (index: number) => void
-  /**
-   * 章节栏快捷键的**显示文本**（已按平台格式化）。两个按钮的 title 用它。
-   *
-   * 【为什么是可选带默认值】真值住在 `App` 里（只有它手里有按平台补齐过的快捷键表），
-   * 不传也得显示成**该平台的默认值**，而不是写死一句「⌘/Ctrl + Shift + H」。
-   */
   sidebarShortcut?: string
-  /**
-   * 整条左栏（书名信息 + 章节列表）是否收起。
-   *
-   * 【为什么是可选带默认值】真值住在 `App` 里——收起/展开的快捷键归**全局分发器**，而分发器
-   * 长在那一层，它翻不动本组件内部的 state，所以那边必须受控。但本组件单独渲染时（组件级
-   * 用例、以及任何不关心全局快捷键的场景）没人替它持这个状态，两个 prop 都不给就退回组件
-   * 内部——与上面那个 `sidebarShortcut` 是同一套取舍。
-   *
-   * 【受控不受控只看 `collapsed` 给没给值】判据就是这一条，理由是**给值这件事本身就说明
-   * 状态由调用方持有**——`App` 传 `collapsed={sidebarCollapsed}` 时，真值在它手里，本组件
-   * 再去动自己那份就是对不上号的第二个真相。所以给了值就必须受控。
-   *
-   * 【别把它写成「两个都给才受控」】那不是更宽容，是**错的**：只给值不给回调时，
-   * 本组件没有退回内部状态的余地——那样界面会显示调用方给的值、点击却改自己那份，
-   * 两者当场分岔。现在的行为是按钮点不动（`onCollapsedChange?.()` 吞掉），这是刻意的：
-   * 漏传回调是调用方的 bug，组件不该替它猜。**两个半给形态（只给值 / 只给回调）都没有用例**。
-   *
-   * 【无论哪种，状态都只在内存里】用户没要求持久化，而且它不属于 `PersistedSession` 的
-   * 字段——那个结构由引擎产出、还有一条必填字段的校验器，加 UI 状态进去要连带动 schema 与
-   * 校验。要「重启后仍保持隐藏」的话，单独给这个开关做持久化即可，不必塞进会话。
-   */
   collapsed?: boolean
   onCollapsedChange?: (next: boolean) => void
 }
@@ -58,12 +36,13 @@ export function ChapterList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(400)
-  /** 不受控时的落点。受控时它永远是初值，没人读它。 */
   const [selfCollapsed, setSelfCollapsed] = useState(false)
+  const [query, setQuery] = useState('')
+  const [bookCollapsed, setBookCollapsed] = useState(false)
+  const [collapsedVolumes, setCollapsedVolumes] = useState<ReadonlySet<number>>(() => new Set())
   const controlled = collapsedProp !== undefined
   const collapsed = controlled ? collapsedProp : selfCollapsed
 
-  /** 收起/展开的**唯一**出口：受控时交给外面，不受控时落到自己这段 state。 */
   const setCollapsed = (next: boolean): void => {
     if (controlled) onCollapsedChange?.(next)
     else setSelfCollapsed(next)
@@ -77,58 +56,43 @@ export function ChapterList({
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-    // 依赖 collapsed 而不是 []：收起时整条 aside 不渲染、scrollRef.current 是 null，
-    // 这个 effect 会直接返回；重新展开后必须【再跑一次】去量真实高度，否则 viewport
-    // 会一直停在默认的 400，虚拟滚动按错误的视口高度算窗口。
   }, [collapsed])
 
-  // 打字推进时，让当前章节滚进可视区域
+  const chapters = novel?.chapters ?? []
+  const chapterByIndex = useMemo(
+    () => new Map(chapters.map((chapter) => [chapter.index, chapter])),
+    [chapters]
+  )
+  const rows = useMemo(
+    () =>
+      buildTreeRows(chapters, {
+        bookTitle: novel?.title ?? '',
+        query,
+        bookCollapsed,
+        collapsedVolumes
+      }),
+    [chapters, novel?.title, query, bookCollapsed, collapsedVolumes]
+  )
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = 0
+    setScrollTop(0)
+  }, [query])
+
   useEffect(() => {
     const el = scrollRef.current
     if (!el || !novel) return
-    const top = activeChapter * ROW_HEIGHT
+    const rowIndex = findChapterRow(rows, activeChapter)
+    if (rowIndex < 0) return
+    const top = rowIndex * ROW_HEIGHT
     const bottom = top + ROW_HEIGHT
     if (top < el.scrollTop) el.scrollTop = top
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
-    // 带上 collapsed：重新展开时列表是刚挂载的，需要把当前章节滚回可视区
+    // 搜索与展开会重算 rows；那条路不该把列表拽回当前章，所以 rows 不进依赖。
   }, [activeChapter, novel, collapsed])
 
-  // 左侧栏的显示/隐藏快捷键：⌘/Ctrl + Shift + H
-  //
-  // 【本组件为什么不再自己监听】那条 keydown 收进了**全局分发器**
-  // （`renderer/src/state/shortcuts.ts` 的 `useShortcutDispatcher`）：它按注册表 + 当前设置
-  // 建出「规范串 → 动作」表，命中就把动作派给调用方。
-  //
-  // 组件自己监听有一条硬伤：**键位现在是可配置的**，改了键之后组件手里那套常量就过期了
-  // （而且两边都监听会各执行一次——`preventDefault` 拦不住同一事件上的其它监听器）。
-  // 分发器那侧的细节（为什么挂在 window 上还收得到、为什么读 e.code 而不是 e.key）都写在
-  // 那个模块里，不在这里重一份。
-
-  const chapters = novel?.chapters ?? []
-  const total = chapters.length
-
-  // 卷标题是章节列表里的一项，这里只负责分类；行高不变，虚拟滚动照旧。
-  const layout = useMemo(() => {
-    const volume: boolean[] = []
-    const grouped: boolean[] = []
-    let seen = false
-    for (const c of chapters) {
-      const isVolume = isVolumeTitle(c.title)
-      volume.push(isVolume)
-      grouped.push(!isVolume && seen)
-      if (isVolume) seen = true
-    }
-    return { volume, grouped }
-  }, [chapters])
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const last = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
-  const visible = chapters.slice(first, last)
-
-  // 收起时整条 aside 都不渲染，只留一条细缝（下面那个按钮）。
-  //
-  // 【为什么还留一条缝，而不是干脆什么都不留】那个快捷键是新用户不会知道的；全无入口的话，
-  // 鼠标用户一旦收起就再也调不回来（只能重启）。细缝只有 12px、颜色很淡，视觉上近乎不存在，
-  // 但鼠标总能找回来。
   if (collapsed) {
     return (
       <button
@@ -145,9 +109,121 @@ export function ChapterList({
     )
   }
 
+  const first = Math.min(
+    rows.length,
+    Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
+  )
+  const last = Math.min(rows.length, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
+  const visible = rows.slice(first, last)
+  const noMatch = query.trim() !== '' && !rows.some((row) => row.kind === 'chapter')
+
+  const toggleRow = (row: TreeRow): void => {
+    if (row.kind === 'book') {
+      setBookCollapsed((value) => !value)
+      return
+    }
+    if (row.kind !== 'volume') return
+    setCollapsedVolumes((prev) => {
+      const next = new Set(prev)
+      if (next.has(row.chapterIndex)) next.delete(row.chapterIndex)
+      else next.add(row.chapterIndex)
+      return next
+    })
+  }
+
+  const handleSearchKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Escape') {
+      setQuery('')
+      return
+    }
+    if (e.key !== 'Enter') return
+    const hit = rows.find((row) => row.kind === 'chapter')
+    if (hit && hit.kind === 'chapter') onJump(hit.chapterIndex)
+  }
+
+  const renderRow = (row: TreeRow, index: number): ReactNode => {
+    const isCurrent = row.chapterIndex !== null && row.chapterIndex === activeChapter
+    const hasChildren =
+      row.kind === 'book' || row.kind === 'volume' ? row.hasChildren : false
+    const isCollapsed =
+      row.kind === 'book'
+        ? bookCollapsed
+        : row.kind === 'volume'
+          ? collapsedVolumes.has(row.chapterIndex)
+          : false
+    const chapter = row.chapterIndex === null ? undefined : chapterByIndex.get(row.chapterIndex)
+    const pct =
+      row.kind === 'chapter' && chapter
+        ? chapterPercent(chapter.charCount, chapterPos[row.chapterIndex] ?? 0)
+        : null
+    const showPct =
+      row.kind === 'chapter' && pct !== null && (row.chapterIndex === activeChapter || pct > 0)
+
+    const classes = [
+      'chapter-item',
+      row.kind === 'book' ? 'chapter-item--book' : '',
+      row.kind === 'volume' ? 'chapter-item--volume' : '',
+      isCurrent ? 'chapter-item--active' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+    return (
+      <div
+        key={row.key}
+        className={classes}
+        data-testid={row.kind === 'book' ? 'tree-book' : `chapter-item-${row.chapterIndex}`}
+        role="treeitem"
+        aria-level={row.depth + 1}
+        aria-expanded={hasChildren ? !isCollapsed : undefined}
+        aria-current={isCurrent ? 'true' : undefined}
+        title={row.title}
+        style={{
+          position: 'absolute',
+          top: index * ROW_HEIGHT,
+          left: 0,
+          right: 0,
+          height: ROW_HEIGHT,
+          paddingLeft: 10 + row.depth * 14
+        }}
+        onClick={(e) => {
+          const target = e.target
+          // 不用 stopPropagation：window 上的抢焦点处理器要收到这一下，否则焦点会留在箭头按钮上。
+          if (target instanceof Element && target.closest('.chapter-item__caret')) return
+          if (row.kind === 'book') toggleRow(row)
+          else onJump(row.chapterIndex)
+        }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            className={`chapter-item__caret${isCollapsed ? ' chapter-item__caret--collapsed' : ''}`}
+            data-testid={
+              row.kind === 'book' ? 'tree-book-toggle' : `volume-toggle-${row.chapterIndex}`
+            }
+            aria-label={isCollapsed ? '展开' : '收起'}
+            aria-expanded={!isCollapsed}
+            onClick={() => toggleRow(row)}
+          >
+            <IconCaretDown className="chapter-item__caret-icon" />
+          </button>
+        ) : (
+          <span className="chapter-item__caret-slot" aria-hidden="true" />
+        )}
+        <span className="chapter-item__title">{row.title}</span>
+        {showPct && pct !== null ? (
+          <span className="chapter-item__pct" data-testid={`chapter-pct-${row.chapterIndex}`}>
+            {pct}%
+          </span>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <aside className="wt-sidebar">
       <div className="wt-sidebar__header">
+        <span className="wt-sidebar__title">导航</span>
         <button
           type="button"
           className="wt-sidebar__toggle"
@@ -157,59 +233,58 @@ export function ChapterList({
           title={`隐藏章节栏（${sidebarShortcut}）`}
           onClick={() => setCollapsed(true)}
         >
-          <IconCollapse className="wt-sidebar__toggle-icon" />
+          <IconClose className="wt-sidebar__toggle-icon" />
         </button>
-        {novel ? novel.title : '未导入小说'}
-        <div className="wt-sidebar__sub">
-          {novel ? `共 ${total} 章 · ${novel.encoding}` : '文件 → 设置 → 导入小说'}
-        </div>
       </div>
-      <div
-        className="wt-sidebar__list"
-        data-testid="chapter-list"
-        ref={scrollRef}
-        onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
-      >
-        <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
-          {visible.map((chapter, offset) => {
-            const index = first + offset
-            const pos = chapterPos[index] ?? 0
-            const pct = chapter.charCount === 0 ? 100 : Math.min(100, Math.round((pos / chapter.charCount) * 100))
-            const isVolume = layout.volume[index] === true
-            const classes = [
-              'chapter-item',
-              isVolume ? 'chapter-item--volume' : '',
-              layout.grouped[index] ? 'chapter-item--grouped' : '',
-              index === activeChapter ? 'chapter-item--active' : ''
-            ]
-              .filter(Boolean)
-              .join(' ')
-            return (
-              <div
-                key={chapter.index}
-                className={classes}
-                data-testid={`chapter-item-${index}`}
-                style={{
-                  position: 'absolute',
-                  top: index * ROW_HEIGHT,
-                  left: 0,
-                  right: 0,
-                  height: ROW_HEIGHT
-                }}
-                title={chapter.title}
-                onClick={() => onJump(index)}
+      {novel ? (
+        <>
+          <div className="wt-nav__search">
+            <IconSearch className="wt-nav__search-icon" />
+            <input
+              className="wt-nav__search-input"
+              data-testid="nav-search"
+              aria-label="搜索章节"
+              placeholder="搜索章节"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+            />
+            {query !== '' ? (
+              <button
+                type="button"
+                className="wt-nav__search-clear"
+                data-testid="nav-search-clear"
+                aria-label="清空搜索"
+                onClick={() => setQuery('')}
               >
-                <span className="chapter-item__title">{chapter.title}</span>
-                {isVolume ? null : (
-                  <span className="chapter-item__pct" data-testid={`chapter-pct-${index}`}>
-                    {pct}%
-                  </span>
-                )}
+                <IconClose className="wt-nav__search-clear-icon" />
+              </button>
+            ) : null}
+          </div>
+          <div
+            className="wt-sidebar__list"
+            data-testid="chapter-list"
+            role="tree"
+            aria-label="章节导航"
+            ref={scrollRef}
+            onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+          >
+            <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+              {visible.map((row, offset) => renderRow(row, first + offset))}
+            </div>
+            {noMatch ? (
+              <div className="wt-nav__empty" data-testid="nav-empty">
+                没有匹配的章节
               </div>
-            )
-          })}
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="wt-sidebar__empty">
+          <span className="wt-sidebar__empty-title">未导入小说</span>
+          <span className="wt-sidebar__empty-hint">文件 → 设置 → 导入小说</span>
         </div>
-      </div>
+      )}
     </aside>
   )
 }
