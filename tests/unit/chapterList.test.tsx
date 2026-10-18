@@ -175,6 +175,8 @@ describe('ChapterList 导航窗格', () => {
     expect(screen.getByTestId('volume-toggle-1').className).not.toContain(
       'chapter-item__caret--collapsed'
     )
+    expect((screen.getByTestId('volume-toggle-1') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('volume-toggle-1'))
 
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByTestId('chapter-item-2')).toBeNull()
@@ -234,12 +236,21 @@ describe('ChapterList 导航窗格', () => {
     fireEvent.click(screen.getByTestId('volume-toggle-1'))
     expect(screen.queryByTestId('chapter-item-2')).toBeNull()
 
+    fireEvent.click(screen.getByTestId('tree-book'))
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+    const input = screen.getByTestId('nav-search') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '开端' } })
+    expect(screen.getByTestId('chapter-item-2')).toBeTruthy()
+
     const other: Novel = {
       ...makeVolumeNovel(),
       title: '另一本',
       sourcePath: '/tmp/另一本.txt'
     }
     rerender(<ChapterList novel={other} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    expect(input.value).toBe('')
+    expect(screen.getByTestId('tree-book').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
     expect(screen.getByTestId('volume-toggle-1').getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByTestId('chapter-item-2')).toBeTruthy()
   })

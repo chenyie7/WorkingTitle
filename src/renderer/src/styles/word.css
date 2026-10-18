@@ -269,7 +269,7 @@ body {
   color: var(--wt-text);
   white-space: nowrap;
   overflow: hidden;
-  transition: background-color 80ms ease;
+  transition: background-color 90ms ease;
 }
 
 .chapter-item:hover {
@@ -306,6 +306,11 @@ body {
 
 .chapter-item__caret:hover {
   color: var(--wt-text);
+}
+
+.chapter-item__caret:disabled {
+  cursor: default;
+  color: var(--wt-text-muted);
 }
 
 .chapter-item__caret-icon {

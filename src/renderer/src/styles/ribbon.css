@@ -114,7 +114,7 @@
 .wt-group::after {
   content: '';
   position: absolute;
-  top: 4px;
+  top: 0;
   right: 0;
   width: 1px;
   height: 54px;
@@ -203,13 +203,20 @@
   border-color: var(--wt-control-active-border);
 }
 
-/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。 */
+/* 大按钮：图标在上、标签在下（新建/保存/导入这类）。真 Word 就是这么混着排的。
+   标签允许折成两行：「Web 版式视图」「检查辅助功能」在 58px 里一行放不下。 */
 .wt-btn--large {
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   width: 58px;
   height: 54px;
-  padding: 5px 2px 4px;
+  padding: 3px 2px 2px;
+  white-space: normal;
+}
+
+.wt-btn--large .wt-btn__label {
+  text-align: center;
+  line-height: 1.05;
 }
 
 .wt-btn--large .wt-btn__icon {
@@ -464,19 +471,6 @@
 .wt-split__caret {
   width: 10px;
   height: 10px;
-}
-
-.wt-sep {
-  width: 1px;
-  height: 20px;
-  background: var(--wt-chrome-border);
-  margin: 0 4px;
-}
-
-.wt-ratio {
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
 /* 「阅读替换」的两格（全局 / 当前书）：一行一个，竖着排。

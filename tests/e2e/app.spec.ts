@@ -319,6 +319,21 @@ test('开始页在 1280 宽下不横向溢出、组标题同一基线', async ()
     await expect
       .poll(() => win.locator('.wt-toolbar').evaluate((el) => el.scrollWidth - el.clientWidth))
       .toBe(0)
+    const overflowLabels = await win.locator('.wt-btn--large').evaluateAll((buttons) =>
+      buttons.flatMap((button) => {
+        const label = button.querySelector('.wt-btn__label') as HTMLElement | null
+        if (!label) return []
+        const b = button.getBoundingClientRect()
+        const l = label.getBoundingClientRect()
+        const outside =
+          l.left < b.left - 0.5 ||
+          l.right > b.right + 0.5 ||
+          l.top < b.top - 0.5 ||
+          l.bottom > b.bottom + 0.5
+        return outside ? [(button.textContent ?? '').trim()] : []
+      })
+    )
+    expect(overflowLabels).toEqual([])
   }
 
   await win.locator('[data-testid="tab-开始"]').click()
@@ -351,7 +366,7 @@ test('开始页在 1280 宽下不横向溢出、组标题同一基线', async ()
 
 test('功能区在 940 宽下不裁掉组标题', async () => {
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setContentSize(940, 860)
+    BrowserWindow.getAllWindows()[0].setContentSize(940, 620)
   })
   await expect.poll(() => win.evaluate(() => innerWidth)).toBe(940)
   await win.locator('[data-testid="tab-开始"]').click()
@@ -367,4 +382,20 @@ test('功能区在 940 宽下不裁掉组标题', async () => {
   })
   expect(result.verticalOverflow).toBe(0)
   expect(result.clipped).toBe(false)
+})
+
+test('导航窗格：清空保留焦点，搜索跳章后点结果能继续打字', async () => {
+  const input = win.locator('[data-testid="nav-search"]')
+  await input.fill('第二章')
+  await win.locator('[data-testid="nav-search-clear"]').click()
+  await expect(input).toBeFocused()
+  await expect(win.locator('[data-testid="chapter-item-0"]')).toBeVisible()
+
+  await input.fill('第二章')
+  await input.press('Enter')
+  await expect(win.locator('[data-testid="status-chapter"]')).toHaveText('2 / 3')
+
+  await win.locator('[data-testid="chapter-item-1"]').click()
+  await win.keyboard.type('a')
+  await expect.poll(revealed).toBe(10)
 })

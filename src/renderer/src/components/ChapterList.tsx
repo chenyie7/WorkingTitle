@@ -133,6 +133,7 @@ export function ChapterList({
   const noMatch = query.trim() !== '' && !rows.some((row) => row.kind === 'chapter')
 
   const toggleRow = (row: TreeRow): void => {
+    if (query.trim() !== '') return
     if (row.kind === 'book') {
       setBookCollapsed((value) => !value)
       return
@@ -222,6 +223,7 @@ export function ChapterList({
             }
             aria-label={`${showCollapsed ? '展开' : '收起'} ${row.title}`}
             aria-expanded={!showCollapsed}
+            disabled={searching}
             onClick={() => toggleRow(row)}
           >
             <IconCaretDown className="chapter-item__caret-icon" />
@@ -274,7 +276,15 @@ export function ChapterList({
                 className="wt-nav__search-clear"
                 data-testid="nav-search-clear"
                 aria-label="清空搜索"
-                onClick={() => setQuery('')}
+                /* 拦下 window 上的抢焦点处理器，否则一点清空输入框就失焦、没法继续查 */
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setQuery('')
+                }}
               >
                 <IconClose className="wt-nav__search-clear-icon" />
               </button>
