@@ -171,9 +171,77 @@ describe('ChapterList 导航窗格', () => {
     const input = screen.getByTestId('nav-search') as HTMLInputElement
     fireEvent.change(input, { target: { value: '开端' } })
     expect(screen.getByTestId('chapter-item-2')).toBeTruthy()
+    expect(screen.getByTestId('volume-toggle-1').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('volume-toggle-1').className).not.toContain(
+      'chapter-item__caret--collapsed'
+    )
 
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByTestId('chapter-item-2')).toBeNull()
+    expect(screen.getByTestId('volume-toggle-1').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('volume-toggle-1').className).toContain(
+      'chapter-item__caret--collapsed'
+    )
+  })
+
+  it('连续无子章节的卷不渲染展开按钮', () => {
+    const novel: Novel = {
+      title: '大书',
+      sourcePath: '/tmp/大书.txt',
+      encoding: 'UTF-8',
+      hadBom: false,
+      flatText: 'xx',
+      chapters: [
+        { index: 0, title: '第一卷 甲', start: 0, end: 1, charCount: 1 },
+        { index: 1, title: '第二卷 乙', start: 1, end: 2, charCount: 1 }
+      ]
+    }
+    render(<ChapterList novel={novel} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+    expect(screen.getByTestId('chapter-item-1')).toBeTruthy()
+    expect(screen.queryByTestId('volume-toggle-0')).toBeNull()
+    expect(screen.queryByTestId('volume-toggle-1')).toBeNull()
+  })
+
+  it('空查询按 Enter 不跳转', () => {
+    const onJump = vi.fn()
+    render(<ChapterList novel={makeNovel(5)} activeChapter={0} chapterPos={[]} onJump={onJump} />)
+    const input = screen.getByTestId('nav-search')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onJump).not.toHaveBeenCalled()
+  })
+
+  it('搜索框的清空按钮清掉查询并恢复全部章节', () => {
+    render(
+      <ChapterList novel={makeVolumeNovel()} activeChapter={0} chapterPos={[]} onJump={() => {}} />
+    )
+    const input = screen.getByTestId('nav-search') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '开端' } })
+    expect(screen.queryByTestId('chapter-item-0')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('nav-search-clear'))
+    expect(input.value).toBe('')
+    expect(screen.getByTestId('chapter-item-0')).toBeTruthy()
+    expect(screen.getByTestId('chapter-item-4')).toBeTruthy()
+  })
+
+  it('换书时清空搜索与折叠状态', () => {
+    const { rerender } = render(
+      <ChapterList novel={makeVolumeNovel()} activeChapter={0} chapterPos={[]} onJump={() => {}} />
+    )
+    fireEvent.click(screen.getByTestId('volume-toggle-1'))
+    expect(screen.queryByTestId('chapter-item-2')).toBeNull()
+
+    const other: Novel = {
+      ...makeVolumeNovel(),
+      title: '另一本',
+      sourcePath: '/tmp/另一本.txt'
+    }
+    rerender(<ChapterList novel={other} activeChapter={0} chapterPos={[]} onJump={() => {}} />)
+    expect(screen.getByTestId('volume-toggle-1').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByTestId('chapter-item-2')).toBeTruthy()
   })
 
   it('点按钮收起整条左栏，章节列表一起消失；再点一次展开', () => {
@@ -215,6 +283,35 @@ describe('ChapterList 导航窗格', () => {
 
   it('行高常量与样式一致', () => {
     expect(ROW_HEIGHT).toBe(28)
+  })
+})
+
+describe('ChapterList 导入后测量视口', () => {
+  it('novel 从 null 变为已导入时重新测量并挂上 ResizeObserver', () => {
+    const original = globalThis.ResizeObserver
+    const observed: Element[] = []
+    class SpyResizeObserver {
+      observe(el: Element): void {
+        observed.push(el)
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = SpyResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const { rerender } = render(
+        <ChapterList novel={null} activeChapter={0} chapterPos={[]} onJump={() => {}} />
+      )
+      expect(observed).toHaveLength(0)
+
+      rerender(
+        <ChapterList novel={makeNovel(100)} activeChapter={0} chapterPos={[]} onJump={() => {}} />
+      )
+      expect(observed).toHaveLength(1)
+      expect(observed[0]).toBe(screen.getByTestId('chapter-list'))
+    } finally {
+      globalThis.ResizeObserver = original
+    }
   })
 })
 

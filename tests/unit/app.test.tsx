@@ -1060,7 +1060,7 @@ describe('快捷键接线', () => {
     await waitFor(() => expect(screen.getByTestId('chapter-list')).toBeTruthy())
 
     fireEvent.keyDown(window, { code: 'KeyH', ctrlKey: true, shiftKey: true })
-    // 收起：整条 aside 不渲染，只剩那条 12px 的细缝按钮
+    // 收起：整条 aside 不渲染，只剩那条 10px 的细缝按钮
     expect(screen.queryByTestId('chapter-list')).toBeNull()
     expect(screen.getByTestId('sidebar-toggle').getAttribute('aria-expanded')).toBe('false')
 

@@ -51,12 +51,21 @@ export function ChapterList({
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const measure = (): void => setViewport(el.clientHeight || 400)
+    const measure = (): void => {
+      setViewport(el.clientHeight || 400)
+      setScrollTop(el.scrollTop)
+    }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [collapsed])
+  }, [collapsed, novel?.sourcePath])
+
+  useEffect(() => {
+    setQuery('')
+    setBookCollapsed(false)
+    setCollapsedVolumes(new Set())
+  }, [novel?.sourcePath])
 
   const chapters = novel?.chapters ?? []
   const chapterByIndex = useMemo(
@@ -88,8 +97,14 @@ export function ChapterList({
     if (rowIndex < 0) return
     const top = rowIndex * ROW_HEIGHT
     const bottom = top + ROW_HEIGHT
-    if (top < el.scrollTop) el.scrollTop = top
-    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
+    if (top < el.scrollTop) {
+      el.scrollTop = top
+      setScrollTop(top)
+    } else if (bottom > el.scrollTop + el.clientHeight) {
+      const next = bottom - el.clientHeight
+      el.scrollTop = next
+      setScrollTop(next)
+    }
     // 搜索与展开会重算 rows；那条路不该把列表拽回当前章，所以 rows 不进依赖。
   }, [activeChapter, novel, collapsed])
 
@@ -132,11 +147,13 @@ export function ChapterList({
   }
 
   const handleSearchKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Escape') {
       setQuery('')
       return
     }
     if (e.key !== 'Enter') return
+    if (query.trim() === '') return
     const hit = rows.find((row) => row.kind === 'chapter')
     if (hit && hit.kind === 'chapter') onJump(hit.chapterIndex)
   }
@@ -151,6 +168,8 @@ export function ChapterList({
         : row.kind === 'volume'
           ? collapsedVolumes.has(row.chapterIndex)
           : false
+    const searching = query.trim() !== ''
+    const showCollapsed = isCollapsed && !searching
     const chapter = row.chapterIndex === null ? undefined : chapterByIndex.get(row.chapterIndex)
     const pct =
       row.kind === 'chapter' && chapter
@@ -175,7 +194,7 @@ export function ChapterList({
         data-testid={row.kind === 'book' ? 'tree-book' : `chapter-item-${row.chapterIndex}`}
         role="treeitem"
         aria-level={row.depth + 1}
-        aria-expanded={hasChildren ? !isCollapsed : undefined}
+        aria-expanded={hasChildren ? !showCollapsed : undefined}
         aria-current={isCurrent ? 'true' : undefined}
         title={row.title}
         style={{
@@ -197,12 +216,12 @@ export function ChapterList({
         {hasChildren ? (
           <button
             type="button"
-            className={`chapter-item__caret${isCollapsed ? ' chapter-item__caret--collapsed' : ''}`}
+            className={`chapter-item__caret${showCollapsed ? ' chapter-item__caret--collapsed' : ''}`}
             data-testid={
               row.kind === 'book' ? 'tree-book-toggle' : `volume-toggle-${row.chapterIndex}`
             }
-            aria-label={isCollapsed ? '展开' : '收起'}
-            aria-expanded={!isCollapsed}
+            aria-label={`${showCollapsed ? '展开' : '收起'} ${row.title}`}
+            aria-expanded={!showCollapsed}
             onClick={() => toggleRow(row)}
           >
             <IconCaretDown className="chapter-item__caret-icon" />
@@ -269,11 +288,11 @@ export function ChapterList({
             ref={scrollRef}
             onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
           >
-            <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+            <div role="none" style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
               {visible.map((row, offset) => renderRow(row, first + offset))}
             </div>
             {noMatch ? (
-              <div className="wt-nav__empty" data-testid="nav-empty">
+              <div className="wt-nav__empty" data-testid="nav-empty" role="status">
                 没有匹配的章节
               </div>
             ) : null}

@@ -487,16 +487,6 @@ body {
   background: #1c1c20;
 }
 
-[data-theme='dark'] .wt-sidebar__rail {
-  background: transparent;
-  color: transparent;
-}
-
-[data-theme='dark'] .wt-sidebar__rail:hover {
-  background: var(--wt-hover);
-  color: var(--wt-text-muted);
-}
-
 /* 状态栏里刻意压低一档的信息（目前只有那个章节位置）。
    它得在，但不该抢眼——见 StatusBar.tsx 顶部那段说明。 */
 .wt-statusbar__dim {
