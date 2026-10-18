@@ -325,11 +325,12 @@
 }
 
 /* ---- 样式库 ----
- * 与下拉框不同，展开就是全部选项，所以直接在流内排开、不需要弹层，
- * 也就不涉及焦点问题——每一项本身是 `<button>`。
+ * 只露四项 + 展开箭头；完整列表走 `.wt-gallery__panel`（复用 combo 弹层的样式）。
  */
 .wt-gallery {
   display: flex;
+  align-items: stretch;
+  align-self: stretch;
   gap: 2px;
 }
 
@@ -337,9 +338,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  width: 58px;
-  padding: 5px 2px 4px;
+  justify-content: center;
+  gap: 2px;
+  width: 56px;
+  padding: 4px 2px 3px;
   border: 1px solid transparent;
   border-radius: var(--wt-radius);
   background: transparent;
@@ -365,10 +367,43 @@
 }
 
 .wt-gallery__name {
-  font-size: 10.5px;
+  font-size: var(--wt-fs-xs);
   line-height: 1;
   color: var(--wt-text-muted);
   white-space: nowrap;
+}
+
+.wt-gallery__more {
+  width: 22px;
+  height: 54px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--wt-chrome-border);
+  border-radius: 0 var(--wt-radius) var(--wt-radius) 0;
+  background: transparent;
+  color: var(--wt-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wt-gallery__more:hover {
+  background: var(--wt-blue-light);
+}
+
+.wt-gallery__more--active {
+  background: var(--wt-control-active);
+  color: var(--wt-text);
+}
+
+.wt-gallery__more-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.wt-gallery__panel {
+  min-width: 150px;
 }
 
 /* ---- 分割按钮（下划线 / 项目符号 / 编号）----

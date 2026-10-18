@@ -117,3 +117,24 @@ describe('真实功能不再摆在工具栏里', () => {
     expect(screen.getByTestId('ratio-input')).toBeTruthy()
   })
 })
+
+describe('样式库', () => {
+  it('默认只露四项，其余从展开面板里选', () => {
+    setup()
+    expect(screen.getByTestId('gallery-style').querySelectorAll('.wt-gallery__item')).toHaveLength(4)
+    expect(screen.getByTestId('gallery-style-正文')).toBeTruthy()
+    expect(screen.getByTestId('gallery-style-标题 1')).toBeTruthy()
+    expect(screen.getByTestId('gallery-style-标题 2')).toBeTruthy()
+    expect(screen.getByTestId('gallery-style-标题 3')).toBeTruthy()
+    expect(screen.queryByTestId('gallery-style-引用')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('gallery-style-more'))
+    expect(screen.getByTestId('gallery-style-panel')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('gallery-style-option-引用'))
+
+    expect(screen.getByTestId('gallery-style-引用').className).toContain('wt-gallery__item--active')
+    expect(screen.getByTestId('gallery-style-more').className).toContain('wt-gallery__more--active')
+    expect(screen.queryByTestId('gallery-style-标题 3')).toBeNull()
+    expect(screen.queryByTestId('gallery-style-panel')).toBeNull()
+  })
+})
