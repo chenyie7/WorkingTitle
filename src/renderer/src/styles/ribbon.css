@@ -699,11 +699,11 @@
  *
  * 【overflow-y 不能省】`.wt-modal__main` 是 `align-items: stretch`，所以左栏的高度**等于
  * main 的高度**、会跟着面板被 `height: min(...)` 夹而变矮；而左栏的内容是固定高的
- * `8 + 32×3 + 8 = 112px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 还有 176px（够），
- * 250% 只剩 114px（刚好够），**300% 只剩约 72px → 第三项溢出左栏**。面板的 `overflow: hidden`
- * 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项会继续往下画进
- * footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它开始夹紧），
- * 所以一并认下来。
+ * `8 + 34×5 + 8 = 186px`。在最小窗口（`minHeight: 620`）下：200% 缩放 main 只剩 176px
+ * （首次溢出），250% 约 114px（看得见约 3 项），**300% 约 72px → 只剩约 2 项**。面板的
+ * `overflow: hidden` 只裁在面板自己的边界上、main 的 overflow 是 visible，所以溢出的那一项
+ * 会继续往下画进 footer 那一条——与标题条那条是**同一个根因**（我们给面板加的高度上限让它
+ * 开始夹紧），所以一并认下来。
  */
 .wt-modal__nav {
   flex: 0 0 152px;
@@ -882,11 +882,12 @@
 }
 
 .wt-modal__label {
-  flex: 0 0 92px;
+  flex: 0 0 96px;
   display: inline-flex;
   align-items: center;
   font-size: var(--wt-fs-md);
   color: var(--wt-text-muted);
+  white-space: nowrap;
 }
 
 /* 工作文档那行的状态文本：文件名可能很长，撑破一行会把右边两个按钮挤出面板 */
@@ -1142,7 +1143,6 @@
 .wt-library__title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   font-size: var(--wt-fs-md);
   font-weight: 600;
 }

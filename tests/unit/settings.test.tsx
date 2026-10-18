@@ -1542,5 +1542,8 @@ describe('设置行标签', () => {
     expect(label).toBeTruthy()
     expect(label?.querySelector('svg')).toBeNull()
     expect(document.querySelectorAll('.wt-modal__label-icon')).toHaveLength(0)
+    document.querySelectorAll('.wt-modal__label').forEach((el) => {
+      expect(el.children).toHaveLength(0)
+    })
   })
 })

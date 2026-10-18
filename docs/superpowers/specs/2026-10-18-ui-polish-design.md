@@ -201,7 +201,7 @@
 ### 6.1 排法
 
 - 去掉 `.wt-modal__label` 前的蓝色小图标，只留文字；导航栏图标保留并统一 14px、`--wt-text-muted`。
-- 行标签列固定 92px，字号 12.5px，颜色 `--wt-text-muted`。
+- 行标签列固定 96px（最长的是「显示/隐藏章节栏」，12.5px 下约需 93.75px，92px 会把它挤成两行），字号 12.5px、`white-space: nowrap`，颜色 `--wt-text-muted`。
 - 行距 16px，内容区左右内边距 20px。
 - 输入框、普通按钮、主按钮、分段控件、快捷键框统一 30px 高；比例输入框宽 64px。
 - footer 高 48px，顶部一条 1px `--wt-chrome-border` 分隔线，内容右对齐，左右内边距 20px。
